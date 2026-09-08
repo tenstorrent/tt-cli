@@ -211,6 +211,24 @@ class ModelManagerBackend:
         self.output.status(f"Stopping {repo_id} via tt-model …")
         return self.runner.stream(argv, env=self._env(), tool=TOOL)
 
+    def logs(
+        self, repo_id: str, *, follow: bool = False, profile: str | None = None
+    ) -> int:
+        """Show a running container package's output via `tt-model logs`.
+
+        tt-model resolves the running container for the bundle (and profile) and
+        runs `docker logs [--follow]` on it. Read-only, so like stop/rm it never
+        installs the tool. check=False: Ctrl-C on --follow ends the child with 130,
+        which is the user stopping, not the tool failing."""
+        entry = self._installed_entry()
+        argv = [str(entry), "logs", repo_id]
+        if follow:
+            argv.append("--follow")
+        if profile:
+            argv += ["--profile", profile]
+        self.output.status(f"Showing {repo_id} logs via tt-model …")
+        return self.runner.stream(argv, env=self._env(), tool=TOOL, check=False)
+
     def rm_argv(
         self, entry: Path, repo_id: str, *, include_weights: bool, keep_cache: bool
     ) -> list[str]:

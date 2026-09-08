@@ -92,6 +92,14 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+def _model_glob(model: ModelInfo, suffix: str) -> str:
+    """Filename glob for one model's workflow_logs entries. Names embed the model
+    between underscores, so the underscore-delimited pattern cannot confuse
+    Llama-3.1-8B with Llama-3.1-8B-Instruct. Shared by rm and logs so they agree
+    on what "this model's files" means."""
+    return f"*_{model.name}_{suffix}"
+
+
 def _size_of(path: Path) -> int:
     try:
         return _dir_size(path) if path.is_dir() else path.stat().st_size
@@ -528,7 +536,7 @@ class InferenceServerBackend:
         # cannot confuse Llama-3.1-8B with Llama-3.1-8B-Instruct.
         logs_dir = root / "workflow_logs"
         if logs_dir.is_dir():
-            for path in sorted(logs_dir.rglob(f"*_{model.name}_*")):
+            for path in sorted(logs_dir.rglob(_model_glob(model, "*"))):
                 found.append(Artifact("logs", path, _size_of(path)))
         # persistent_volume/volume_id_<impl>-<model>-v<version>/ — only created when
         # run.py is given --host-volume (tt serve passes --host-hf-cache instead), so
@@ -538,6 +546,29 @@ class InferenceServerBackend:
             for path in sorted(volumes.glob(f"volume_id_*-{model.name}-v*")):
                 found.append(Artifact("volume", path, _size_of(path)))
         return found
+
+    def log_files(self, model: ModelInfo) -> list[Path]:
+        """This model's log files under the checkout's workflow_logs/, oldest first.
+
+        run.py writes its own log to run_logs/run_<ts>_<model>_<workflow>_<id>.log
+        and streams the server container's output to
+        docker_server/{vllm|media|multihost}_<ts>_<model>_<device>_<workflow>.log
+        (v0.18.0; re-check on a pin bump). The `.log` suffix keeps the
+        runtime_model_specs/*.json sidecars out."""
+        root = self.checkout_root()
+        if root is None:
+            return []
+        logs_dir = root / "workflow_logs"
+        if not logs_dir.is_dir():
+            return []
+        files = [p for p in logs_dir.rglob(_model_glob(model, "*.log")) if p.is_file()]
+        return sorted(files, key=lambda p: (p.stat().st_mtime, p.name))
+
+    def newest_log_file(self, model: ModelInfo) -> Path | None:
+        """The log most recently written to — the live server's, when one is running:
+        run.py's foreground `docker run` keeps appending container output to it."""
+        files = self.log_files(model)
+        return files[-1] if files else None
 
     def remove_artifacts(self, artifacts: Sequence[Artifact]) -> int:
         """Delete the given artifacts; returns the bytes reclaimed."""

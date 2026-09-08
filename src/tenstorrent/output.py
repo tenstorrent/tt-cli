@@ -68,10 +68,14 @@ class OutputManager:
         self.verbose = self.verbose or verbose
 
     # -- status channel (stderr) ------------------------------------------------
-    def status(self, message: str, *, style: str | None = None) -> None:
+    def status(
+        self, message: str, *, style: str | None = None, soft_wrap: bool = False
+    ) -> None:
+        """`soft_wrap` as in emit(): for a message carrying a path or command line,
+        which Rich would otherwise break mid-token at the terminal width."""
         if self.quiet or self.json_mode:
             return
-        self.status_console.print(message, style=style)
+        self.status_console.print(message, style=style, soft_wrap=soft_wrap)
 
     def warn(self, message: str) -> None:
         if self.quiet:
