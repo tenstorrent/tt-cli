@@ -24,6 +24,7 @@ from ..backends.serving.model_manager import (
     ModelManagerBackend,
     looks_like_bundle_id,
 )
+from ..backends.serving.ps import human_duration, list_served
 from .._compat import confirm
 from ..cli import JsonFlag, QuietFlag, handle_tt_errors
 from ..context import get_app_context
@@ -750,3 +751,70 @@ def _rm_catalog_model(appctx, model, *, include_weights: bool, dry_run: bool, ye
         freed += hub.delete_cached_weights(model.hf_repo, appctx.config)
     payload["total_bytes"] = freed
     appctx.output.emit(payload, renderer=render, soft_wrap=True)
+
+
+# -- what is being served --------------------------------------------------------------
+def _ps_table(payload: dict) -> Table | str:
+    rows = payload["served"]
+    if not rows:
+        return (
+            "No model servers running. `tt serve <model>` starts one; "
+            "`tt model ps --all` includes stopped containers."
+        )
+    table = Table(
+        title="Served models",
+        caption=(
+            "health: healthy answers GET /v1/models; starting is running but not "
+            "answering yet (docker logs -f <container>); stopped appears only with "
+            "--all; unknown means not probed or no published port."
+        ),
+    )
+    table.add_column("name", overflow="fold")
+    table.add_column("backend")
+    table.add_column("container")
+    table.add_column("port")
+    table.add_column("health")
+    table.add_column("uptime")
+    for row in rows:
+        table.add_row(
+            row["name"],
+            row["backend"],
+            row["container"] or "—",
+            str(row["port"]) if row["port"] else "—",
+            row["health"],
+            human_duration(row["uptime_s"]) or "—",
+        )
+    return table
+
+
+@model_app.command("ps")
+@handle_tt_errors
+def ps_models(
+    ctx: typer.Context,
+    all_: bool = typer.Option(
+        False, "--all", "-a", help="Include stopped model containers, not just running ones."
+    ),
+    no_probe: bool = typer.Option(
+        False,
+        "--no-probe",
+        help="Skip the HTTP health check (GET /v1/models on each server); "
+        "health shows as unknown.",
+    ),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+) -> None:
+    """List the model servers on this machine: name, backend, container, port, health, uptime.
+
+    Covers tt-inference-server containers (`tt serve`), tt-model bundles and
+    TT-Studio model containers. Exits 0 with an empty list when nothing is served.
+    """
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    runtime = InferenceServerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    ).container_runtime()
+    rows = list_served(appctx.runner, runtime, include_stopped=all_, probe=not no_probe)
+    appctx.output.emit(
+        {"served": [dataclasses.asdict(r) for r in rows], "probed": not no_probe},
+        renderer=_ps_table,
+    )

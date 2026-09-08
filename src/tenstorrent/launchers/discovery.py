@@ -39,13 +39,17 @@ def base_url_for(url: str | None, port: int | None) -> str:
     return DEFAULT_BASE_URL
 
 
-def discover(base_url: str) -> list[RunningModel]:
+def discover(base_url: str, *, timeout_s: float = _TIMEOUT_S) -> list[RunningModel]:
     """Every model the server at `base_url` reports, in its own order."""
     url = f"{base_url}/models"
     try:
-        with urllib.request.urlopen(url, timeout=_TIMEOUT_S) as response:
+        with urllib.request.urlopen(url, timeout=timeout_s) as response:
             doc = json.load(response)
-    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        if not isinstance(doc, dict):
+            # A foreign server returning a JSON array or scalar is "not a model
+            # server", not a crash.
+            raise ValueError(f"expected an object, got {type(doc).__name__}")
+    except (urllib.error.URLError, OSError, ValueError) as exc:
         raise TTError(
             f"No OpenAI-compatible server answered at {base_url}.",
             why=f"GET {url} failed ({exc}).",
@@ -65,7 +69,7 @@ def discover(base_url: str) -> list[RunningModel]:
             max_context=item.get("max_model_len"),
         )
         for item in (doc.get("data") or [])
-        if item.get("id")
+        if isinstance(item, dict) and item.get("id")
     ]
     if not served:
         raise TTError(
@@ -76,3 +80,15 @@ def discover(base_url: str) -> list[RunningModel]:
             details={"base_url": base_url},
         )
     return served
+
+
+def probe(base_url: str, *, timeout_s: float = _TIMEOUT_S) -> list[RunningModel] | None:
+    """discover() for callers that only want to know whether a model server answers.
+
+    None when nothing OpenAI-compatible replied — refused, timed out, a foreign
+    server (TT-Studio's own backend answers 404 on 8000), or an empty list — so
+    `tt model ps` can mark a row "starting" instead of failing the listing."""
+    try:
+        return discover(base_url, timeout_s=timeout_s)
+    except TTError:
+        return None

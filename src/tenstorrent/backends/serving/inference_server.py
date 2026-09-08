@@ -150,7 +150,9 @@ class ServerContainer:
 
 
 def _identity_from_inspect(entry: dict) -> tuple[str | None, str | None]:
-    """(hf_repo, volume_name) read out of one `docker inspect` record."""
+    """(hf_repo, volume_name) read out of one `docker inspect` record.
+
+    Also used by `tt model ps` (backends/serving/ps.py) to name a container."""
     hf_repo = volume = None
     for mount in entry.get("Mounts") or []:
         match = _HF_SNAPSHOT_RE.search(str(mount.get("Source") or ""))
@@ -575,7 +577,7 @@ class InferenceServerBackend:
             raise TTError(
                 "No container runtime found.",
                 why="tt-inference-server runs its model backends in containers, so "
-                "stopping one needs docker or podman.",
+                "listing or stopping one needs docker or podman.",
                 next_step="Install one — e.g. https://docs.docker.com/engine/install/",
                 exit_code=ExitCode.TOOL_MISSING,
                 details={"tool": "docker"},
