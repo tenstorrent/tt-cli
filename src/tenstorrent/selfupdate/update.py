@@ -69,8 +69,20 @@ def upgrade_command(layout: InstallLayout, version: str) -> tuple[list[str], dic
             env["UV_TOOL_BIN_DIR"] = layout.extra["bin_dir"]
         # `uv tool upgrade` honours the specifier recorded at install time, so a pinned
         # install (`tenstorrent==0.1.0`) would be a silent no-op. `install --force`
-        # re-pins to the version we announced.
-        return [_find_uv_for(layout), "tool", "install", "--force", requirement], env
+        # re-pins to the version we announced. `--refresh-package` makes uv re-fetch
+        # tenstorrent's index page: the version check reads PyPI's JSON API, but uv
+        # resolves from a cached simple-index page (PyPI serves it with a 10-minute
+        # lifetime), so right after a release uv can insist the announced version
+        # does not exist.
+        return [
+            _find_uv_for(layout),
+            "tool",
+            "install",
+            "--force",
+            "--refresh-package",
+            PACKAGE,
+            requirement,
+        ], env
     if layout.kind == KIND_PIPX:
         pipx = shutil.which("pipx")
         if not pipx:
@@ -89,7 +101,16 @@ def upgrade_command(layout: InstallLayout, version: str) -> tuple[list[str], dic
         # pip-made one has pip's own config (mirrors, index pins) that uv would bypass.
         if layout.installer == "pip" and _has_pip():
             return [layout.python, "-m", "pip", "install", requirement], env
-        return [_find_uv_for(layout), "pip", "install", "--python", layout.python, requirement], env
+        return [
+            _find_uv_for(layout),
+            "pip",
+            "install",
+            "--python",
+            layout.python,
+            "--refresh-package",
+            PACKAGE,
+            requirement,
+        ], env
     raise TTError(
         "tt cannot upgrade itself in this environment.",
         why=layout.detail,

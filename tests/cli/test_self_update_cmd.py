@@ -114,7 +114,9 @@ def test_uv_tool_upgrade_runs_uv_with_the_receipt_dirs(runner, source, uv_tool_l
     data = _json(result)
     assert data["status"] == "upgraded" and data["to"] == NEWER
     argv = [json.loads(line) for line in uv_bin.read_text().splitlines()]
-    assert argv == [["tool", "install", "--force", f"tenstorrent=={NEWER}"]]
+    assert argv == [
+        ["tool", "install", "--force", "--refresh-package", "tenstorrent", f"tenstorrent=={NEWER}"]
+    ]
     # A fresh check is recorded against the new version: no stale notice afterwards.
     assert C.UpdateState(get_paths()).pending(__version__) is None
 
@@ -122,7 +124,15 @@ def test_uv_tool_upgrade_runs_uv_with_the_receipt_dirs(runner, source, uv_tool_l
 def test_upgrade_env_points_uv_at_this_tool_venv(uv_tool_layout, monkeypatch):
     monkeypatch.setenv("TT_UV_BIN", "/fake/uv")
     argv, env = U.upgrade_command(uv_tool_layout, NEWER)
-    assert argv == ["/fake/uv", "tool", "install", "--force", f"tenstorrent=={NEWER}"]
+    assert argv == [
+        "/fake/uv",
+        "tool",
+        "install",
+        "--force",
+        "--refresh-package",
+        "tenstorrent",
+        f"tenstorrent=={NEWER}",
+    ]
     assert env["UV_TOOL_DIR"] == uv_tool_layout.extra["tool_dir"]
     assert env["UV_TOOL_BIN_DIR"] == uv_tool_layout.extra["bin_dir"]
 
@@ -149,7 +159,16 @@ def test_sole_venv_uses_the_installer_that_made_it(tmp_path, monkeypatch):
     assert U.upgrade_command(pip_venv, NEWER)[0] == ["/v/bin/python", "-m", "pip", "install", f"tenstorrent=={NEWER}"]
     # No pip module (a uv-made venv, or pip stripped): go through uv against that python.
     monkeypatch.setattr(U, "_has_pip", lambda: False)
-    assert U.upgrade_command(pip_venv, NEWER)[0] == ["/fake/uv", "pip", "install", "--python", "/v/bin/python", f"tenstorrent=={NEWER}"]
+    assert U.upgrade_command(pip_venv, NEWER)[0] == [
+        "/fake/uv",
+        "pip",
+        "install",
+        "--python",
+        "/v/bin/python",
+        "--refresh-package",
+        "tenstorrent",
+        f"tenstorrent=={NEWER}",
+    ]
     uv_venv = L.InstallLayout(L.KIND_VENV, tmp_path, "uv", __version__, "/v/bin/python")
     monkeypatch.setattr(U, "_has_pip", lambda: True)
     assert U.upgrade_command(uv_venv, NEWER)[0][:3] == ["/fake/uv", "pip", "install"]
