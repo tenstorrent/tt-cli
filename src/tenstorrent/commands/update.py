@@ -186,7 +186,7 @@ def update(
         False,
         "--include-lazy",
         help="Also install optional tools that are not present yet — the ones tt "
-        "fetches on first use (tt-model, tt-inference-server).",
+        "fetches on first use (tt-inference-server).",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would change without changing it."
