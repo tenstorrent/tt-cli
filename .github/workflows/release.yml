@@ -9,12 +9,12 @@ name: release
 # temp branches. A tag that disagrees with `__version__` fails in the first job,
 # before anything is built or published.
 #
-# Order of the publishing jobs is deliberate: TestPyPI (a rehearsal), then the
-# GitHub release (deletable), then PyPI last, because a PyPI upload is the one step
-# that cannot be undone or re-run.
+# Order of the publishing jobs is deliberate: the GitHub release (deletable) first,
+# then PyPI last, because a PyPI upload is the one step that cannot be undone or
+# re-run. The TestPyPI rehearsal job is kept but disabled (`if: false`); flip it
+# back on and add it to the downstream `needs` lists to reinstate it.
 #
-# workflow_dispatch builds and validates the same artifacts without publishing;
-# choose `testpypi` to also exercise the full upload path.
+# workflow_dispatch builds and validates the same artifacts without publishing.
 
 on:
   push:
@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Also upload to TestPyPI (never touches PyPI, never tags)"
+        description: "Also upload to TestPyPI (currently disabled, see publish-testpypi)"
         type: choice
         options: ["no", "testpypi"]
         default: "no"
@@ -127,12 +127,16 @@ jobs:
     needs: [build]
     uses: ./.github/workflows/tests.yml
 
+  # Disabled: no TestPyPI trusted publisher is configured for this project. Re-enable
+  # by restoring the `if` below and adding this job back to the `needs` of
+  # github-release and publish-pypi.
   publish-testpypi:
     name: Publish to TestPyPI
     needs: [build, test]
-    if: >-
-      github.repository == 'tenstorrent/tt-cli'
-      && (startsWith(github.ref, 'refs/tags/v') || inputs.publish == 'testpypi')
+    if: false
+    # if: >-
+    #   github.repository == 'tenstorrent/tt-cli'
+    #   && (startsWith(github.ref, 'refs/tags/v') || inputs.publish == 'testpypi')
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -158,7 +162,7 @@ jobs:
 
   github-release:
     name: Create GitHub release
-    needs: [build, test, publish-testpypi]
+    needs: [build, test]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -207,7 +211,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [build, test, publish-testpypi, github-release]
+    needs: [build, test, github-release]
     if: >-
       github.repository == 'tenstorrent/tt-cli'
       && startsWith(github.ref, 'refs/tags/v')
