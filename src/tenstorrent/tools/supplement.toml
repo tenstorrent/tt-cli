@@ -26,21 +26,21 @@ kind = "script"
 # upstream defaults). tt-cli explicitly passes --update-firmware=on for a normal
 # update so current or newer firmware is never reflashed; --force opts back into
 # the upstream force behavior.
-golden_version = "3.5.4"
+golden_version = "3.6.0"
 # Interpreter the installer's managed venv (~/.tenstorrent-venv) is built with.
 # Passed as `--python-version=<this> --use-uv`; install.sh only honors the pin with
 # --use-uv, which lets uv provision the interpreter instead of trusting the distro
 # python. Only applied when running the golden installer — older releases predate
 # the flag and would die on an unrecognized option.
 python = "3.12"
-url = "https://github.com/tenstorrent/tt-installer/releases/download/v3.5.4/install.sh"
+url = "https://github.com/tenstorrent/tt-installer/releases/download/v3.6.0/install.sh"
 # {version} slot lets `tt update <semver>` fetch a specific install.sh release
 # (e.g. to downgrade the system stack). Only the golden version is sha256-pinned;
 # user-requested versions are fetched unpinned (with a warning).
 url_template = "https://github.com/tenstorrent/tt-installer/releases/download/v{version}/install.sh"
 # sha256 of the released v3.5.4 asset (pinned 2026-08-18; matches GitHub's
 # published asset digest for the release).
-sha256 = "c11d7b2aeb087c35e8c3c26445e928a7016294cd6cb44129616e13a9fb2a67da"
+sha256 = "4d92f81270801765e2e8eac313a1920e5a77c334fd76a16c88cff11da4cb91c8"
 needs_sudo = true # install.sh sudo's internally
 
 [tools.tt-inference-server]
@@ -49,7 +49,7 @@ kind = "git-venv"
 # name (kind = "uv-tool") with a one-line change once it ships to PyPI.
 # v0.18.0 is the first pin validated on Blackhole P300 hardware (earlier tags,
 # e.g. v0.6.0, predate the p300/p300x2 device types entirely).
-golden_version = "v0.18.0"
+golden_version = "v0.21.0"
 repo = "https://github.com/tenstorrent/tt-inference-server"
 entry = "run.py"
 python = "3.10"
@@ -74,6 +74,6 @@ package = "tt-model"
 repo = "https://github.com/tenstorrent/tt-model-manager"
 # Upstream publishes no tags yet, so the pin is a commit. Bumping it reinstalls
 # via registry.ensure() (recorded state != golden pin).
-golden_version = "019abcb143d369450436c2778b9b40267d1e6903"
+golden_version = "36957478af122b74912ef1990f17e9451ac13e1b"
 python = "3.10"
 health = ["--version"]

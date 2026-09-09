@@ -97,7 +97,7 @@ jobs:
       # it decides which tt-sw-manifest goldens the runner is provisioned with,
       # and 3.5.1+ also waits on the dpkg lock instead of dying on concurrent apt.
       - name: Install Tenstorrent stack
-        uses: tenstorrent/tt-installer@v3.5.4
+        uses: tenstorrent/tt-installer@v3.6.0
         with:
           channel: release
           mode: hardware
