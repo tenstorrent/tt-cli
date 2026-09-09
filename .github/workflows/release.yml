@@ -30,6 +30,8 @@ on:
 permissions:
   contents: read
 
+# Must never equal the group tests.yml computes for the same ref, or the `test`
+# job below waits on this run and the run waits on it (see tests.yml).
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false

@@ -16,8 +16,12 @@ on:
         type: boolean
         default: true
 
+# The group name is spelled out rather than taken from `github.workflow`: inside a
+# workflow_call the whole `github` context is the caller's, so the expression would
+# resolve to `release-<ref>` — the very group release.yml already holds while it
+# waits on this job. GitHub sees that as a deadlock and cancels the release.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
