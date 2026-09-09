@@ -1,0 +1,249 @@
+# Models the pinned tt-inference-server release advertises that do not actually
+# work on Tenstorrent hardware, recorded per board.
+#
+# INPUT, never generated. scripts/build_model_support.py reads this file and
+# validates it, but never writes it: model_support.json is the output, and CI
+# regenerates it, so a fix belongs here and nowhere else.
+#
+# Deleting an entry genuinely un-hides the model on the next build. That is the
+# point — a mark that outlives its bug is as harmful as a missing one, so every
+# entry has to say what breaks and when someone last saw it break.
+#
+# `device` is a spec device_type, lowercased ("p300x2", "p150x4"). Omit it for a
+# defect that is not board-specific. A device that the model's spec does not
+# claim is an error, not a silent no-op: a "p150x4" / "P150X4" casing slip once
+# left a model on offer on a board it was meant to be pulled from.
+#
+# reason:
+#   broken      — does not deploy, or deploys and does not run. A bug.
+#   unsupported — runs on the server, but tt has no path to drive it.
+#
+# Only `broken` marks are carried over from tt-studio. Its "no UI for this
+# modality" marks (embeddings) describe a Studio constraint the CLI does not
+# share, so those models stay listed here.
+
+schema_version = 1
+
+# ---------------------------------------------------------------------------
+# 70B llamas on four-chip Blackhole meshes
+# ---------------------------------------------------------------------------
+
+[[override]]
+model = "DeepSeek-R1-Distill-Llama-70B"
+device = "p300x2"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = "Non-functional deploy (tt-studio#869)."
+
+[[override]]
+model = "DeepSeek-R1-Distill-Llama-70B"
+device = "p150x4"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = """
+Does not deploy. Both four-chip Blackhole meshes are known bad for this model, \
+so neither is offered."""
+
+[[override]]
+model = "Llama-3.1-70B"
+device = "p300x2"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = "Deploy does not resolve a usable image (tt-studio#904)."
+
+[[override]]
+model = "Llama-3.1-70B"
+device = "p150x4"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = """
+Does not deploy. Both four-chip Blackhole meshes are known bad for this model, \
+so neither is offered."""
+
+[[override]]
+model = "Llama-3.1-70B-Instruct"
+device = "p300x2"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = """
+Deploy needs a docker image override tt cannot express (tt-studio#904). Use \
+Llama-3.3-70B-Instruct instead."""
+
+[[override]]
+model = "Llama-3.1-70B-Instruct"
+device = "p150x4"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = """
+Does not deploy. Both four-chip Blackhole meshes are known bad for this model, \
+so neither is offered."""
+
+#TODO: remove this once the trace region size is fixed
+[[override]]
+model = "Llama-3.3-70B-Instruct"
+device = "p150x4"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = """
+Trace region size is set to 30MB; this model needs at least 57MB. Its p300x2 \
+spec is unaffected and stays available."""
+
+# ---------------------------------------------------------------------------
+# vLLM
+# ---------------------------------------------------------------------------
+
+[[override]]
+model = "gpt-oss-120b"
+device = "p300x2"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = "The vLLM container never reaches a healthy state."
+
+# ---------------------------------------------------------------------------
+# Media (diffusion / video)
+# ---------------------------------------------------------------------------
+
+[[override]]
+model = "Z-Image-Turbo"
+device = "p300x2"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = """
+Wedges Blackhole p300 devices during warmup (eth-core init timeout, or a hard \
+device hang mid kernel-compile) badly enough that the host needs a board \
+reset. Re-check once the media image ships a tt-metal/firmware combination \
+validated on firmware 19.7.0."""
+
+[[override]]
+model = "Motif-Image-6B-Preview"
+device = "p300x2"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = "The media container never reaches a healthy state."
+
+[[override]]
+model = "mochi-1-preview"
+device = "p300x2"
+reason = "broken"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = """
+Deploy fails with the spec-pinned image; needs a newer media image plus a \
+spec-level env override the release artifact does not carry."""
+
+[[override]]
+model = "mochi-1-preview"
+device = "p150x4"
+reason = "broken"
+verified_on = "2026-09-03"
+source = "tt-cli"
+details = """
+Does not deploy on p150x4 either, for the same reason as its p300x2 entry: no \
+image override is known that makes it work on a four-chip Blackhole mesh."""
+
+# ===========================================================================
+# Device fallbacks
+# ===========================================================================
+# The release spec declares every device explicitly and never implies that a
+# model specced for one runs on another. These rules add the substitutions that
+# do hold: the build fills the missing device from `serve_as`, and `tt serve`
+# sends `--device <serve_as>` — sending the board's own name would 404 on the
+# spec lookup. A rule never shadows a device whose own spec works, and never
+# borrows from one that is marked broken.
+#
+# `support_source` says which kind of substitution it is, because they are not
+# equally safe: "mesh-equivalent" runs the same topology under another name,
+# while "single-chip" runs the model on one chip of a larger board and leaves
+# the rest idle.
+
+[[device_fallback]]
+device = "p150x4"
+serve_as = "p300x2"
+engines = ["vLLM"]
+support_source = "mesh-equivalent"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = """
+Several chat models publish a p300x2 spec and no p150x4 one. The p300x2 specs are the maintained pair of the two, so this is also the better spec to run."""
+
+[[device_fallback]]
+device = "p300x2"
+serve_as = "p150x4"
+engines = ["vLLM"]
+support_source = "mesh-equivalent"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = "The reverse direction, for a model specced only for p150x4."
+
+[[device_fallback]]
+device = "p150x4"
+serve_as = "p150"
+engines = ["media"]
+support_source = "single-chip"
+verified_on = "2026-09-03"
+source = "tt-cli"
+details = """
+Media models specced for a single Blackhole chip run on one chip of a p150x4 \
+board: verified for distil-large-v3, speecht5_tts and whisper-large-v3, which \
+already reach p300x2 through their own specs.
+
+Deliberately media only. Forge was tried and does not work — Falcon3-7B-Instruct \
+and yolox_nano fail on p150x4 despite their p150 specs. And vLLM models declare \
+their own mesh specs, so narrowing one to a single chip would waste three \
+quarters of the board rather than fix anything."""
+
+# ===========================================================================
+# Serve-time overrides
+# ===========================================================================
+# Flags `tt serve` must pass because the spec's own value is wrong or missing.
+# Only what run.py can express:
+#   docker_image       -> --override-docker-image
+#   override_tt_config -> --override-tt-config  (vLLM only, see below)
+#
+# NOT here, deliberately:
+#   * Llama-3.3-70B-Instruct / p150x4 trace region. tt-studio carries one, but it
+#     never fires: the p150x4 spec is marked broken above, so the model resolves
+#     through mesh equivalence to p300x2, whose spec already has the right value.
+#   * FLUX trace regions on p150x4. tt-studio forces 51 MB there, but the image
+#     override below is what makes those two work and the trace override is not
+#     needed alongside it (verified on hardware). Just as well: media containers
+#     read that setting from container env (pydantic BaseSettings), not from the
+#     vLLM additional_config --override-tt-config feeds, and run.py has no flag
+#     to set container env — tt-studio patches its own service to bridge the
+#     two, and tt has no equivalent seam.
+
+[[serve_override]]
+model = "Wan2.2-T2V-A14B-Diffusers"
+docker_image = "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = """
+0.17.0 carries the MODEL_WEIGHTS_DIR fix (tt-inference-server#4107), so the \
+container reads the mounted host HF cache instead of re-downloading ~118 GB. \
+Applies on every board."""
+
+[[serve_override]]
+model = "FLUX.1-dev"
+device = "p150x4"
+docker_image = "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = "The p150x4 spec resolves to 0.10.0-555f240, whose API tt cannot drive."
+
+[[serve_override]]
+model = "FLUX.1-schnell"
+device = "p150x4"
+docker_image = "ghcr.io/tenstorrent/tt-media-inference-server:0.18.0-c49bb76"
+verified_on = "2026-08-14"
+source = "tt-studio"
+details = "The p150x4 spec resolves to 0.10.0-555f240, whose API tt cannot drive."

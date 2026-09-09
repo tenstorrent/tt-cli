@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Fake tt-smi for tests.
+
+- `-s [-f FILE]` emits a canned snapshot (scenario via FAKE_SMI_SCENARIO:
+  normal | multi | empty | malformed | error; default normal). With -f the JSON
+  is written to the file (like real tt-smi); without it, to stdout.
+- `-r [LIST]` logs a reset (argv recorded to FAKE_SMI_LOG if set).
+- no args prints a TUI marker (stands in for the interactive TUI).
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+def record() -> None:
+    log = os.environ.get("FAKE_SMI_LOG")
+    if log:
+        with open(log, "a") as fh:
+            fh.write(json.dumps(sys.argv[1:]) + "\n")
+
+
+def main() -> int:
+    record()
+    args = sys.argv[1:]
+    scenario = os.environ.get("FAKE_SMI_SCENARIO", "normal")
+
+    if "--version" in args or "-v" in args:
+        print("5.3.0")
+        return 0
+
+    if "-r" in args:
+        idx = args.index("-r")
+        targets = args[idx + 1] if len(args) > idx + 1 else "all"
+        print(f"fake tt-smi: resetting {targets}")
+        return 0
+
+    if "-s" in args:
+        if scenario == "error":
+            print("fake tt-smi: No Tenstorrent devices found!", file=sys.stderr)
+            return 1
+        fixture = DATA_DIR / f"snapshot_{scenario}.json"
+        text = fixture.read_text()
+        if "-f" in args:
+            out = Path(args[args.index("-f") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(text)
+            print(f"Saved snapshot to {out}")
+        else:
+            print(text)
+        return 0
+
+    print("FAKE TT-SMI TUI RUNNING")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

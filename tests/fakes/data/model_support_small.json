@@ -1,0 +1,225 @@
+{
+ "_comment": [
+  "Hand-maintained stand-in for src/tenstorrent/modelhub/model_support.json, so",
+  "exact assertions do not move whenever the real one is regenerated.",
+  "Five models, chosen to cover one of everything:",
+  "  Llama-3.1-8B-Instruct  vLLM; p150x4 borrowed from p300x2 (device fallback)",
+  "  Qwen3-32B              vLLM on one device only",
+  "  resnet-50              forge; bare-label hf_repo (weights ship in the image)",
+  "  speecht5_tts           media TTS; weights fetched inside the container",
+  "  whisper-large-v3       media; broken on p300x2, serve_overrides on n150",
+  "Keep the shape in step with scripts/build_model_support.py; parse_model_support",
+  "ignores unknown keys, including this one."
+ ],
+ "schema_version": 1,
+ "release_version": "0.18.0",
+ "models": [
+  {
+   "name": "Llama-3.1-8B-Instruct",
+   "hf_repo": "meta-llama/Llama-3.1-8B-Instruct",
+   "model_type": "llm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Llama-3.1-8B-Instruct",
+   "param_count": 8,
+   "min_disk_gb": 36,
+   "min_ram_gb": 20.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/example/vllm:0.17.0",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "impl_id": "tt_transformers",
+     "version": "0.17.0"
+    },
+    "p150x4": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/example/vllm:0.17.0",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "serve_as": "p300x2",
+     "support_source": "mesh-equivalent",
+     "impl_id": "tt_transformers",
+     "version": "0.17.0"
+    },
+    "p300": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/example/vllm:0.17.0",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "impl_id": "tt_transformers",
+     "version": "0.17.0"
+    },
+    "p300x2": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/example/vllm:0.17.0",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "impl_id": "tt_transformers",
+     "version": "0.17.0"
+    }
+   }
+  },
+  {
+   "name": "Qwen3-32B",
+   "hf_repo": "Qwen/Qwen3-32B",
+   "model_type": "llm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Qwen3-32B",
+   "param_count": 32,
+   "min_disk_gb": 130,
+   "min_ram_gb": 64.0,
+   "devices": {
+    "galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/example/vllm:0.17.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": "qwen3",
+     "override_tt_config": null,
+     "impl_id": "tt_transformers",
+     "version": "0.17.0"
+    }
+   }
+  },
+  {
+   "name": "resnet-50",
+   "hf_repo": "resnet-50",
+   "model_type": "cnn",
+   "engines": [
+    "forge"
+   ],
+   "tt_model_id": "resnet-50",
+   "param_count": 0,
+   "min_disk_gb": 1,
+   "min_ram_gb": 2.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "forge"
+     ],
+     "status": "COMPLETE",
+     "max_context": null,
+     "supported": true,
+     "docker_image": "ghcr.io/example/forge:0.17.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "impl_id": "tt_transformers",
+     "version": "0.17.0"
+    }
+   }
+  },
+  {
+   "name": "speecht5_tts",
+   "hf_repo": "microsoft/speecht5_tts",
+   "model_type": "text_to_speech",
+   "engines": [
+    "media"
+   ],
+   "tt_model_id": "speecht5_tts",
+   "param_count": 1,
+   "min_disk_gb": 2,
+   "min_ram_gb": 4.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "media"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": null,
+     "supported": true,
+     "docker_image": "ghcr.io/example/media:0.10.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "impl_id": "tt_transformers",
+     "version": "0.17.0"
+    }
+   }
+  },
+  {
+   "name": "whisper-large-v3",
+   "hf_repo": "openai/whisper-large-v3",
+   "model_type": "audio",
+   "engines": [
+    "media"
+   ],
+   "tt_model_id": "whisper-large-v3",
+   "param_count": 2,
+   "min_disk_gb": 10,
+   "min_ram_gb": 8.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "media"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": null,
+     "supported": true,
+     "docker_image": "ghcr.io/example/media:0.10.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "serve_overrides": {
+      "docker_image": "ghcr.io/example/media:0.17.0"
+     },
+     "impl_id": "tt_transformers",
+     "version": "0.17.0"
+    },
+    "p300x2": {
+     "engines": [
+      "media"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": null,
+     "supported": false,
+     "unsupported": {
+      "reason": "broken",
+      "details": "Container never reaches a healthy state.",
+      "verified_on": "2026-08-14",
+      "source": "tt-cli-tests"
+     },
+     "docker_image": "ghcr.io/example/media:0.10.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "impl_id": "tt_transformers",
+     "version": "0.17.0"
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,82 @@
+# The golden-version pin plus CLI-only tools tt-sw-manifest doesn't cover.
+# The installer-managed stack versions (smi, flash, kmd, sfpi, firmware, ...)
+# are NOT recorded here: `tt update` fetches golden.json at the [golden] tag
+# and caches it — see manifest.py.
+schema_version = 1
+
+[golden]
+# The tt-sw-manifest release we pin. golden.json is its distro-agnostic
+# component→version map; `tt update` fetches it at this tag, verifies it against
+# `sha256` (GitHub's published asset digest), and caches it keyed by the tag.
+# `tag` must equal TTIS_GOLDEN_VERSIONS_TAG in the pinned install.sh below —
+# that is the release the installer converges the system stack to, so a mismatch
+# means tt would display and pin versions the installer won't install.
+# `tt update` refuses to run a golden install.sh whose tag differs from `tag`.
+# Bump the installer pin and this table together.
+tag = "v1.0.0"
+sha256 = "d28c32a3213e55f49b88c312a796144d45f1cb7844fde2a6bf02f235d9a91217"
+url_template = "https://github.com/tenstorrent/tt-sw-manifest/releases/download/{tag}/golden.json"
+
+[tools.tt-installer]
+kind = "script"
+# Supports --versions=<channel|.ttis path>; the older --import-schema flag is gone.
+# Flag contract (--mode-non-interactive, --versions, --reboot-option,
+# --update-firmware=force) re-verified against the v3.5.4 script on 2026-08-18
+# (unchanged; --use-uv/--python-version=3.12/--update-firmware=force are now the
+# upstream defaults). tt-cli explicitly passes --update-firmware=on for a normal
+# update so current or newer firmware is never reflashed; --force opts back into
+# the upstream force behavior.
+golden_version = "3.5.4"
+# Interpreter the installer's managed venv (~/.tenstorrent-venv) is built with.
+# Passed as `--python-version=<this> --use-uv`; install.sh only honors the pin with
+# --use-uv, which lets uv provision the interpreter instead of trusting the distro
+# python. Only applied when running the golden installer — older releases predate
+# the flag and would die on an unrecognized option.
+python = "3.12"
+url = "https://github.com/tenstorrent/tt-installer/releases/download/v3.5.4/install.sh"
+# {version} slot lets `tt update <semver>` fetch a specific install.sh release
+# (e.g. to downgrade the system stack). Only the golden version is sha256-pinned;
+# user-requested versions are fetched unpinned (with a warning).
+url_template = "https://github.com/tenstorrent/tt-installer/releases/download/v{version}/install.sh"
+# sha256 of the released v3.5.4 asset (pinned 2026-08-18; matches GitHub's
+# published asset digest for the release).
+sha256 = "c11d7b2aeb087c35e8c3c26445e928a7016294cd6cb44129616e13a9fb2a67da"
+needs_sudo = true # install.sh sudo's internally
+
+[tools.tt-inference-server]
+kind = "git-venv"
+# Not yet on PyPI; sourced from git at a pinned ref. Swap to a plain package
+# name (kind = "uv-tool") with a one-line change once it ships to PyPI.
+# v0.18.0 is the first pin validated on Blackhole P300 hardware (earlier tags,
+# e.g. v0.6.0, predate the p300/p300x2 device types entirely).
+golden_version = "v0.18.0"
+repo = "https://github.com/tenstorrent/tt-inference-server"
+entry = "run.py"
+python = "3.10"
+# run.py's own import closure. The repo has no root requirements.txt — it
+# bootstraps heavyweight per-workflow venvs itself from inside run.py.
+deps = ["pyyaml", "packaging"]
+# Only users who serve need it, and the checkout is ~180 MB — `tt update` keeps it
+# current once it is present but will not fetch it for someone who never serves
+# (`tt serve` installs it on first use; `tt update --include-lazy` forces it).
+lazy = true
+
+[tools.tt-model]
+# tt-model-manager: publishes and pulls self-contained tt-metal model bundles over
+# the HF Hub and serves them — a parallel serving path to tt-inference-server, not
+# a replacement. Keyed `tt-model` because that is the distribution, the command it
+# installs, and what `TT_TOOL_BIN_TT_MODEL` overrides; the repo it is pinned from
+# is tt-model-manager (see `repo` below).
+kind = "uv-tool"
+package = "tt-model"
+# Not on PyPI yet, so uv installs it from a git ref (see UvToolInstaller). Swap to
+# a plain pinned version once it publishes: drop `repo`, set golden_version.
+repo = "https://github.com/tenstorrent/tt-model-manager"
+# Upstream publishes no tags yet, so the pin is a commit. Bumping it reinstalls
+# via registry.ensure() (recorded state != golden pin).
+golden_version = "019abcb143d369450436c2778b9b40267d1e6903"
+python = "3.10"
+health = ["--version"]
+# Only users on the tt-model serving path need it, and a git fetch can fail —
+# `tt update` skips it and the first `tt serve` through this path installs it.
+lazy = true

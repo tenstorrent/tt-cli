@@ -1,0 +1,56 @@
+name: bump-pins
+
+# Weekly bump of the upstream pins in supplement.toml (tt-installer, tt-sw-manifest,
+# tt-inference-server, tt-model-manager) and the files that must move with them,
+# opened as one PR. Dependabot/Renovate cannot do this: the pins carry asset sha256s,
+# the golden tag has to follow the pinned install.sh, and an inference-server bump
+# has to re-bundle release_model_spec.json. scripts/bump_pins.py owns all of that;
+# this workflow only schedules it and turns the diff into a PR.
+#
+# The PR is a prompt for a human, never auto-merged: its body carries the review
+# checklist (flag contract, device map, container naming) that no test covers.
+
+on:
+  schedule:
+    - cron: "0 8 * * 1" # Mondays 08:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bump-pins
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: bump pins
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1 # no floating major tag past v7
+      - name: Bump pins
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: uv run scripts/bump_pins.py --summary "$RUNNER_TEMP/pr-body.md"
+      # Re-runs update the same branch/PR in place; if nothing changed, no PR is
+      # opened and an existing one is left alone.
+      #
+      # Token: a PR created with the default GITHUB_TOKEN does not trigger the
+      # `tests` workflow (GitHub's guard against recursive runs), so the hardware
+      # smoke test would not run on it. Set the BUMP_PINS_TOKEN repo secret to a
+      # fine-grained PAT or GitHub App token with contents + pull-requests write to
+      # get CI on the PR; without it the PR still opens, but someone has to
+      # close/reopen it (or push to it) to start the checks. The default token also
+      # needs "Allow GitHub Actions to create and approve pull requests" enabled
+      # under Settings → Actions → General.
+      - uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.BUMP_PINS_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: bot/bump-pins
+          delete-branch: true
+          commit-message: Bump pinned upstream tool versions
+          title: Bump pinned upstream tool versions
+          body-path: ${{ runner.temp }}/pr-body.md
+          labels: dependencies

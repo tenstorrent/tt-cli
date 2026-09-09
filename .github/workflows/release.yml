@@ -1,0 +1,229 @@
+name: release
+
+# Cut a release by pushing a tag that matches the packaged version:
+#
+#     # bump __version__ in src/tenstorrent/__init__.py, commit, then:
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# The tag drives everything and nothing here rewrites the repo — no bot commits, no
+# temp branches. A tag that disagrees with `__version__` fails in the first job,
+# before anything is built or published.
+#
+# Order of the publishing jobs is deliberate: TestPyPI (a rehearsal), then the
+# GitHub release (deletable), then PyPI last, because a PyPI upload is the one step
+# that cannot be undone or re-run.
+#
+# workflow_dispatch builds and validates the same artifacts without publishing;
+# choose `testpypi` to also exercise the full upload path.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Also upload to TestPyPI (never touches PyPI, never tags)"
+        type: choice
+        options: ["no", "testpypi"]
+        default: "no"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          # Oldest interpreter we claim to support. The wheel is py3-none-any, so
+          # this only decides what the smoke test runs against.
+          python-version: "3.10"
+
+      - name: Resolve the packaged version
+        id: version
+        run: |
+          python3 -m pip install --quiet packaging
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import pathlib, re
+          from packaging.version import Version
+          source = pathlib.Path("src/tenstorrent/__init__.py").read_text()
+          raw = re.search(r'__version__ = "([^"]+)"', source).group(1)
+          version = Version(raw)  # rejects anything PyPI would reject
+          # An unnormalised literal (1.0.0-rc1) still builds, but the tag, the wheel
+          # filename and `tt --version` would then disagree about the same release.
+          if str(version) != raw:
+              raise SystemExit(f"__version__ '{raw}' is not normalised; write '{version}' instead")
+          print(f"version={raw}")
+          print(f"prerelease={str(version.is_prerelease).lower()}")
+          PY
+
+      - name: Check the tag against the packaged version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="${{ steps.version.outputs.version }}"
+          if [ "${tag}" != "${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match __version__ ${version}"
+            echo "Bump __version__ in src/tenstorrent/__init__.py (pyproject reads it"
+            echo "via [tool.hatch.version]), commit, delete the tag, and retag."
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} matches the packaged version"
+
+      - name: Build sdist and wheel
+        run: |
+          python3 -m pip install --quiet build
+          python3 -m build
+
+      - name: Check the distribution metadata
+        run: |
+          python3 -m pip install --quiet twine
+          python3 -m twine check --strict dist/*
+
+      - name: Smoke-test the wheel in a clean environment
+        env:
+          # Never let a build machine spool or send usage telemetry.
+          TT_TELEMETRY_DISABLED: "1"
+          TT_CONFIG_DIR: /tmp/tt-smoke/config
+          TT_DATA_DIR: /tmp/tt-smoke/data
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/tt-smoke/venv
+          /tmp/tt-smoke/venv/bin/pip install --quiet dist/*.whl
+          printed="$(/tmp/tt-smoke/venv/bin/tt --version)"
+          expected="tt ${{ steps.version.outputs.version }}"
+          if [ "${printed}" != "${expected}" ]; then
+            echo "::error::installed CLI printed '${printed}', expected '${expected}'"
+            exit 1
+          fi
+          /tmp/tt-smoke/venv/bin/tt --help > /dev/null
+          # The bundled manifest and catalog are data files, not modules, so a
+          # packaging slip drops them from the wheel without breaking any import.
+          /tmp/tt-smoke/venv/bin/python -c "from tenstorrent.config.paths import get_paths; from tenstorrent.tools.manifest import LocalManifestSource; from tenstorrent.modelhub.catalog import ModelCatalog; LocalManifestSource(get_paths()).load(); ModelCatalog(); print('bundled data files OK')"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # The full suite, fake-tool matrix and real hardware both. Depending on `build`
+  # keeps a version/tag mismatch from occupying the hardware runner for nothing.
+  test:
+    name: tests
+    needs: [build]
+    uses: ./.github/workflows/tests.yml
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [build, test]
+    if: >-
+      github.repository == 'tenstorrent/tt-cli'
+      && (startsWith(github.ref, 'refs/tags/v') || inputs.publish == 'testpypi')
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/tenstorrent
+    permissions:
+      # Trusted publishing: PyPI verifies this workflow's OIDC identity, so there is
+      # no API token to store or rotate. Configure the publisher at
+      # https://test.pypi.org/manage/account/publishing/ (repo tenstorrent/tt-cli,
+      # workflow release.yml, environment testpypi) before the first upload.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # A version can never be re-uploaded, so a re-run of the workflow must not
+          # fail on files the rehearsal index already has.
+          skip-existing: true
+          print-hash: true
+
+  github-release:
+    name: Create GitHub release
+    needs: [build, test, publish-testpypi]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The changelog builder diffs against the previous tag.
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Build the changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v6
+        with:
+          mode: "HYBRID" # merged PRs and direct commits both
+          configurationJSON: |
+            {
+              "template": "#{{CHANGELOG}}\n\n## Contributors\n#{{CONTRIBUTORS}}\n\n## Install\n\n```bash\nuv tool install tenstorrent==${{ needs.build.outputs.version }}\n# or\npipx install tenstorrent==${{ needs.build.outputs.version }}\n```\n\nThe installed binary is `tt`.",
+              "categories": [
+                {
+                  "title": "## 🔄 Changes",
+                  "labels": []
+                }
+              ],
+              "pr_template": "- #{{TITLE}} (#{{NUMBER}}) by @#{{AUTHOR}}",
+              "commit_template": "- #{{TITLE}} (#{{MERGE_SHA}}) by @#{{AUTHOR}}"
+            }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          files: dist/*
+          draft: false
+          # 0.1.0.dev0, 1.0.0rc1 and friends are flagged so they do not become the
+          # repo's "Latest release".
+          prerelease: ${{ needs.build.outputs.prerelease == 'true' }}
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, test, publish-testpypi, github-release]
+    if: >-
+      github.repository == 'tenstorrent/tt-cli'
+      && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/tenstorrent
+    permissions:
+      # See the TestPyPI job. Publisher lives at
+      # https://pypi.org/manage/account/publishing/ — since `tenstorrent` does not
+      # exist on PyPI yet, add it there as a *pending* publisher, which both claims
+      # the name and authorises this workflow to create the project.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true

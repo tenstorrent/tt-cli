@@ -1,0 +1,112 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # release.yml calls this workflow as its gate, so a tag never ships without a
+  # green suite.
+  workflow_call:
+    inputs:
+      hardware:
+        description: >-
+          Run the real-hardware leg. The escape hatch for a release when the
+          self-hosted runner is down; leave true otherwise.
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ── Cross-distro, hardware-free ────────────────────────────────────────────
+  # The default (fake-tool) suite, run on every distro we want `tt` to support.
+  # No TT hardware, config, or network is touched — every tool is a stand-in
+  # under tests/fakes/. These matrix legs run in parallel.
+  unit:
+    name: unit (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - "ubuntu:22.04"
+          - "ubuntu:24.04"
+          - "debian:13"
+          - "fedora:43"
+    steps:
+      # Bare distro images: install just enough to build the project and make a venv.
+      # uv itself arrives as a project dependency (see pyproject.toml) once installed.
+      - name: Install base tools
+        shell: bash
+        run: |
+          set -eux
+          if command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              python3 python3-venv python3-pip git curl ca-certificates
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y python3 python3-pip git curl
+          fi
+      - uses: actions/checkout@v7
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install project + test runner
+        run: |
+          set -eux
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install . "pytest>=8"
+      - name: Run tests (fake tools)
+        run: .venv/bin/pytest -v
+
+  # ── Real Tenstorrent hardware ──────────────────────────────────────────────
+  # Runs the full hardware suite, including destructive tests. The destructive
+  # tests only do a real `tt device reset` — safe on this runner. No test ever
+  # flashes firmware, and `update-firmware` stays "off" so provisioning never
+  # touches it either (the one thing we must not do on TT-hosted hardware).
+  #
+  # Fork-PR guard: never let untrusted code from a fork run on our self-hosted
+  # hardware. Same-repo PRs, pushes, and manual dispatches only.
+  #
+  # `inputs.hardware == null` is load-bearing, not defensive noise: on push and
+  # pull_request there is no `inputs` context, and GitHub compares a null against a
+  # boolean by coercing both to numbers — so the tempting `inputs.hardware != false`
+  # is false on a plain push and would silently skip this job everywhere.
+  hardware:
+    name: hardware
+    if: >-
+      ${{ (inputs.hardware == null || inputs.hardware)
+      && (github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: tt-ubuntu-2204-n300-stable
+    steps:
+      - uses: actions/checkout@v7
+      # Provision the TT stack (tt-smi et al.) that the tests drive through the
+      # real binaries. On an already-provisioned "stable" runner this is a fast
+      # reinstall; drop this step (or set `if: false`) if the stack is preinstalled.
+      # Keep this version aligned with the tt-installer pin in supplement.toml:
+      # it decides which tt-sw-manifest goldens the runner is provisioned with,
+      # and 3.5.1+ also waits on the dpkg lock instead of dying on concurrent apt.
+      - name: Install Tenstorrent stack
+        uses: tenstorrent/tt-installer@v3.5.4
+        with:
+          channel: release
+          mode: hardware
+          update-firmware: "off"
+          # We never consume the exported .ttis artifact; skipping the upload also
+          # avoids the composite action's inner upload-artifact@v4, whose Node 20
+          # deprecation warning would otherwise be the last one in these runs.
+          upload-artifact: "false"
+      - name: Install project + test runner
+        run: |
+          set -eux
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install . "pytest>=8"
+      - name: Run hardware tests
+        run: .venv/bin/pytest --hardware --run-destructive -v

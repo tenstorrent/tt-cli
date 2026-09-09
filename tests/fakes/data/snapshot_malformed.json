@@ -1,0 +1,18 @@
+{
+  "host_info": "not-an-object",
+  "device_info": [
+    {
+      "board_info": {
+        "bus_id": "0000:01:00.0",
+        "board_type": "n150 L"
+      },
+      "telemetry": {
+        "voltage": "not-a-number",
+        "asic_temperature": "38.6"
+      }
+    },
+    {
+      "telemetry": null
+    }
+  ]
+}

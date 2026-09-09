@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+"""Fake `tt-model` for tests: records argv (and the HF_HOME it inherited) and exits.
+Never touches the network or the Hub."""
+
+import json
+import os
+import sys
+
+
+def main() -> int:
+    log = os.environ.get("FAKE_TT_MODEL_LOG")
+    if log:
+        with open(log, "a") as fh:
+            fh.write(
+                json.dumps({"argv": sys.argv[1:], "hf_home": os.environ.get("HF_HOME")})
+                + "\n"
+            )
+    if os.environ.get("FAKE_TT_MODEL_FAIL"):
+        print("fake tt-model: forced failure", file=sys.stderr)
+        return 1
+    print("fake tt-model: serving")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

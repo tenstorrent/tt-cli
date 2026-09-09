@@ -1,0 +1,19 @@
+{
+    "time": "2026-07-20T21:01:45.676574",
+    "host_info": {
+        "OS": "Linux",
+        "Distro": "Ubuntu 24.04.4 LTS",
+        "Kernel": "7.0.0-28-generic",
+        "Hostname": "tt-quietbox",
+        "Platform": "x86_64",
+        "Python": "3.12.3",
+        "Memory": "249.31 GB",
+        "Driver": "TT-KMD 2.9.0"
+    },
+    "host_sw_vers": {
+        "tt_smi": "5.3.0",
+        "pyluwen": "0.8.5",
+        "tt_umd": "0.9.5"
+    },
+    "device_info": []
+}

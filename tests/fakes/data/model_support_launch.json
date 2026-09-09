@@ -1,0 +1,70 @@
+{
+  "_comment": [
+    "Stand-in support list for the `tt launch` tests. Three models, one per",
+    "capability verdict the adapters branch on:",
+    "  Qwen3-32B             vLLM with a tool-call parser  -> launchable",
+    "  Mistral-7B-Instruct   vLLM, no tool-call parser     -> refused (no tool calling)",
+    "  whisper-large-v3      media                         -> refused (not a language model)",
+    "Kept separate from model_support_small.json so neither file's assertions move",
+    "when the other grows."
+  ],
+  "schema_version": 1,
+  "release_version": "0.18.0",
+  "models": [
+    {
+      "name": "Qwen3-32B",
+      "hf_repo": "Qwen/Qwen3-32B",
+      "model_type": "llm",
+      "engines": ["vLLM"],
+      "tt_model_id": "Qwen3-32B",
+      "param_count": 32,
+      "devices": {
+        "p300x2": {
+          "engines": ["vLLM"],
+          "status": "COMPLETE",
+          "max_context": 131072,
+          "supported": true,
+          "tool_call_parser": "hermes",
+          "reasoning_parser": "qwen3",
+          "impl_id": "tt_transformers",
+          "version": "0.17.0"
+        }
+      }
+    },
+    {
+      "name": "Mistral-7B-Instruct-v0.3",
+      "hf_repo": "mistralai/Mistral-7B-Instruct-v0.3",
+      "model_type": "llm",
+      "engines": ["vLLM"],
+      "tt_model_id": "Mistral-7B-Instruct-v0.3",
+      "param_count": 7,
+      "devices": {
+        "p300x2": {
+          "engines": ["vLLM"],
+          "status": "FUNCTIONAL",
+          "supported": true,
+          "tool_call_parser": null,
+          "reasoning_parser": null,
+          "impl_id": "tt_transformers",
+          "version": "0.17.0"
+        }
+      }
+    },
+    {
+      "name": "whisper-large-v3",
+      "hf_repo": "openai/whisper-large-v3",
+      "model_type": "audio",
+      "engines": ["media"],
+      "tt_model_id": "whisper-large-v3",
+      "devices": {
+        "p300x2": {
+          "engines": ["media"],
+          "status": "FUNCTIONAL",
+          "supported": true,
+          "tool_call_parser": null,
+          "reasoning_parser": null
+        }
+      }
+    }
+  ]
+}
