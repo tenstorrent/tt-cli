@@ -77,6 +77,3 @@ repo = "https://github.com/tenstorrent/tt-model-manager"
 golden_version = "019abcb143d369450436c2778b9b40267d1e6903"
 python = "3.10"
 health = ["--version"]
-# Only users on the tt-model serving path need it, and a git fetch can fail —
-# `tt update` skips it and the first `tt serve` through this path installs it.
-lazy = true
