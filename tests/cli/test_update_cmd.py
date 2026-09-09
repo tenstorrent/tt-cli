@@ -103,14 +103,15 @@ def test_update_dry_run_plans_installs(runner):
 
 
 def test_update_plan_lists_absent_lazy_tools_as_optional(runner):
-    """Lazy tools (tt-model, tt-inference-server) are listed so you can see they
-    exist, but an absent one is not downloaded — `tt update` keeps them
-    current once present and never pays for one you have not used."""
+    """A lazy tool (tt-inference-server) is listed so you can see it exists, but an
+    absent one is not downloaded — `tt update` keeps it current once present and
+    never pays for one you have not used. tt-model is a base package: it installs
+    eagerly like tt-smi."""
     result = runner.invoke(app, ["update", "--dry-run", "--json"])
     assert result.exit_code == 0
     actions = {i["name"]: i["action"] for i in _json(result)["items"]}
     assert actions["tt-smi"] == "install"  # eager: nothing installed yet
-    assert actions["tt-model"] == "optional"
+    assert actions["tt-model"] == "install"
     assert actions["tt-inference-server"] == "optional"
     assert "tt-installer" not in actions  # it *is* the system-stack row
 
@@ -119,7 +120,6 @@ def test_update_include_lazy_plans_optional_tools(runner):
     result = runner.invoke(app, ["update", "--dry-run", "--include-lazy", "--json"])
     assert result.exit_code == 0
     actions = {i["name"]: i["action"] for i in _json(result)["items"]}
-    assert actions["tt-model"] == "install"
     assert actions["tt-inference-server"] == "install"
 
 
@@ -128,8 +128,8 @@ def test_update_installs_lazy_tools_only_with_the_flag(runner, fake_uv, fake_ins
     result = runner.invoke(app, ["update", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json(result)["result"]
-    assert "tt-model" in payload["skipped"]
-    assert "tt-model" not in payload["updated"]
+    assert "tt-inference-server" in payload["skipped"]
+    assert "tt-inference-server" not in payload["updated"]
 
 
 def test_update_keeps_going_when_one_tool_fails(runner, fake_uv, fake_installer, monkeypatch):
@@ -293,7 +293,7 @@ def test_update_second_run_is_up_to_date(runner, fake_uv, fake_installer):
     result = runner.invoke(app, ["update", "--json"])
     assert result.exit_code == 0
     payload = _json(result)
-    assert set(payload["result"]["up_to_date"]) == {"tt-smi", "tt-flash"}
+    assert set(payload["result"]["up_to_date"]) == {"tt-smi", "tt-flash", "tt-model"}
     assert payload["result"]["updated"] == []
     assert len(fake_uv.read_text().splitlines()) == first_uv_calls  # no re-pin calls
     assert payload["result"]["installer_ran"] is True  # system converge is idempotent
