@@ -3,4 +3,4 @@
 
 """Tenstorrent CLI package. The installed binary is `tt`."""
 
-__version__ = "0.1.0.dev0"
+__version__ = "v1.0.0"
