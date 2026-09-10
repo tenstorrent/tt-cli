@@ -58,7 +58,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 |---|---|
 | `tt update [VERSION]` | Converge system software + tools onto the latest tested "golden" set (`--dry-run` to preview; `--yes` to skip the confirmation; `--force` to allow downgrades to golden; a tt-installer VERSION runs that release instead and implies `--force`) |
 | `tt config` | Open the config file in your editor; `list`/`get`/`set`/`path` for scripting, `sync`/`reset` to maintain the file |
-| `tt report issue` | Open a prefilled GitHub issue (repo picker, environment details auto-collected; `--no-browser` to just print the URL) |
+| `tt report issue` | Open a prefilled GitHub issue on tt-cli (environment details auto-collected; `--no-browser` to just print the URL) |
 | `tt self update` | Upgrade `tt` itself where it owns its environment (`--check` to only look) — see [Keeping tt up to date](https://github.com/tenstorrent/tt-cli/blob/main/docs/DEVELOPERS.md#keeping-tt-up-to-date) |
 
 ## Interactive clients with `tt launch`
