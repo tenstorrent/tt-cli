@@ -24,6 +24,7 @@ from ..backends.serving.model_manager import (
     ModelManagerBackend,
     looks_like_bundle_id,
 )
+from ..backends.serving.studio import StudioBackend
 from .._compat import confirm
 from ..cli import JsonFlag, QuietFlag, handle_tt_errors
 from ..context import get_app_context
@@ -31,6 +32,7 @@ from ..errors import ExitCode, TTError
 from ..models.model import ModelInfo
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub import bundles, hub
+from ..modelhub.studio import studio_only
 from ..modelhub.completions import (
     complete_catalog_model,
     complete_local_model,
@@ -85,8 +87,8 @@ def _list_table(payload: dict, *, detected: bool = False) -> Table:
     device = payload["device"]
     if device:
         hint = " (detected — `tt model list --all` for every device)" if detected else ""
-        table = Table(title=f"Models for {device}{hint}")
-        for column in ("name", "type", "engines", "status", "cached"):
+        table = Table(title=f"Models for {device}{hint}", caption=_VIA_CAPTION)
+        for column in ("name", "type", "engines", "status", "via", "cached"):
             table.add_column(column)
         for m in payload["models"]:
             table.add_row(
@@ -94,11 +96,12 @@ def _list_table(payload: dict, *, detected: bool = False) -> Table:
                 m["model_type"],
                 ", ".join(m["engines"]),
                 m["devices"][device]["status"],
+                ", ".join(m["backends"]),
                 _cached_cell(m),
             )
     else:
-        table = Table(title="Model catalog (all devices)")
-        for column in ("name", "type", "engines", "hardware", "cached"):
+        table = Table(title="Model catalog (all devices)", caption=_VIA_CAPTION)
+        for column in ("name", "type", "engines", "hardware", "via", "cached"):
             table.add_column(column)
         for m in payload["models"]:
             table.add_row(
@@ -106,9 +109,16 @@ def _list_table(payload: dict, *, detected: bool = False) -> Table:
                 m["model_type"],
                 ", ".join(m["engines"]),
                 ", ".join(m["hardware"]),
+                ", ".join(m["backends"]),
                 _cached_cell(m),
             )
     return table
+
+
+_VIA_CAPTION = (
+    "via: the serving path `tt serve` uses — inference-server for its released spec, "
+    "studio for the models only TT-Studio carries."
+)
 
 
 _COMMUNITY_CAPTION = (
@@ -278,12 +288,14 @@ def _info_renderer(payload: dict) -> Table:
     table.add_row("hf_repo", m["hf_repo"])
     table.add_row("type", m["model_type"])
     table.add_row("engines", ", ".join(m["engines"]))
-    table.add_row(
-        "servable",
-        f"yes — `tt serve {m['name']}`"
-        if m["tt_model_id"]
-        else "no (no tt-inference-server entry)",
-    )
+    table.add_row("via", ", ".join(m["backends"]))
+    if m["tt_model_id"]:
+        servable = f"yes — `tt serve {m['name']}`"
+    elif m["backends"] == ["studio"]:
+        servable = f"yes, through TT-Studio — `tt serve {m['name']}`"
+    else:
+        servable = "no (no tt-inference-server entry)"
+    table.add_row("servable", servable)
     if m["param_count"] is not None:
         table.add_row("parameters", f"{m['param_count']}B")
     if m["min_disk_gb"] is not None:
@@ -306,6 +318,8 @@ def _info_renderer(payload: dict) -> Table:
         elif support["serve_as"]:
             detail += f"\n[dim]served as {support['serve_as']}"
             detail += f" — {support['note']}[/dim]" if support["note"] else "[/dim]"
+        elif support["note"]:
+            detail += f"\n[dim]{support['note']}[/dim]"
         table.add_row(f"on {device}", detail)
     return table
 
@@ -543,6 +557,12 @@ def stop_model(
             appctx.registry, appctx.runner, appctx.config, appctx.output
         )
         backend.stop(bundle, profile=profile)
+        return
+    if studio_only(model):
+        # Deployed by studio's run.py, so studio stops it (and resets its chips).
+        StudioBackend(appctx.registry, appctx.runner, appctx.config, appctx.output).stop(
+            model
+        )
         return
     _stop_catalog_model(appctx, model)
 

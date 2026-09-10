@@ -155,6 +155,16 @@ def inference_bin(isolated_dirs, hardware_mode, monkeypatch, tmp_path) -> Path |
 
 
 @pytest.fixture
+def studio_bin(isolated_dirs, hardware_mode, monkeypatch, tmp_path) -> Path | None:
+    if hardware_mode:
+        pytest.skip("real tt-studio is a managed checkout; no fake to wire")
+    log = tmp_path / "studio-argv.jsonl"
+    monkeypatch.setenv("TT_TOOL_BIN_TT_STUDIO", str(FAKES_DIR / "studio-repo" / "run.py"))
+    monkeypatch.setenv("FAKE_STUDIO_LOG", str(log))
+    return log
+
+
+@pytest.fixture
 def model_manager_bin(isolated_dirs, hardware_mode, real_tools, monkeypatch, tmp_path) -> Path | None:
     if hardware_mode:
         monkeypatch.setenv("TT_TOOL_BIN_TT_MODEL", str(_require_real(real_tools, "tt-model")))
@@ -187,8 +197,15 @@ def isolated_dirs(request, tmp_path, monkeypatch):
         ("XDG_CONFIG_HOME", "xdg-config"),
     ):
         monkeypatch.setenv(var, str(tmp_path / sub))
-    # Never inherit manifest/golden overrides from the outer shell.
-    for var in ("TT_MANIFEST_PATH", "TT_GOLDEN_PATH"):
+    # Never inherit manifest/golden/catalog overrides from the outer shell, nor the
+    # developer's own Hugging Face token (the serve tests assert on what is seeded).
+    for var in (
+        "TT_MANIFEST_PATH",
+        "TT_GOLDEN_PATH",
+        "TT_STUDIO_MODELS_PATH",
+        "HF_TOKEN",
+        "HF_TOKEN_PATH",
+    ):
         monkeypatch.delenv(var, raising=False)
     # Golden versions come from tt-sw-manifest's golden.json, which `tt update`
     # fetches at the pinned tag — a network call the fake suite must never make.

@@ -27,6 +27,9 @@ def empty_hf_cache(monkeypatch):
 SMALL_SUPPORT = (
     Path(__file__).parent.parent / "fakes" / "data" / "model_support_small.json"
 )
+SMALL_STUDIO = (
+    Path(__file__).parent.parent / "fakes" / "data" / "studio_models_small.json"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +37,7 @@ def small_spec(monkeypatch):
     """Pin the catalog to the 4-model fixture so exact assertions stay stable when
     the shipped model_support.json is regenerated."""
     monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(SMALL_SUPPORT))
+    monkeypatch.setenv("TT_STUDIO_MODELS_PATH", str(SMALL_STUDIO))
 
 
 def _set_cache(monkeypatch, sizes):
@@ -60,7 +64,8 @@ def test_model_list_detection_failure_warns_and_shows_all(runner):
     payload_start = result.output.index("{")
     payload = json.loads(result.output[payload_start:])
     assert payload["device"] is None
-    assert len(payload["models"]) == 5
+    # 5 from the support list + the 2 the studio fixture alone knows
+    assert len(payload["models"]) == 7
 
 
 @pytest.mark.fakes_only
@@ -69,8 +74,9 @@ def test_model_list_detection_failure_warns_and_shows_all(runner):
     [
         ("normal", "p300", ["Llama-3.1-8B-Instruct"]),
         # whisper is marked broken on p300x2 in the fixture, so it is hidden
-        # there while staying listed on n150 — see the test below.
-        ("multi", "p300x2", ["Llama-3.1-8B-Instruct"]),
+        # there while staying listed on n150 — see the test below. Qwen3.5-9B is
+        # a single-chip P150 model studio runs on one chip of a P300 board.
+        ("multi", "p300x2", ["Llama-3.1-8B-Instruct", "Qwen3.5-9B", "Qwen3.8-27B"]),
     ],
 )
 def test_model_list_filters_to_detected_device(
@@ -100,7 +106,8 @@ def test_model_list_shows_every_engine_without_a_serve_column(runner):
     All three are servable, so the old serve column would be a constant ✓."""
     result = runner.invoke(app, ["model", "list", "--hw", "n150"])
     assert result.exit_code == 0
-    assert "serve" not in result.output
+    header = result.output.splitlines()[2]
+    assert "serve" not in header, header
     for name in ("Llama-3.1-8B-Instruct", "whisper-large-v3", "resnet-50"):
         assert name in result.output
 
@@ -970,3 +977,49 @@ def test_model_pull_bundle_flag_honours_offline(
     result = runner.invoke(app, ["--offline", "model", "pull", "ns/x", "--bundle"])
     assert result.exit_code == ExitCode.OFFLINE
     assert not fake_model_manager.exists()  # tt-model never invoked
+
+
+# -- studio models in the listing -----------------------------------------------------
+
+
+def test_model_list_shows_which_backend_serves_each_model(runner):
+    result = runner.invoke(app, ["model", "list", "--hw", "p300x2", "--json"])
+    assert result.exit_code == 0, result.output
+    by_name = {m["name"]: m for m in json.loads(result.output)["models"]}
+    assert by_name["Qwen3.5-9B"]["backends"] == ["studio"]
+    # in both catalogs, but tt-inference-server serves it, so studio is not offered
+    assert by_name["Llama-3.1-8B-Instruct"]["backends"] == ["inference-server"]
+    table = runner.invoke(app, ["model", "list", "--hw", "p300x2"]).output
+    assert "via" in table
+    assert "studio" in table
+
+
+def test_model_list_offers_single_chip_studio_models_on_bigger_boards(runner):
+    result = runner.invoke(app, ["model", "list", "--hw", "p150x4", "--type", "llm", "--json"])
+    assert result.exit_code == 0, result.output
+    names = [m["name"] for m in json.loads(result.output)["models"]]
+    assert "Qwen3.5-9B" in names  # a P150 model, run on one chip of the mesh
+    assert "Qwen3.8-27B" not in names  # P300x2 only
+
+
+def test_model_info_for_a_studio_only_model(runner):
+    result = runner.invoke(app, ["model", "info", "Qwen3.5-9B"])
+    assert result.exit_code == 0, result.output
+    assert "studio" in result.output
+    assert "tt serve Qwen3.5-9B" in result.output
+    assert "one chip" in result.output  # the widened p300x2 row explains itself
+
+
+@pytest.mark.fakes_only
+def test_model_stop_routes_a_studio_only_model_to_studio(runner, studio_bin, fakes_dir):
+    result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(studio_bin.read_text().splitlines()[-1]) == [
+        "--stop-model", "Qwen3.5-9B",
+    ]
+
+
+def test_model_stop_for_studio_does_not_install_studio(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
+    assert result.exit_code == ExitCode.TOOL_MISSING, result.output
+    assert not (isolated_dirs / "data" / "tools").exists()
