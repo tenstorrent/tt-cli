@@ -30,6 +30,9 @@ from ...tools.runner import Runner
 
 TOOL = "tt-inference-server"
 WORKFLOWS = ("server", "benchmarks", "evals")
+# tt-model's own default; tt serve applies it here too so an unspecified --port
+# means the same thing on both backends.
+DEFAULT_SERVICE_PORT = 20000
 
 # (board family, board count) → run.py --device id (v0.18.0 choices). tt-smi
 # reports one entry per asic with a revision suffix ("p300c", "n150 L"); dual-asic
@@ -141,6 +144,7 @@ class ServerContainer:
     image: str
     hf_repo: str | None = None  # from the weights bind mount
     volume: str | None = None  # volume_id_<impl_id>-<model_name>, kept whole
+    port: int | None = None  # host port published to the container's 8000
 
     @property
     def identified(self) -> bool:
@@ -177,6 +181,19 @@ def _identity_from_inspect(entry: dict) -> tuple[str | None, str | None]:
             volume = candidate
     return hf_repo, volume
 
+
+def _port_from_inspect(entry: dict) -> int | None:
+    """The host port published to the container, from one `docker inspect` record.
+
+    run.py always binds its own side at 8000 (`--service-port` only changes the
+    host side), and publishes nothing else — so any one binding found is it.
+    """
+    for bindings in ((entry.get("NetworkSettings") or {}).get("Ports") or {}).values():
+        for binding in bindings or []:
+            host_port = binding.get("HostPort")
+            if host_port:
+                return int(host_port)
+    return None
 
 
 # Conventional location for pre-seeded persistent volumes, overridable with
@@ -332,9 +349,9 @@ class InferenceServerBackend:
             else None,
             "host_volume": str(volume_root) if volume_root else None,
             "port": port,
-            # run.py reads SERVICE_PORT from the environment it inherits, falling
-            # back to 8000 — so the effective default is not always 8000.
-            "default_port": os.environ.get("SERVICE_PORT", "8000"),
+            # run.py reads SERVICE_PORT from the environment it inherits; tt serve
+            # falls back to DEFAULT_SERVICE_PORT rather than run.py's own 8000.
+            "default_port": os.environ.get("SERVICE_PORT", str(DEFAULT_SERVICE_PORT)),
             "default_port_from_env": "SERVICE_PORT" in os.environ,
             "installed": entry is not None,
         }
@@ -453,9 +470,11 @@ class InferenceServerBackend:
                 argv += ["--override-tt-config", json.dumps(forced["override_tt_config"])]
         elif device:
             argv += ["--device", device]
-        if port is not None:
-            # run.py's SERVICE_PORT
-            argv += ["--service-port", str(port)]
+        # Always pass it explicitly: otherwise run.py falls back to its own
+        # SERVICE_PORT/8000 default instead of ours.
+        if port is None:
+            port = os.environ.get("SERVICE_PORT", DEFAULT_SERVICE_PORT)
+        argv += ["--service-port", str(port)]
         return argv
 
     def prepare(
@@ -657,6 +676,7 @@ class InferenceServerBackend:
                     image=str((entry.get("Config") or {}).get("Image") or ""),
                     hf_repo=hf_repo,
                     volume=volume,
+                    port=_port_from_inspect(entry),
                 )
             )
         return containers
