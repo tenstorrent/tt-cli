@@ -103,3 +103,44 @@ def test_a_crash_in_the_real_entry_point_prints_a_card_not_a_traceback(tmp_path)
     assert result.returncode == 1
     assert "tt hit an unexpected error" in combined
     assert "Traceback (most recent call last)" not in combined
+
+
+def test_a_deliberate_exit_code_survives_the_crash_handler(tmp_path):
+    """Regression: `raise typer.Exit(ExitCode.TOOL_FAILED)` is how a command
+    reports a partial failure. typer.Exit subclasses RuntimeError, so main()'s
+    `except Exception` caught it and reported a crash with exit 1 — silently
+    breaking the documented exit-code contract.
+
+    CliRunner handles Exit itself, so this can only be seen through main().
+    """
+    program = (
+        "import sys, typer;"
+        "import tenstorrent.cli as c;"
+        "c.app = lambda **kw: (_ for _ in ()).throw(typer.Exit(5));"
+        "c.main()"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+    )
+    assert result.returncode == 5, result.stdout + result.stderr
+    # And it is not misreported as a crash.
+    assert "unexpected error" not in (result.stdout + result.stderr)
+
+
+def test_exit_zero_still_means_success(tmp_path):
+    program = (
+        "import typer;"
+        "import tenstorrent.cli as c;"
+        "c.app = lambda **kw: (_ for _ in ()).throw(typer.Exit(0));"
+        "c.main()"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+    )
+    assert result.returncode == 0

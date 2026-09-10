@@ -22,4 +22,36 @@ from typer import Abort, confirm, prompt, style
 
 IntRange = click.types.IntRange
 
-__all__ = ["click", "Abort", "IntRange", "confirm", "prompt", "style"]
+
+def _exit_exceptions() -> tuple:
+    """Every exception class that means "exit with this code", not "something broke".
+
+    `typer.Exit` is stable at typer's top level, but click's own `Exit` (what
+    `ctx.exit()` raises) is not re-exported by Typer and is absent from some
+    vendored layouts entirely — so probe for it rather than importing a path.
+
+    This matters because typer.Exit subclasses RuntimeError: an `except Exception`
+    that means to catch crashes will swallow a deliberate exit code unless this
+    tuple is caught first.
+    """
+    import typer
+
+    classes: list = [typer.Exit]
+    for holder in (getattr(click, "exceptions", None), click):
+        found = getattr(holder, "Exit", None)
+        if isinstance(found, type) and found not in classes:
+            classes.append(found)
+    return tuple(classes)
+
+
+EXIT_EXCEPTIONS = _exit_exceptions()
+
+__all__ = [
+    "click",
+    "Abort",
+    "EXIT_EXCEPTIONS",
+    "IntRange",
+    "confirm",
+    "prompt",
+    "style",
+]
