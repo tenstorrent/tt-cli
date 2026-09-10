@@ -18,7 +18,7 @@ from typing import Annotated, Callable, TypeVar
 import typer
 
 from . import __version__
-from ._compat import Abort, click
+from ._compat import EXIT_EXCEPTIONS, Abort, click
 from .context import AppContext
 from .errors import ExitCode, TTError, render_error
 from .output import OutputManager
@@ -325,6 +325,14 @@ def main() -> None:
         # this fell through to a raw traceback.
         OutputManager().ui.card(interrupted_panel(_resume_command()))
         code = 130
+    except EXIT_EXCEPTIONS as exit_exc:
+        # A deliberate exit carrying a documented code — `raise typer.Exit(
+        # ExitCode.TOOL_FAILED)` is how commands report a partial failure. It must
+        # be honoured, NOT reported as a crash: typer.Exit subclasses RuntimeError,
+        # so it reaches `except Exception` below and would otherwise be turned into
+        # a card and exit 1, silently breaking the exit-code contract. CliRunner
+        # handles Exit itself, which is why no test caught this.
+        code = getattr(exit_exc, "exit_code", 0) or 0
     except Exception as exc:
         _report_unexpected(exc)
         code = int(ExitCode.ERROR)
