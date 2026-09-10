@@ -27,7 +27,7 @@ from ..backends.serving.model_manager import (
     ModelManagerBackend,
     looks_like_bundle_id,
 )
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
@@ -104,6 +104,8 @@ def serve(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """[beta] Serve a model for inference via tt-inference-server, or via tt-model
     when the name is a bundle id the released spec does not cover.
@@ -112,7 +114,7 @@ def serve(
     its own flags and its vLLM passthrough: `tt serve ns/model -- --port 8080 --follow`.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     offline = offline or appctx.offline
     # Unrecognized options are collected rather than rejected (see the command's
     # context_settings) so tt-model's own flags — --port, --follow, --profile — and

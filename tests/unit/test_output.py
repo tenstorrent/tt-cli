@@ -65,3 +65,32 @@ def test_json_mode_errors_are_json_on_stdout(capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["code"] == "CONFIG"
     assert payload["error"]["exit_code"] == 9
+
+
+def test_no_color_disables_styling_on_both_consoles():
+    out = OutputManager(no_color=True)
+    assert out.no_color is True
+    assert out.data_console.no_color is True
+    assert out.status_console.no_color is True
+
+
+def test_no_color_env_var_is_honoured_without_a_flag(monkeypatch):
+    monkeypatch.setenv("NO_COLOR", "1")
+    out = OutputManager()
+    assert out.no_color is True
+
+
+def test_apply_flags_retints_the_existing_consoles():
+    """The consoles are built in __init__, so a leaf flag has to reach them."""
+    out = OutputManager()
+    assert out.status_console.no_color is False
+    out.apply_flags(no_color=True)
+    assert out.no_color is True
+    assert out.status_console.no_color is True
+
+
+def test_apply_flags_cannot_turn_a_root_flag_back_off():
+    out = OutputManager(verbose=True, no_color=True)
+    out.apply_flags(verbose=False, no_color=False)
+    assert out.verbose is True
+    assert out.no_color is True

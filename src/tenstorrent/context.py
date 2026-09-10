@@ -80,10 +80,13 @@ class AppContext:
         json_mode: bool = False,
         quiet: bool = False,
         verbose: bool = False,
+        no_color: bool = False,
         offline: bool = False,
     ) -> "AppContext":
         paths = get_paths()
-        output = OutputManager(json_mode=json_mode, quiet=quiet, verbose=verbose)
+        output = OutputManager(
+            json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color
+        )
         return cls(
             paths=paths,
             # on_warning: settings the file declares but this version can't act on are

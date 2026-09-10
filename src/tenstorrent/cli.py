@@ -56,6 +56,26 @@ QuietFlag = Annotated[
         rich_help_panel=PANEL_OUTPUT,
     ),
 ]
+# Declared per-leaf for the same reason as --json/-q: Typer's leaf parser rejects
+# an unknown short option, so `tt update -v` needs the alias here — sniffing argv
+# in the root callback is too late.
+VerboseFlag = Annotated[
+    bool,
+    typer.Option(
+        "--verbose",
+        "-v",
+        help="Show the detail a normal run folds away.",
+        rich_help_panel=PANEL_OUTPUT,
+    ),
+]
+NoColorFlag = Annotated[
+    bool,
+    typer.Option(
+        "--no-color",
+        help="Disable colour and styling (also honours NO_COLOR).",
+        rich_help_panel=PANEL_OUTPUT,
+    ),
+]
 
 
 def _find_context(args, kwargs):
@@ -143,15 +163,8 @@ def root(
     ctx: typer.Context,
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
-    verbose: Annotated[
-        bool,
-        typer.Option(
-            "--verbose",
-            "-v",
-            help="Extra diagnostics on stderr.",
-            rich_help_panel=PANEL_OUTPUT,
-        ),
-    ] = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
     offline: Annotated[
         bool,
         typer.Option(
@@ -172,7 +185,11 @@ def root(
     ] = False,
 ) -> None:
     ctx.obj = AppContext.create(
-        json_mode=json_mode, quiet=quiet, verbose=verbose, offline=offline
+        json_mode=json_mode,
+        quiet=quiet,
+        verbose=verbose,
+        no_color=no_color,
+        offline=offline,
     )
 
 
