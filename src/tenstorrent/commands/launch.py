@@ -26,6 +26,8 @@ from rich.table import Table
 from rich.text import Text
 
 from .._compat import confirm
+from ..backends.serving.inference_server import InferenceServerBackend
+from ..backends.serving.model_manager import ModelManagerBackend
 from ..cli import JsonFlag, QuietFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
@@ -41,7 +43,7 @@ from ..launchers.base import (
     tool_call_parser,
     tool_calling_models,
 )
-from ..launchers.discovery import base_url_for, discover
+from ..launchers.discovery import DEFAULT_PORT, base_url_for, discover
 from ..modelhub.catalog import ModelCatalog
 
 launch_app = typer.Typer(
@@ -72,11 +74,55 @@ def _launcher(tool: str) -> Launcher:
     return launcher
 
 
-def _installed_or_none(launcher: Launcher, config) -> str | None:
+def _installed_or_none(launcher: Launcher, config, output) -> str | None:
+    """A soft check for a listing/preview: "not installed" is an expected, cheap
+    answer here, so it skips the fresh-shell retry `resolve_executable` otherwise
+    pays for a miss that would actually block the user."""
     try:
-        return resolve_executable(launcher, config)
+        return resolve_executable(launcher, config, output, retry_path=False)
     except TTError:
         return None
+
+
+def _local_candidate_ports(appctx) -> list[int]:
+    """Ports tt itself is serving on, read off running containers via docker —
+    the same lookup `tt model stop` uses to find a model's container. Ordered by
+    backend, not meaningfully rankable otherwise."""
+    ports: list[int] = []
+    inference = InferenceServerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    try:
+        ports += [c.port for c in inference.running_containers() if c.port]
+    except TTError:
+        pass  # no docker/podman, or it failed — model_manager or the plain default may still work
+    model_manager = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    try:
+        ports += model_manager.running_ports()
+    except TTError:
+        pass
+    return ports
+
+
+def _discover_local(appctx) -> list[RunningModel]:
+    """Every model found without --port/--url: on every container tt itself
+    started, or (docker absent, or nothing found there) tt's plain default
+    port. Aggregated across every port that answers — with more than one
+    container running, --model has to be able to find one regardless of which
+    container actually serves it, not just whichever answers first."""
+    ports = _local_candidate_ports(appctx) or [DEFAULT_PORT]
+    served: list[RunningModel] = []
+    last_error: TTError | None = None
+    for port in ports:
+        try:
+            served += discover(f"http://127.0.0.1:{port}/v1")
+        except TTError as exc:
+            last_error = exc
+    if not served:
+        raise last_error
+    return served
 
 
 def _select(appctx, served: list[RunningModel], wanted: str | None) -> RunningModel:
@@ -209,15 +255,19 @@ def _connect(
     # Which client this is comes from the invoked command name, so every client
     # shares this one implementation.
     launcher = _launcher(ctx.info_name)
-    target = _select(appctx, discover(base_url_for(url, port)), model)
+    if url is None and port is None:
+        served = _discover_local(appctx)
+    else:
+        served = discover(base_url_for(url, port))
+    target = _select(appctx, served, model)
     _check_capability(appctx, launcher, target, force=force)
     # A dry run must not require the client to be installed. It still resolves one
     # when it can, so what it reports (an existing container, say) is the truth on
     # this machine rather than a guess.
     executable = (
-        _installed_or_none(launcher, appctx.config)
+        _installed_or_none(launcher, appctx.config, appctx.output)
         if dry_run
-        else resolve_executable(launcher, appctx.config)
+        else resolve_executable(launcher, appctx.config, appctx.output)
     )
     prep = launcher.plan(
         target, LaunchOptions(web_port=web_port), executable=executable, runner=appctx.runner
@@ -259,7 +309,7 @@ def _catalog(appctx) -> list[dict]:
     """What each client is and whether it could run right now."""
     rows = []
     for launcher in LAUNCHERS.values():
-        executable = _installed_or_none(launcher, appctx.config)
+        executable = _installed_or_none(launcher, appctx.config, appctx.output)
         # Only container clients have a state to report; asking is one `docker
         # inspect`, so it stays cheap enough for a listing.
         state = getattr(launcher, "container_state", None)
@@ -321,7 +371,7 @@ def stop(
             f"{launcher.id}` to undo its configuration.",
             exit_code=ExitCode.USAGE,
         )
-    executable = resolve_executable(launcher, appctx.config)
+    executable = resolve_executable(launcher, appctx.config, appctx.output)
     if launcher.container_state(executable, appctx.runner) != "running":
         appctx.output.status(f"{launcher.target()} is not running.")
         appctx.output.emit({"tool": launcher.id, "stopped": False}, renderer=lambda _: None)
@@ -349,7 +399,7 @@ def disconnect(
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
     launcher = _launcher(tool)
-    executable = _installed_or_none(launcher, appctx.config)
+    executable = _installed_or_none(launcher, appctx.config, appctx.output)
     plan = launcher.disconnect_plan(executable, appctx.runner)
     payload = {
         "tool": launcher.id,
