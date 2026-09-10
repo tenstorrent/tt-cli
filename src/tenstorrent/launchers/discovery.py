@@ -5,7 +5,8 @@
 
 Models served by tt are unauthenticated, so one GET /v1/models answers both "is
 anything there" and "what model id does it expect" — for tt-inference-server and
-tt-model containers alike, without involving docker.
+tt-model containers alike. Which port to ask is the caller's job: `commands.launch`
+reads it off the running container (docker) when neither --port nor --url pins one.
 """
 
 from __future__ import annotations
@@ -17,7 +18,8 @@ import urllib.request
 from ..errors import ExitCode, TTError
 from .base import RunningModel
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1"
+DEFAULT_PORT = 20000
+DEFAULT_BASE_URL = f"http://127.0.0.1:{DEFAULT_PORT}/v1"
 _TIMEOUT_S = 5.0
 
 
