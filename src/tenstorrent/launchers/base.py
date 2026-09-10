@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -115,11 +116,63 @@ class Launcher(Protocol):
         ...
 
 
-def resolve_executable(launcher: Launcher, config) -> str:
+# The interactive rc file each shell actually reads — not the login files
+# (.bash_profile/.profile), which is what -l would source instead, and which
+# don't reach .bashrc/.zshrc unless one happens to chain to the other.
+_INTERACTIVE_RC = {"bash": "~/.bashrc", "zsh": "~/.zshrc"}
+_PATH_MARKER = "__tt_shell_path__"
+
+
+def _shell_path() -> str | None:
+    """PATH after sourcing the user's shell rc file, for an installer (curl
+    script, npm, cargo) that only edited that file — this process's own PATH
+    was already inherited before that ever happened.
+
+    Sources the rc file directly rather than relying on shell flags: bash's
+    login mode reads .bash_profile/.profile, not .bashrc, and a plain -i/-l
+    combination is not a portable way to reach the file installers actually
+    append to (bash and zsh disagree on what -i and -l each source). Only
+    bash and zsh are known here; anything else skips the retry rather than
+    guess at unfamiliar rc syntax. A marker isolates $PATH from anything the
+    rc file itself prints (a welcome banner, an update check) that would
+    otherwise corrupt the parse. Best-effort throughout: any failure just
+    means the retry in `resolve_executable` finds nothing new.
+    """
+    shell = os.environ.get("SHELL")
+    rc_file = _INTERACTIVE_RC.get(os.path.basename(shell)) if shell else None
+    if not rc_file:
+        return None
+    command = (
+        f"[ -f {rc_file} ] && . {rc_file} >/dev/null 2>&1; "
+        f'printf "{_PATH_MARKER}%s" "$PATH"'
+    )
+    try:
+        result = subprocess.run(
+            [shell, "-c", command],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    marker_at = result.stdout.rfind(_PATH_MARKER)
+    if marker_at == -1:
+        return None
+    return result.stdout[marker_at + len(_PATH_MARKER) :].strip() or None
+
+
+def resolve_executable(
+    launcher: Launcher, config, output: "OutputManager", *, retry_path: bool = True
+) -> str:
     """Locate an installed client: TT_TOOL_BIN_<ID> → tools.override.<id> → PATH.
 
     Deliberately not ToolRegistry: tt neither installs nor pins these tools, so a
     miss has to point at the tool's own installer rather than `tt update`.
+
+    `retry_path=False` skips the fresh-shell retry below: worth a few seconds
+    when a miss stops the user's actual request (connecting, stopping a
+    container), not worth paying per launcher for a routine `tt launch list` or
+    a `--dry-run`/`disconnect` preview that already tolerates "not installed".
     """
     env_key = f"TT_TOOL_BIN_{launcher.id.upper().replace('-', '_')}"
     override = config.get(f"tools.override.{launcher.id}")
@@ -128,6 +181,23 @@ def resolve_executable(launcher: Launcher, config) -> str:
         found = shutil.which(binary)
         if found:
             break
+    # Not on this process's PATH — before telling the user to open a new
+    # terminal, try once with the PATH a fresh shell would actually have.
+    if not found and retry_path:
+        output.status(
+            f"{' or '.join(launcher.binaries)} not on PATH yet — "
+            "checking a freshly sourced shell…"
+        )
+        refreshed = _shell_path()
+        if refreshed:
+            for binary in launcher.binaries:
+                found = shutil.which(binary, path=refreshed)
+                if found:
+                    # The binary itself may need PATH at run time too (a shebang
+                    # like `#!/usr/bin/env node`, or a subprocess it shells out
+                    # to) — not just tt's own lookup just now.
+                    os.environ["PATH"] = refreshed
+                    break
     if not found:
         raise TTError(
             f"{' or '.join(launcher.binaries)} is not installed.",
