@@ -16,6 +16,8 @@ pinned binary (lazily installed at its git ref) and sharing our HF cache.
 from __future__ import annotations
 
 import os
+import re
+import shutil
 from pathlib import Path
 
 from ...config.store import ConfigStore
@@ -27,6 +29,9 @@ from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
 
 TOOL = "tt-model"  # the distribution, the command, and the manifest key
+# tt-model-manager's own container label (container.py: LABEL); every container
+# it starts carries it, and always under docker, never podman.
+_LABEL = "org.tenstorrent.tt-model"
 
 
 def looks_like_bundle_id(name: str) -> bool:
@@ -142,6 +147,27 @@ class ModelManagerBackend:
                 entry=Path(installed[0]) if installed else None,
             ),
         }
+
+    def running_ports(self) -> list[int]:
+        """Host ports tt-model's own containers are published on.
+
+        tt-model publishes host:container on the same port number, so `docker ps`
+        alone gives it — no `inspect` call needed, unlike the tt-inference-server
+        side where the container's own port is fixed and the host port varies.
+        """
+        docker = shutil.which("docker")
+        if docker is None:
+            return []
+        listed = self.runner.capture(
+            [docker, "ps", "--filter", f"label={_LABEL}", "--format", "{{.Ports}}"],
+            tool="docker",
+        )
+        ports = {
+            int(port)
+            for line in listed.stdout.splitlines()
+            for port in re.findall(r":(\d+)->", line)
+        }
+        return sorted(ports)
 
     def unsupported_workflow(self, workflow: str) -> TTError:
         return TTError(
