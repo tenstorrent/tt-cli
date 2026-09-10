@@ -9,7 +9,7 @@ from tenstorrent.config.paths import get_paths
 from tenstorrent.errors import ExitCode, TTError
 from tenstorrent.tools.installers import GitVenvInstaller
 from tenstorrent.tools.manifest import ToolSpec
-from tenstorrent.tools.runner import CaptureResult
+from tenstorrent.tools.runner import CaptureResult, StreamResult
 
 SPEC = ToolSpec(
     name="tt-inference-server",
@@ -22,12 +22,17 @@ SPEC = ToolSpec(
 
 
 class StubRunner:
-    """Records capture() argv; emulates git clone / uv venv side effects."""
+    """Records argv; emulates git clone / uv venv side effects.
+
+    The installer streams git and `uv pip` (so they can show progress) and still
+    captures `uv venv`, so the stub models both entry points and records them in
+    one ordered list.
+    """
 
     def __init__(self):
         self.calls = []
 
-    def capture(self, argv, *, env=None, timeout=None, check=True, tool=None):
+    def _side_effects(self, argv):
         self.calls.append(list(argv))
         if argv[0] == "git" and argv[1] == "clone":
             dest = Path(argv[-1])
@@ -37,7 +42,14 @@ class StubRunner:
         if argv[1:2] == ["venv"]:
             (Path(argv[2]) / "bin").mkdir(parents=True, exist_ok=True)
             (Path(argv[2]) / "bin" / "python").write_text("")
+
+    def capture(self, argv, *, env=None, timeout=None, check=True, tool=None):
+        self._side_effects(argv)
         return CaptureResult(0, "", "")
+
+    def stream_parsed(self, argv, *, on_line=None, **kwargs):
+        self._side_effects(argv)
+        return StreamResult(0, "", None, False)
 
 
 @pytest.fixture
@@ -50,8 +62,12 @@ def test_git_venv_installer_clones_at_pinned_ref_and_builds_venv(paths):
     installer = GitVenvInstaller(paths, runner, uv_bin="uv-stub")
     result = installer.install(SPEC)
     git_call = runner.calls[0]
-    assert git_call[:6] == ["git", "clone", "--depth", "1", "--branch", "v0.6.0"]
-    assert git_call[6] == SPEC.repo
+    # --progress because git stays quiet when its output is a pipe, and a pipe is
+    # exactly what we now read to drive the activity row.
+    assert git_call[:7] == [
+        "git", "clone", "--progress", "--depth", "1", "--branch", "v0.6.0",
+    ]
+    assert git_call[7] == SPEC.repo
     venv_call = runner.calls[1]
     assert venv_call[:2] == ["uv-stub", "venv"]
     assert "--python" in venv_call and "3.10" in venv_call
