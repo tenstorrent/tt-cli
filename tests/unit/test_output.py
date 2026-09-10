@@ -67,6 +67,41 @@ def test_json_mode_errors_are_json_on_stdout(capsys):
     assert payload["error"]["exit_code"] == 9
 
 
+def test_error_panel_shows_the_log_path_when_details_carry_one(capsys):
+    """`details["log_path"]` has always been rendered but never populated; the
+    streaming Runner mode sets it, so pin the branch."""
+    out = OutputManager()
+    out.emit_error(
+        TTError(
+            "tt-installer exited with status 1.",
+            why="ERROR: sha256 mismatch",
+            next_step="tt update --refresh",
+            exit_code=ExitCode.TOOL_FAILED,
+            details={"log_path": "/tmp/logs/tt-installer.log"},
+        )
+    )
+    err = capsys.readouterr().err
+    assert "Full output" in err
+    assert "tt-installer.log" in err
+
+
+def test_error_panel_omits_the_log_line_when_there_is_no_log(capsys):
+    out = OutputManager()
+    out.emit_error(TTError("something broke"))
+    assert "Full output" not in capsys.readouterr().err
+
+
+def test_ui_layer_never_writes_to_stdout(capsys):
+    """The stdout/stderr contract, enforced against the presentation layer."""
+    out = OutputManager()
+    out.ui.register_phases(["One"])
+    with out.ui.phase("One"):
+        with out.ui.step("A step") as step:
+            step.detail("d")
+        out.ui.note("a note")
+    out.ui.final_stepper()
+    assert capsys.readouterr().out == ""
+
 def test_no_color_disables_styling_on_both_consoles():
     out = OutputManager(no_color=True)
     assert out.no_color is True
