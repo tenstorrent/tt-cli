@@ -26,6 +26,8 @@ from rich.table import Table
 from rich.text import Text
 
 from .._compat import confirm
+from ..backends.serving.inference_server import InferenceServerBackend
+from ..backends.serving.model_manager import ModelManagerBackend
 from ..cli import JsonFlag, QuietFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
@@ -41,7 +43,7 @@ from ..launchers.base import (
     tool_call_parser,
     tool_calling_models,
 )
-from ..launchers.discovery import base_url_for, discover
+from ..launchers.discovery import DEFAULT_PORT, base_url_for, discover
 from ..modelhub.catalog import ModelCatalog
 
 launch_app = typer.Typer(
@@ -77,6 +79,41 @@ def _installed_or_none(launcher: Launcher, config) -> str | None:
         return resolve_executable(launcher, config)
     except TTError:
         return None
+
+
+def _local_candidate_ports(appctx) -> list[int]:
+    """Ports tt itself is serving on, read off running containers via docker —
+    the same lookup `tt model stop` uses to find a model's container. Ordered by
+    backend, not meaningfully rankable otherwise."""
+    ports: list[int] = []
+    inference = InferenceServerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    try:
+        ports += [c.port for c in inference.running_containers() if c.port]
+    except TTError:
+        pass  # no docker/podman, or it failed — model_manager or the plain default may still work
+    model_manager = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    try:
+        ports += model_manager.running_ports()
+    except TTError:
+        pass
+    return ports
+
+
+def _discover_local(appctx) -> list[RunningModel]:
+    """Every model found without --port/--url: on a container tt itself started,
+    or (docker absent, or nothing found there) tt's plain default port."""
+    ports = _local_candidate_ports(appctx) or [DEFAULT_PORT]
+    last_error: TTError | None = None
+    for port in ports:
+        try:
+            return discover(f"http://127.0.0.1:{port}/v1")
+        except TTError as exc:
+            last_error = exc
+    raise last_error
 
 
 def _select(appctx, served: list[RunningModel], wanted: str | None) -> RunningModel:
@@ -209,7 +246,11 @@ def _connect(
     # Which client this is comes from the invoked command name, so every client
     # shares this one implementation.
     launcher = _launcher(ctx.info_name)
-    target = _select(appctx, discover(base_url_for(url, port)), model)
+    if url is None and port is None:
+        served = _discover_local(appctx)
+    else:
+        served = discover(base_url_for(url, port))
+    target = _select(appctx, served, model)
     _check_capability(appctx, launcher, target, force=force)
     # A dry run must not require the client to be installed. It still resolves one
     # when it can, so what it reports (an existing container, say) is the truth on

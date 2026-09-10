@@ -2,7 +2,9 @@
 """Fake `docker` for tests: serves canned `ps`/`inspect` data and records `stop`s.
 
 FAKE_DOCKER_CONTAINERS is a JSON list of inspect records (the shape tt reads:
-Id/Name/Config.Image/Mounts). FAKE_DOCKER_STOP_LOG collects stopped ids.
+Id/Name/Config.Image/Mounts/NetworkSettings.Ports/Labels/Ports — the last a raw
+`docker ps --format {{.Ports}}` string, e.g. "0.0.0.0:20000->20000/tcp").
+FAKE_DOCKER_STOP_LOG collects stopped ids.
 """
 
 import json
@@ -14,10 +16,25 @@ def _containers() -> list:
     return json.loads(os.environ.get("FAKE_DOCKER_CONTAINERS") or "[]")
 
 
+def _label_filter(args: list) -> str | None:
+    for a in args:
+        if a.startswith("label="):
+            return a[len("label="):]
+    return None
+
+
 def main() -> int:
     args = sys.argv[1:]
     if args[:1] == ["ps"]:
-        for entry in _containers():
+        label = _label_filter(args)
+        entries = _containers()
+        if label is not None:
+            entries = [e for e in entries if label in (e.get("Labels") or {})]
+        if "{{.Ports}}" in args:
+            for entry in entries:
+                print(entry.get("Ports", ""))
+            return 0
+        for entry in entries:
             print(str(entry.get("Id", ""))[:12])
         return 0
     if args[:1] == ["inspect"]:

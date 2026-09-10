@@ -52,10 +52,12 @@ def test_serve_streams_run_py(runner, docker_present, fake_server, isolated_dirs
     argv = json.loads(fake_server.read_text().splitlines()[-1])
     # --model takes the tt-inference-server model id, not the HF repo; the
     # server workflow must pick a backend mode and containers are ours; the
-    # host HF cache is always mounted so pulled weights are reused
+    # host HF cache is always mounted so pulled weights are reused; and with no
+    # --port or SERVICE_PORT, tt serve's own default port is passed explicitly
     assert argv == [
         "--model", "Llama-3.1-8B-Instruct", "--workflow", "server", "--docker-server",
         "--no-auth", "--host-hf-cache", str(isolated_dirs / "hf"),
+        "--service-port", "20000",
     ]
 
 
@@ -533,11 +535,11 @@ def test_serve_dry_run_names_the_image_even_without_an_override(runner, fake_ser
 
 
 def test_serve_dry_run_reports_the_effective_default_port(runner, fake_server, monkeypatch):
-    """run.py defaults --service-port to SERVICE_PORT or 8000, and it inherits our
-    environment — so 8000 is not always what a plain serve would use."""
+    """tt serve defaults --service-port to SERVICE_PORT or 20000, and it inherits
+    our environment — so 20000 is not always what a plain serve would use."""
     monkeypatch.delenv("SERVICE_PORT", raising=False)
     argv = ["serve", "Llama-3.1-8B-Instruct", "--device", "n150", "--dry-run", "--json"]
-    assert json.loads(runner.invoke(app, argv).stdout)["default_port"] == "8000"
+    assert json.loads(runner.invoke(app, argv).stdout)["default_port"] == "20000"
     monkeypatch.setenv("SERVICE_PORT", "7777")
     plan = json.loads(runner.invoke(app, argv).stdout)
     assert plan["default_port"] == "7777"

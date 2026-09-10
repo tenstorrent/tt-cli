@@ -15,6 +15,24 @@ from tenstorrent.errors import ExitCode
 LAUNCH_SUPPORT = (
     Path(__file__).parent.parent / "fakes" / "data" / "model_support_launch.json"
 )
+FAKE_BIN_DIR = Path(__file__).parent.parent / "fakes" / "bin"
+
+
+@pytest.fixture
+def fake_docker_containers(monkeypatch):
+    """Point both serving backends' docker lookup at the fake docker binary, for
+    the no-port/--url discovery path that reads ports off running containers."""
+    for module in ("inference_server", "model_manager"):
+        monkeypatch.setattr(
+            f"tenstorrent.backends.serving.{module}.shutil.which",
+            lambda name, _bin=str(FAKE_BIN_DIR / "docker"): _bin if name == "docker" else None,
+        )
+
+    def set_containers(entries):
+        monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(entries))
+
+    set_containers([])
+    return set_containers
 
 
 @pytest.fixture(autouse=True)
@@ -237,6 +255,77 @@ def test_missing_client_points_at_its_own_installer(runner, served, monkeypatch)
 def test_no_server_says_how_to_start_one(runner, fake_client):
     # Port 1 is privileged and never listening; discovery must fail cleanly.
     result = runner.invoke(app, ["launch", "opencode", "--port", "1"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "tt serve" in result.output
+
+
+@pytest.mark.fakes_only
+def test_launch_finds_a_model_via_its_inference_server_container_port(
+    runner, served, fake_client, execed, fake_docker_containers
+):
+    """No --port/--url: the port comes off the running container's own published
+    port, exactly like `tt model stop` finds a container to stop."""
+    base = served("Qwen/Qwen3-32B")
+    port = base.rsplit(":", 1)[1].split("/")[0]
+    fake_docker_containers([
+        {
+            "Id": "aaaaaaaaaaaa",
+            "Name": "/tt-inference-server-aaaa",
+            "Config": {"Image": "img:1"},
+            "Mounts": [],
+            "NetworkSettings": {"Ports": {"8000/tcp": [{"HostPort": port}]}},
+        }
+    ])
+    result = runner.invoke(app, ["launch", "opencode"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(opencode_config().read_text())
+    assert doc["provider"]["tenstorrent"]["options"]["baseURL"] == base
+
+
+@pytest.mark.fakes_only
+def test_launch_finds_a_model_via_its_tt_model_container_port(
+    runner, served, fake_client, execed, fake_docker_containers
+):
+    """Same, for a tt-model bundle: its container carries the org.tenstorrent.tt-model
+    label instead, and publishes host:container on the same port number."""
+    base = served("Qwen/Qwen3-32B")
+    port = base.rsplit(":", 1)[1].split("/")[0]
+    fake_docker_containers([
+        {
+            "Id": "bbbbbbbbbbbb",
+            "Name": "/tt-model-demo-default",
+            "Labels": {"org.tenstorrent.tt-model": "demo"},
+            "Ports": f"0.0.0.0:{port}->{port}/tcp",
+        }
+    ])
+    result = runner.invoke(app, ["launch", "opencode"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(opencode_config().read_text())
+    assert doc["provider"]["tenstorrent"]["options"]["baseURL"] == base
+
+
+@pytest.mark.fakes_only
+def test_launch_falls_back_to_the_default_port_when_docker_finds_nothing(
+    runner, fake_client, fake_docker_containers
+):
+    """No matching container (or no docker at all) must not crash discovery — it
+    falls back to tt's plain default port and fails cleanly if nothing answers."""
+    result = runner.invoke(app, ["launch", "opencode"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "tt serve" in result.output
+
+
+@pytest.mark.fakes_only
+def test_launch_falls_back_when_docker_itself_is_not_installed(
+    runner, fake_client, monkeypatch
+):
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.inference_server.shutil.which", lambda name: None
+    )
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.model_manager.shutil.which", lambda name: None
+    )
+    result = runner.invoke(app, ["launch", "opencode"])
     assert result.exit_code == ExitCode.ERROR
     assert "tt serve" in result.output
 
