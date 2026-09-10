@@ -19,6 +19,24 @@ from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..selfupdate.update import offer_before_update
 
+# A fixed roadmap: the count must never drift with flags, which is what makes
+# `k/3` worth trusting. --offline skips System; it does not remove it.
+PHASES = ["Checks", "Tools", "System"]
+
+
+def _plan_summary(plan: UpdatePlan) -> str:
+    """`3 to install, 1 up to date` — the one-line gist for the step's suffix."""
+    actionable = sum(
+        1 for item in plan.items if item.action in ("install", "upgrade", "converge")
+    )
+    current = sum(1 for item in plan.items if item.action == "up-to-date")
+    parts = []
+    if actionable:
+        parts.append(f"{actionable} to change")
+    if current:
+        parts.append(f"{current} up to date")
+    return ", ".join(parts) or "nothing to do"
+
 
 @dataclasses.dataclass(frozen=True, order=True)
 class FirmwareSemVer:
@@ -204,6 +222,7 @@ def update(
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     offline = offline or appctx.offline
     force = force or version is not None  # an explicit version means "I know what I'm doing"
+    ui = appctx.output.ui
     # A newer tt may carry newer tool pins, so it goes first: on a TTY, offer to
     # upgrade tt and stop (the new tt runs the update); otherwise just say so.
     if offer_before_update(appctx, offline=offline, dry_run=dry_run):
@@ -211,28 +230,76 @@ def update(
     backend = InstallerBackend(
         appctx.registry, appctx.runner, appctx.paths, appctx.output
     )
-    # Golden versions live in tt-sw-manifest's golden.json, fetched at the pinned
-    # tag and cached; nothing version-shaped is bundled. A valid cache makes this
-    # a no-op, so only the very first update (per tag) needs the network for it.
-    backend.refresh_goldens(offline=offline)
-    plan: UpdatePlan = backend.plan(
-        version=version, force=force, include_lazy=include_lazy
-    )
-    plan_payload = dataclasses.asdict(plan)
-    # Before either path prints: --dry-run is the best moment to learn that stale
-    # copies of these tools are sitting in ~/.local/lib.
-    backend.warn_unmanaged_app_clones()
+
+    # --dry-run reports and returns, so it never enters the phase flow: the phases
+    # describe work being done, and a dry run does none.
     if dry_run:
-        appctx.output.emit({"dry_run": True, **plan_payload}, renderer=_plan_table)
+        backend.refresh_goldens(offline=offline)
+        plan = backend.plan(version=version, force=force, include_lazy=include_lazy)
+        backend.warn_unmanaged_app_clones()
+        appctx.output.emit(
+            {"dry_run": True, **dataclasses.asdict(plan)}, renderer=_plan_table
+        )
         return
+
+    # A FIXED three-phase run. The count never varies with flags — --offline skips
+    # the System phase rather than removing it, so `k/3` stays trustworthy.
+    ui.register_phases(PHASES)
+
+    with ui.phase("Checks"):
+        # Golden versions live in tt-sw-manifest's golden.json, fetched at the
+        # pinned tag and cached; nothing version-shaped is bundled. A valid cache
+        # makes this a no-op, so only the very first update (per tag) needs the
+        # network for it.
+        backend.refresh_goldens(offline=offline)
+        with ui.step("Comparing installed versions to the goldens") as step:
+            plan: UpdatePlan = backend.plan(
+                version=version, force=force, include_lazy=include_lazy
+            )
+            step.detail(_plan_summary(plan))
+        # Stale copies of these tools sitting in ~/.local/lib are actionable, so
+        # this is never folded.
+        backend.warn_unmanaged_app_clones()
+
+    plan_payload = dataclasses.asdict(plan)
     if not appctx.output.json_mode:  # in JSON mode everything lands in one document
         appctx.output.emit(plan_payload, renderer=_plan_table)
+
+    # The prompt lives between phases, never inside one: a live row would repaint
+    # over it and the CLI would look hung rather than merely wrong.
     reset_notice = _reset_notice(appctx, plan, offline=offline)
     if reset_notice is not None:
-        _confirm_reset(appctx, reset_notice, yes=yes)
-    result = backend.apply(plan, offline=offline, version=version, force=force)
+        with ui.prompting():
+            _confirm_reset(appctx, reset_notice, yes=yes)
+
+    with ui.phase("Tools") as phase:
+        result = backend.apply_tools(plan, offline=offline)
+        # The command exits non-zero when a tool failed, so an all-green stepper
+        # would be dishonest even though the run deliberately carried on.
+        if result.failed:
+            phase.fail()
+
+    if offline:
+        ui.skip_phase(
+            "System",
+            "tt-installer needs the network to fetch golden versions and distro "
+            "packages; re-run without --offline",
+        )
+        installer_ran = False
+    else:
+        with ui.phase("System"):
+            installer_ran = backend.apply_system(
+                offline=offline, version=version, force=force
+            )
+    result = dataclasses.replace(result, installer_ran=installer_ran)
+
+    ui.final_stepper()
     appctx.output.emit(
-        {**plan_payload, "result": dataclasses.asdict(result)},
+        {
+            **plan_payload,
+            "result": dataclasses.asdict(result),
+            **ui.timings.as_payload(),
+        },
         renderer=_result_summary,
     )
     if result.failed:
