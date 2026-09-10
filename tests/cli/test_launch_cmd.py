@@ -9,12 +9,30 @@ from pathlib import Path
 import pytest
 
 from tenstorrent.cli import app
-from tenstorrent.errors import ExitCode
+from tenstorrent.errors import ExitCode, TTError
 
 
 LAUNCH_SUPPORT = (
     Path(__file__).parent.parent / "fakes" / "data" / "model_support_launch.json"
 )
+FAKE_BIN_DIR = Path(__file__).parent.parent / "fakes" / "bin"
+
+
+@pytest.fixture
+def fake_docker_containers(monkeypatch):
+    """Point both serving backends' docker lookup at the fake docker binary, for
+    the no-port/--url discovery path that reads ports off running containers."""
+    for module in ("inference_server", "model_manager"):
+        monkeypatch.setattr(
+            f"tenstorrent.backends.serving.{module}.shutil.which",
+            lambda name, _bin=str(FAKE_BIN_DIR / "docker"): _bin if name == "docker" else None,
+        )
+
+    def set_containers(entries):
+        monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(entries))
+
+    set_containers([])
+    return set_containers
 
 
 @pytest.fixture(autouse=True)
@@ -226,7 +244,8 @@ def test_model_that_is_not_served_is_a_usage_error(runner, served, fake_client):
 
 @pytest.mark.fakes_only
 def test_missing_client_points_at_its_own_installer(runner, served, monkeypatch):
-    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name: None)
+    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name, **_: None)
+    monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(app, ["launch", "opencode", "--url", served("Qwen/Qwen3-32B")])
     assert result.exit_code == ExitCode.TOOL_MISSING
     assert "opencode.ai" in result.output
@@ -239,6 +258,125 @@ def test_no_server_says_how_to_start_one(runner, fake_client):
     result = runner.invoke(app, ["launch", "opencode", "--port", "1"])
     assert result.exit_code == ExitCode.ERROR
     assert "tt serve" in result.output
+
+
+@pytest.mark.fakes_only
+def test_launch_finds_a_model_via_its_inference_server_container_port(
+    runner, served, fake_client, execed, fake_docker_containers
+):
+    """No --port/--url: the port comes off the running container's own published
+    port, exactly like `tt model stop` finds a container to stop."""
+    base = served("Qwen/Qwen3-32B")
+    port = base.rsplit(":", 1)[1].split("/")[0]
+    fake_docker_containers([
+        {
+            "Id": "aaaaaaaaaaaa",
+            "Name": "/tt-inference-server-aaaa",
+            "Config": {"Image": "img:1"},
+            "Mounts": [],
+            "NetworkSettings": {"Ports": {"8000/tcp": [{"HostPort": port}]}},
+        }
+    ])
+    result = runner.invoke(app, ["launch", "opencode"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(opencode_config().read_text())
+    assert doc["provider"]["tenstorrent"]["options"]["baseURL"] == base
+
+
+@pytest.mark.fakes_only
+def test_launch_finds_a_model_via_its_tt_model_container_port(
+    runner, served, fake_client, execed, fake_docker_containers
+):
+    """Same, for a tt-model bundle: its container carries the org.tenstorrent.tt-model
+    label instead, and publishes host:container on the same port number."""
+    base = served("Qwen/Qwen3-32B")
+    port = base.rsplit(":", 1)[1].split("/")[0]
+    fake_docker_containers([
+        {
+            "Id": "bbbbbbbbbbbb",
+            "Name": "/tt-model-demo-default",
+            "Labels": {"org.tenstorrent.tt-model": "demo"},
+            "Ports": f"0.0.0.0:{port}->{port}/tcp",
+        }
+    ])
+    result = runner.invoke(app, ["launch", "opencode"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(opencode_config().read_text())
+    assert doc["provider"]["tenstorrent"]["options"]["baseURL"] == base
+
+
+@pytest.mark.fakes_only
+def test_launch_selects_a_model_from_a_container_other_than_the_first_found(
+    runner, served, fake_client, execed, fake_docker_containers
+):
+    """Two containers running at once: --model must be able to find the one
+    that isn't whichever port discovery happens to reach first."""
+    first = served("mistralai/Mistral-7B-Instruct-v0.3")
+    second = served("Qwen/Qwen3-32B")
+    first_port = first.rsplit(":", 1)[1].split("/")[0]
+    second_port = second.rsplit(":", 1)[1].split("/")[0]
+    fake_docker_containers([
+        {
+            "Id": "aaaaaaaaaaaa",
+            "Name": "/tt-inference-server-aaaa",
+            "Config": {"Image": "img:1"},
+            "Mounts": [],
+            "NetworkSettings": {"Ports": {"8000/tcp": [{"HostPort": first_port}]}},
+        },
+        {
+            "Id": "cccccccccccc",
+            "Name": "/tt-inference-server-cccc",
+            "Config": {"Image": "img:1"},
+            "Mounts": [],
+            "NetworkSettings": {"Ports": {"8000/tcp": [{"HostPort": second_port}]}},
+        },
+    ])
+    result = runner.invoke(app, ["launch", "opencode", "--model", "Qwen/Qwen3-32B"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(opencode_config().read_text())
+    assert doc["provider"]["tenstorrent"]["options"]["baseURL"] == second
+
+
+@pytest.mark.fakes_only
+def test_launch_falls_back_to_the_default_port_when_docker_finds_nothing(
+    runner, fake_client, fake_docker_containers, monkeypatch
+):
+    """No matching container (or no docker at all) must not crash discovery — it
+    falls back to tt's plain default port. `discover` is faked rather than relying
+    on nothing actually listening on 20000, which the host running this suite
+    cannot guarantee (e.g. a real `tt serve` left running on its own default)."""
+    attempted = []
+
+    def fake_discover(base_url):
+        attempted.append(base_url)
+        raise TTError("no server", exit_code=ExitCode.ERROR)
+
+    monkeypatch.setattr("tenstorrent.commands.launch.discover", fake_discover)
+    result = runner.invoke(app, ["launch", "opencode"])
+    assert result.exit_code == ExitCode.ERROR
+    assert attempted == ["http://127.0.0.1:20000/v1"]
+
+
+@pytest.mark.fakes_only
+def test_launch_falls_back_when_docker_itself_is_not_installed(
+    runner, fake_client, monkeypatch
+):
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.inference_server.shutil.which", lambda name: None
+    )
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.model_manager.shutil.which", lambda name: None
+    )
+    attempted = []
+
+    def fake_discover(base_url):
+        attempted.append(base_url)
+        raise TTError("no server", exit_code=ExitCode.ERROR)
+
+    monkeypatch.setattr("tenstorrent.commands.launch.discover", fake_discover)
+    result = runner.invoke(app, ["launch", "opencode"])
+    assert result.exit_code == ExitCode.ERROR
+    assert attempted == ["http://127.0.0.1:20000/v1"]
 
 
 @pytest.mark.fakes_only
@@ -389,7 +527,8 @@ def test_openwebui_non_interactive_needs_yes(runner, served, fake_docker, monkey
 
 @pytest.mark.fakes_only
 def test_openwebui_dry_run_needs_no_container_runtime(runner, served, monkeypatch):
-    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name: None)
+    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name, **_: None)
+    monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(
         app, ["launch", "openwebui", "--url", served("Qwen/Qwen3-32B"), "--dry-run"]
     )
@@ -494,7 +633,8 @@ def test_group_help_lists_every_client(runner):
 @pytest.mark.fakes_only
 def test_list_shows_every_client_without_a_server(runner, monkeypatch):
     """--list must work with nothing serving and nothing installed."""
-    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name: None)
+    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name, **_: None)
+    monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(app, ["launch", "list"])
     assert result.exit_code == 0, result.output
     for tool in ("opencode", "pi", "aider", "openwebui", "anythingllm"):
@@ -506,7 +646,8 @@ def test_list_shows_every_client_without_a_server(runner, monkeypatch):
 @pytest.mark.fakes_only
 def test_list_json_reports_availability(runner, fake_client_named, monkeypatch):
     fake_client_named("opencode")
-    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name: None)
+    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name, **_: None)
+    monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(app, ["launch", "list", "--json"])
     assert result.exit_code == 0, result.output
     rows = {row["tool"]: row for row in json.loads(result.stdout)}
