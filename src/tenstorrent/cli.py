@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import sys
 from typing import Annotated, Callable, TypeVar
 
 import typer
@@ -22,6 +23,7 @@ from .context import AppContext
 from .errors import ExitCode, TTError, render_error
 from .output import OutputManager
 from .telemetry import NULL_SESSION
+from .ui import failure_card, interrupted_panel
 
 F = TypeVar("F", bound=Callable)
 
@@ -142,6 +144,11 @@ app = typer.Typer(
     help="Tenstorrent CLI: the single entry point to the Tenstorrent software stack.",
     no_args_is_help=True,
     rich_markup_mode="rich",
+    # A traceback is not a user-facing error message, and Typer's pretty version
+    # renders local variables — which here can include environment values and
+    # tokens. main() turns an unexpected exception into a card and writes the
+    # traceback to a log instead; -v prints it.
+    pretty_exceptions_enable=False,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 
@@ -238,6 +245,63 @@ def _register_commands() -> None:
 _register_commands()
 
 
+def _argv_verbose() -> bool:
+    """Whether -v/--verbose was asked for, read straight from argv.
+
+    main() runs outside any command, so there is no AppContext to consult — and
+    this is exactly the moment (an unexpected crash) when we most need to know.
+    """
+    return any(arg in ("-v", "--verbose") for arg in sys.argv[1:])
+
+
+def _resume_command() -> str:
+    """Reconstruct the command so an interrupt card can offer to resume it."""
+    args = [arg for arg in sys.argv[1:] if arg not in ("-v", "--verbose")]
+    return "tt " + " ".join(args) if args else "tt"
+
+
+def _report_unexpected(exc: BaseException) -> None:
+    """Render an unexpected exception as a card, and keep the traceback on disk.
+
+    The traceback is evidence, not UI: it goes to a log the card points at, and
+    only reaches the terminal under -v.
+    """
+    import traceback
+
+    output = OutputManager()
+    detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    log_path = None
+    try:
+        from .config.paths import get_paths
+        from .tools.runlog import open_run_log
+
+        run_log = open_run_log(get_paths().logs_dir, "crash", sys.argv)
+        if run_log is not None:
+            run_log.write(detail)
+            run_log.close()
+            log_path = run_log.path
+    except Exception:
+        pass
+
+    actions = [f"tt {' '.join(sys.argv[1:])} -v" if len(sys.argv) > 1 else "tt -v"]
+    actions.append("tt report issue")
+    output.ui.card(
+        failure_card(
+            "tt hit an unexpected error",
+            {
+                "cause": type(exc).__name__,
+                "detail": str(exc) or "No message was attached to the exception.",
+                "evidence": detail.strip().splitlines()[-1] if detail.strip() else "",
+                "actions": actions,
+            },
+            log_path=log_path,
+            consequence="Nothing further was attempted; the command stopped here.",
+        )
+    )
+    if _argv_verbose():
+        output.status_console.print(detail, style="muted")
+
+
 def main() -> None:
     """Console entry point: run the app, mapping every failure to a documented exit code."""
     try:
@@ -256,4 +320,12 @@ def main() -> None:
     except Abort:
         click.echo("Aborted.", err=True)
         code = 130
+    except KeyboardInterrupt:
+        # Ctrl-C is never a cliff: say how to pick up where we left off. Until now
+        # this fell through to a raw traceback.
+        OutputManager().ui.card(interrupted_panel(_resume_command()))
+        code = 130
+    except Exception as exc:
+        _report_unexpected(exc)
+        code = int(ExitCode.ERROR)
     raise SystemExit(code)

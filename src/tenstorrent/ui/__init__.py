@@ -17,7 +17,15 @@ from .cards import (
     ready_panel,
 )
 from .console import Activity, Phase, Step, Ui, null_ui
-from .format import elide, fmt_bytes, fmt_clock, fmt_duration, progress_bar, show_detail
+from .format import (
+    elide,
+    fmt_bytes,
+    fmt_clock,
+    fmt_duration,
+    progress_bar,
+    show_detail,
+    tilde,
+)
 from .stream import Parser, SubStepParser, run_streamed, steps_parser
 from .theme import PANEL_WIDTH, SPINNER_FRAMES, THEME
 from .timings import RunTimings, Timing, merge_timings
@@ -48,5 +56,6 @@ __all__ = [
     "ready_panel",
     "run_streamed",
     "steps_parser",
+    "tilde",
     "show_detail",
 ]
