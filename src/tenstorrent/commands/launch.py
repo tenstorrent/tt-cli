@@ -107,16 +107,22 @@ def _local_candidate_ports(appctx) -> list[int]:
 
 
 def _discover_local(appctx) -> list[RunningModel]:
-    """Every model found without --port/--url: on a container tt itself started,
-    or (docker absent, or nothing found there) tt's plain default port."""
+    """Every model found without --port/--url: on every container tt itself
+    started, or (docker absent, or nothing found there) tt's plain default
+    port. Aggregated across every port that answers — with more than one
+    container running, --model has to be able to find one regardless of which
+    container actually serves it, not just whichever answers first."""
     ports = _local_candidate_ports(appctx) or [DEFAULT_PORT]
+    served: list[RunningModel] = []
     last_error: TTError | None = None
     for port in ports:
         try:
-            return discover(f"http://127.0.0.1:{port}/v1")
+            served += discover(f"http://127.0.0.1:{port}/v1")
         except TTError as exc:
             last_error = exc
-    raise last_error
+    if not served:
+        raise last_error
+    return served
 
 
 def _select(appctx, served: list[RunningModel], wanted: str | None) -> RunningModel:

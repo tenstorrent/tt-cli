@@ -306,6 +306,38 @@ def test_launch_finds_a_model_via_its_tt_model_container_port(
 
 
 @pytest.mark.fakes_only
+def test_launch_selects_a_model_from_a_container_other_than_the_first_found(
+    runner, served, fake_client, execed, fake_docker_containers
+):
+    """Two containers running at once: --model must be able to find the one
+    that isn't whichever port discovery happens to reach first."""
+    first = served("mistralai/Mistral-7B-Instruct-v0.3")
+    second = served("Qwen/Qwen3-32B")
+    first_port = first.rsplit(":", 1)[1].split("/")[0]
+    second_port = second.rsplit(":", 1)[1].split("/")[0]
+    fake_docker_containers([
+        {
+            "Id": "aaaaaaaaaaaa",
+            "Name": "/tt-inference-server-aaaa",
+            "Config": {"Image": "img:1"},
+            "Mounts": [],
+            "NetworkSettings": {"Ports": {"8000/tcp": [{"HostPort": first_port}]}},
+        },
+        {
+            "Id": "cccccccccccc",
+            "Name": "/tt-inference-server-cccc",
+            "Config": {"Image": "img:1"},
+            "Mounts": [],
+            "NetworkSettings": {"Ports": {"8000/tcp": [{"HostPort": second_port}]}},
+        },
+    ])
+    result = runner.invoke(app, ["launch", "opencode", "--model", "Qwen/Qwen3-32B"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(opencode_config().read_text())
+    assert doc["provider"]["tenstorrent"]["options"]["baseURL"] == second
+
+
+@pytest.mark.fakes_only
 def test_launch_falls_back_to_the_default_port_when_docker_finds_nothing(
     runner, fake_client, fake_docker_containers, monkeypatch
 ):
