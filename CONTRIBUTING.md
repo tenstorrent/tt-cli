@@ -61,22 +61,12 @@ Releases are cut by pushing a tag; `.github/workflows/release.yml` does the rest
 3. Tag it and push: `git tag v1.2.3 && git push origin v1.2.3`. The tag must match
    `__version__` exactly (bar the `v`), or the workflow stops before building.
 
-The workflow then builds the sdist and wheel, checks the metadata, installs the wheel
-into a clean environment and runs `tt`, gates on the full test suite (fake-tool matrix
-plus real hardware), and publishes to TestPyPI → GitHub Releases → PyPI, in that order,
-so the irreversible step happens last. Release notes are generated from the merged PRs
-and commits since the previous tag; a version like `1.2.3rc1` is flagged as a
-pre-release automatically.
-
-Uploads use PyPI [trusted publishing](https://docs.pypi.org/trusted-publishers/), so
-there are no API tokens to store — publishers must be registered on PyPI and TestPyPI
-for repository `tenstorrent/tt-cli`, workflow `release.yml`, and environments `pypi`
-and `testpypi`. Since the `tenstorrent` project does not exist on PyPI yet, register it
-as a *pending* publisher, which claims the name and lets the first run create it.
-
-To rehearse without publishing anything, run the workflow manually from the Actions
-tab; it builds and validates the same artifacts, and optionally uploads them to
-TestPyPI.
+The workflow builds and smoke-tests the wheel, gates on the full test suite (fake-tool
+matrix plus real hardware), then creates the GitHub release and finally publishes to
+PyPI via [trusted publishing](https://docs.pypi.org/trusted-publishers/), so the one
+irreversible step happens last. The full process — bumping the upstream pins first,
+what to review on that PR, what the release workflow checks, and where it bites — is in
+[docs/RELEASING.md](https://github.com/tenstorrent/tt-cli/blob/main/docs/RELEASING.md).
 
 ## Coding Standards
 
