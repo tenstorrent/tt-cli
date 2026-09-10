@@ -61,6 +61,8 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt report issue` | Open a prefilled GitHub issue on tt-cli (environment details auto-collected; `--no-browser` to just print the URL) |
 | `tt self update` | Upgrade `tt` itself where it owns its environment (`--check` to only look) — see [Keeping tt up to date](https://github.com/tenstorrent/tt-cli/blob/main/docs/DEVELOPERS.md#keeping-tt-up-to-date) |
 
+For a comprehensive view on packaging, publishing and pulling down community models [read more here](https://github.com/tenstorrent/tt-cli/blob/docs/community-models/docs/community-models.md)
+
 ## Interactive clients with `tt launch`
 
 `tt serve` gives you an OpenAI-compatible endpoint; `tt launch` points a client at it. tt discovers what is running by asking the server itself (`GET /v1/models`) and configures the client's endpoint for you.
