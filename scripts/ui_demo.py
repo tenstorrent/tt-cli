@@ -27,6 +27,7 @@ from tenstorrent.ui import (  # noqa: E402
     progress_bar,
     ready_panel,
 )
+from tenstorrent.ui.parsers import GitCloneProgress, UvPipProgress  # noqa: E402
 
 PHASES = ["Checks", "Tools", "System"]
 
@@ -62,6 +63,27 @@ def main() -> int:
             step.skip("already up to date")
         if out.ui.show_detail():
             ui.note("tt-luwen 0.7.1 is optional — `tt update --include-lazy` installs it")
+
+    # The parsers, driven by the captured fixtures rather than live tools, so the
+    # tour needs no network.
+    fixtures = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "streams"
+    if fixtures.is_dir():
+        with ui.activity("Cloning tt-inference-server v0.21.0") as row:
+            clone = GitCloneProgress("Cloning tt-inference-server v0.21.0")
+            for line in (fixtures / "git_clone.txt").read_text().splitlines():
+                got = clone.feed(line)
+                if got:
+                    row.milestone(got)
+                row.set(clone.activity())
+                pause(0.004)
+        with ui.activity("Installing dependencies") as row:
+            deps = UvPipProgress("Installing dependencies")
+            for line in (fixtures / "uv_pip_install.txt").read_text().splitlines():
+                got = deps.feed(line)
+                if got:
+                    row.milestone(got)
+                row.set(deps.activity())
+                pause(0.12)
 
     with ui.phase("System") as phase:
         # One live row standing in for a stream we don't control: an exact
