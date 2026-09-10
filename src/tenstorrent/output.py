@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -49,16 +50,22 @@ class OutputManager:
         json_mode: bool = False,
         quiet: bool = False,
         verbose: bool = False,
+        no_color: bool = False,
     ) -> None:
         self.json_mode = json_mode
         self.quiet = quiet
         self.verbose = verbose
+        # NO_COLOR is the cross-tool convention; honouring it means a CI log or a
+        # dumb terminal stays readable without anyone passing a flag.
+        self.no_color = bool(no_color) or bool(os.environ.get("NO_COLOR"))
         # Imported here, not at module scope: keeps output.py import-cheap and
         # avoids a package-level cycle with ui/ (which type-hints OutputManager).
         from .ui.theme import THEME
 
-        self.data_console = Console(highlight=False, theme=THEME)
-        self.status_console = Console(stderr=True, highlight=False, theme=THEME)
+        self.data_console = Console(highlight=False, theme=THEME, no_color=self.no_color)
+        self.status_console = Console(
+            stderr=True, highlight=False, theme=THEME, no_color=self.no_color
+        )
 
     @property
     def ui(self) -> "Ui":
@@ -89,11 +96,16 @@ class OutputManager:
         json_mode: bool = False,
         quiet: bool = False,
         verbose: bool = False,
+        no_color: bool = False,
     ) -> None:
         """Leaf-command flags can only turn modes on, never back off a root flag."""
         self.json_mode = self.json_mode or json_mode
         self.quiet = self.quiet or quiet
         self.verbose = self.verbose or verbose
+        self.no_color = self.no_color or bool(no_color)
+        # The consoles already exist, so retint them rather than rebuilding.
+        self.data_console.no_color = self.no_color
+        self.status_console.no_color = self.no_color
 
     # -- status channel (stderr) ------------------------------------------------
     def status(self, message: str, *, style: str | None = None) -> None:

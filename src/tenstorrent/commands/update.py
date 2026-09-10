@@ -14,7 +14,7 @@ from rich.table import Table
 
 from ..backends.device import get_device_backend
 from ..backends.installer import InstallerBackend, UpdatePlan
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..selfupdate.update import offer_before_update
@@ -196,10 +196,12 @@ def update(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Get the latest stable, tested "golden" versions for this system."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     offline = offline or appctx.offline
     force = force or version is not None  # an explicit version means "I know what I'm doing"
     # A newer tt may carry newer tool pins, so it goes first: on a TTY, offer to
