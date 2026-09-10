@@ -74,9 +74,12 @@ def _launcher(tool: str) -> Launcher:
     return launcher
 
 
-def _installed_or_none(launcher: Launcher, config) -> str | None:
+def _installed_or_none(launcher: Launcher, config, output) -> str | None:
+    """A soft check for a listing/preview: "not installed" is an expected, cheap
+    answer here, so it skips the fresh-shell retry `resolve_executable` otherwise
+    pays for a miss that would actually block the user."""
     try:
-        return resolve_executable(launcher, config)
+        return resolve_executable(launcher, config, output, retry_path=False)
     except TTError:
         return None
 
@@ -256,9 +259,9 @@ def _connect(
     # when it can, so what it reports (an existing container, say) is the truth on
     # this machine rather than a guess.
     executable = (
-        _installed_or_none(launcher, appctx.config)
+        _installed_or_none(launcher, appctx.config, appctx.output)
         if dry_run
-        else resolve_executable(launcher, appctx.config)
+        else resolve_executable(launcher, appctx.config, appctx.output)
     )
     prep = launcher.plan(
         target, LaunchOptions(web_port=web_port), executable=executable, runner=appctx.runner
@@ -300,7 +303,7 @@ def _catalog(appctx) -> list[dict]:
     """What each client is and whether it could run right now."""
     rows = []
     for launcher in LAUNCHERS.values():
-        executable = _installed_or_none(launcher, appctx.config)
+        executable = _installed_or_none(launcher, appctx.config, appctx.output)
         # Only container clients have a state to report; asking is one `docker
         # inspect`, so it stays cheap enough for a listing.
         state = getattr(launcher, "container_state", None)
@@ -362,7 +365,7 @@ def stop(
             f"{launcher.id}` to undo its configuration.",
             exit_code=ExitCode.USAGE,
         )
-    executable = resolve_executable(launcher, appctx.config)
+    executable = resolve_executable(launcher, appctx.config, appctx.output)
     if launcher.container_state(executable, appctx.runner) != "running":
         appctx.output.status(f"{launcher.target()} is not running.")
         appctx.output.emit({"tool": launcher.id, "stopped": False}, renderer=lambda _: None)
@@ -390,7 +393,7 @@ def disconnect(
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
     launcher = _launcher(tool)
-    executable = _installed_or_none(launcher, appctx.config)
+    executable = _installed_or_none(launcher, appctx.config, appctx.output)
     plan = launcher.disconnect_plan(executable, appctx.runner)
     payload = {
         "tool": launcher.id,

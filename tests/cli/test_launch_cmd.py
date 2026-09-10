@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from tenstorrent.cli import app
-from tenstorrent.errors import ExitCode
+from tenstorrent.errors import ExitCode, TTError
 
 
 LAUNCH_SUPPORT = (
@@ -244,7 +244,8 @@ def test_model_that_is_not_served_is_a_usage_error(runner, served, fake_client):
 
 @pytest.mark.fakes_only
 def test_missing_client_points_at_its_own_installer(runner, served, monkeypatch):
-    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name: None)
+    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name, **_: None)
+    monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(app, ["launch", "opencode", "--url", served("Qwen/Qwen3-32B")])
     assert result.exit_code == ExitCode.TOOL_MISSING
     assert "opencode.ai" in result.output
@@ -306,13 +307,22 @@ def test_launch_finds_a_model_via_its_tt_model_container_port(
 
 @pytest.mark.fakes_only
 def test_launch_falls_back_to_the_default_port_when_docker_finds_nothing(
-    runner, fake_client, fake_docker_containers
+    runner, fake_client, fake_docker_containers, monkeypatch
 ):
     """No matching container (or no docker at all) must not crash discovery — it
-    falls back to tt's plain default port and fails cleanly if nothing answers."""
+    falls back to tt's plain default port. `discover` is faked rather than relying
+    on nothing actually listening on 20000, which the host running this suite
+    cannot guarantee (e.g. a real `tt serve` left running on its own default)."""
+    attempted = []
+
+    def fake_discover(base_url):
+        attempted.append(base_url)
+        raise TTError("no server", exit_code=ExitCode.ERROR)
+
+    monkeypatch.setattr("tenstorrent.commands.launch.discover", fake_discover)
     result = runner.invoke(app, ["launch", "opencode"])
     assert result.exit_code == ExitCode.ERROR
-    assert "tt serve" in result.output
+    assert attempted == ["http://127.0.0.1:20000/v1"]
 
 
 @pytest.mark.fakes_only
@@ -325,9 +335,16 @@ def test_launch_falls_back_when_docker_itself_is_not_installed(
     monkeypatch.setattr(
         "tenstorrent.backends.serving.model_manager.shutil.which", lambda name: None
     )
+    attempted = []
+
+    def fake_discover(base_url):
+        attempted.append(base_url)
+        raise TTError("no server", exit_code=ExitCode.ERROR)
+
+    monkeypatch.setattr("tenstorrent.commands.launch.discover", fake_discover)
     result = runner.invoke(app, ["launch", "opencode"])
     assert result.exit_code == ExitCode.ERROR
-    assert "tt serve" in result.output
+    assert attempted == ["http://127.0.0.1:20000/v1"]
 
 
 @pytest.mark.fakes_only
@@ -478,7 +495,8 @@ def test_openwebui_non_interactive_needs_yes(runner, served, fake_docker, monkey
 
 @pytest.mark.fakes_only
 def test_openwebui_dry_run_needs_no_container_runtime(runner, served, monkeypatch):
-    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name: None)
+    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name, **_: None)
+    monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(
         app, ["launch", "openwebui", "--url", served("Qwen/Qwen3-32B"), "--dry-run"]
     )
@@ -583,7 +601,8 @@ def test_group_help_lists_every_client(runner):
 @pytest.mark.fakes_only
 def test_list_shows_every_client_without_a_server(runner, monkeypatch):
     """--list must work with nothing serving and nothing installed."""
-    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name: None)
+    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name, **_: None)
+    monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(app, ["launch", "list"])
     assert result.exit_code == 0, result.output
     for tool in ("opencode", "pi", "aider", "openwebui", "anythingllm"):
@@ -595,7 +614,8 @@ def test_list_shows_every_client_without_a_server(runner, monkeypatch):
 @pytest.mark.fakes_only
 def test_list_json_reports_availability(runner, fake_client_named, monkeypatch):
     fake_client_named("opencode")
-    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name: None)
+    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name, **_: None)
+    monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(app, ["launch", "list", "--json"])
     assert result.exit_code == 0, result.output
     rows = {row["tool"]: row for row in json.loads(result.stdout)}

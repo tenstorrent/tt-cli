@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
 import json
+import os
 import socket
 
 import pytest
@@ -22,6 +23,7 @@ from tenstorrent.launchers.container import container_base_url, port_is_free
 from tenstorrent.launchers.discovery import DEFAULT_BASE_URL, base_url_for
 from tenstorrent.launchers.apps.openwebui import IMAGE
 from tenstorrent.modelhub.catalog import ModelCatalog
+from tenstorrent.output import OutputManager
 from tenstorrent.tools.runner import CaptureResult
 
 
@@ -207,15 +209,39 @@ def test_resolve_executable_prefers_env_then_override(tmp_path, monkeypatch):
             assert key == "tools.override.opencode"
             return self.value
 
+    output = OutputManager()
     launcher = LAUNCHERS["opencode"]
     monkeypatch.setenv("TT_TOOL_BIN_OPENCODE", "/from/env")
-    assert resolve_executable(launcher, Config("/from/config")) == "/from/env"
+    assert resolve_executable(launcher, Config("/from/config"), output) == "/from/env"
     monkeypatch.delenv("TT_TOOL_BIN_OPENCODE")
-    assert resolve_executable(launcher, Config("/from/config")) == "/from/config"
-    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name: None)
+    assert resolve_executable(launcher, Config("/from/config"), output) == "/from/config"
+    monkeypatch.setattr("tenstorrent.launchers.base.shutil.which", lambda name, **_: None)
+    monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     with pytest.raises(TTError) as err:
-        resolve_executable(launcher, Config())
+        resolve_executable(launcher, Config(), output)
     assert err.value.exit_code == ExitCode.TOOL_MISSING
+
+
+def test_resolve_executable_retries_with_a_freshly_sourced_path(tmp_path, monkeypatch):
+    """A client just installed by a script often isn't on this process's PATH yet
+    — only a shell that re-reads its rc files sees it. One retry with a fresh
+    shell's PATH must find it without the user opening a new terminal."""
+    exe = tmp_path / "opencode"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+
+    class Config:
+        def get(self, key):
+            return None
+
+    launcher = LAUNCHERS["opencode"]
+    monkeypatch.delenv("TT_TOOL_BIN_OPENCODE", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path.parent))  # opencode is not here yet
+    monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: str(tmp_path))
+    assert resolve_executable(launcher, Config(), OutputManager()) == str(exe)
+    # A tool found this way may itself need PATH at run time (a `#!/usr/bin/env
+    # node` shebang, or a subprocess it shells out to) — not just this lookup.
+    assert os.environ["PATH"] == str(tmp_path)
 
 
 def test_write_json_config_creates_parents_and_leaves_no_temp(tmp_path):
