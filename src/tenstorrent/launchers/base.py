@@ -116,27 +116,49 @@ class Launcher(Protocol):
         ...
 
 
+# The interactive rc file each shell actually reads — not the login files
+# (.bash_profile/.profile), which is what -l would source instead, and which
+# don't reach .bashrc/.zshrc unless one happens to chain to the other.
+_INTERACTIVE_RC = {"bash": "~/.bashrc", "zsh": "~/.zshrc"}
+_PATH_MARKER = "__tt_shell_path__"
+
+
 def _shell_path() -> str | None:
-    """PATH as the user's interactive login shell computes it right now, for an
-    installer (curl script, npm, cargo) that only edited an rc file — this
-    process's own PATH was already inherited before that ever happened. `-i` is
-    needed despite its cost (full interactive startup: prompt theme, nvm/asdf/
-    direnv hooks) because installers conventionally append to .bashrc/.zshrc,
-    which a login-only shell never sources. Best-effort: any failure just means
-    the retry in `resolve_executable` finds nothing new."""
+    """PATH after sourcing the user's shell rc file, for an installer (curl
+    script, npm, cargo) that only edited that file — this process's own PATH
+    was already inherited before that ever happened.
+
+    Sources the rc file directly rather than relying on shell flags: bash's
+    login mode reads .bash_profile/.profile, not .bashrc, and a plain -i/-l
+    combination is not a portable way to reach the file installers actually
+    append to (bash and zsh disagree on what -i and -l each source). Only
+    bash and zsh are known here; anything else skips the retry rather than
+    guess at unfamiliar rc syntax. A marker isolates $PATH from anything the
+    rc file itself prints (a welcome banner, an update check) that would
+    otherwise corrupt the parse. Best-effort throughout: any failure just
+    means the retry in `resolve_executable` finds nothing new.
+    """
     shell = os.environ.get("SHELL")
-    if not shell:
+    rc_file = _INTERACTIVE_RC.get(os.path.basename(shell)) if shell else None
+    if not rc_file:
         return None
+    command = (
+        f"[ -f {rc_file} ] && . {rc_file} >/dev/null 2>&1; "
+        f'printf "{_PATH_MARKER}%s" "$PATH"'
+    )
     try:
         result = subprocess.run(
-            [shell, "-ilc", 'echo -n "$PATH"'],
+            [shell, "-c", command],
             capture_output=True,
             text=True,
             timeout=3,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    return result.stdout.strip() or None
+    marker_at = result.stdout.rfind(_PATH_MARKER)
+    if marker_at == -1:
+        return None
+    return result.stdout[marker_at + len(_PATH_MARKER) :].strip() or None
 
 
 def resolve_executable(

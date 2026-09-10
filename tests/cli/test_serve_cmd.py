@@ -547,6 +547,19 @@ def test_serve_dry_run_reports_the_effective_default_port(runner, fake_server, m
     assert plan["default_port_from_env"] is True
 
 
+@pytest.mark.fakes_only
+def test_serve_honors_service_port_from_the_environment(
+    runner, docker_present, fake_server, monkeypatch
+):
+    """The dry-run plan's default_port is only a preview; this is what actually
+    reaches run.py's argv when SERVICE_PORT is the one setting the port."""
+    monkeypatch.setenv("SERVICE_PORT", "7777")
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--device", "n150"])
+    assert result.exit_code == 0, result.output
+    argv = json.loads(fake_server.read_text().splitlines()[-1])
+    assert argv[argv.index("--service-port") + 1] == "7777"
+
+
 @pytest.fixture
 def pulled_bundle(monkeypatch, tmp_path):
     """A bundle tt-model has pulled: its index entry plus the on-disk manifest."""
