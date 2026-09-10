@@ -144,7 +144,7 @@ def test_demo_flow(env, tmp_path):
     assert stub.returncode == 7
 
     # report issue builds a prefilled GitHub URL (--no-browser: no xdg-open here)
-    issue = tt(env, "report", "issue", "tt-cli", "--no-browser", "--json")
+    issue = tt(env, "report", "issue", "--no-browser", "--json")
     assert "tenstorrent/tt-cli/issues/new" in json.loads(issue.stdout)["url"]
 
     # exit-code contract through the real main(): unknown key → CONFIG (9)
