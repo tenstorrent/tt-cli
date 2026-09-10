@@ -44,8 +44,9 @@ def fake_server(inference_bin):
 
 
 @pytest.mark.fakes_only
-def test_serve_streams_run_py(runner, docker_present, fake_server, isolated_dirs):
+def test_serve_streams_run_py(runner, docker_present, fake_server, isolated_dirs, monkeypatch):
     # without tt-smi available, auto-detect degrades to a warning and no --device
+    monkeypatch.delenv("SERVICE_PORT", raising=False)  # else --service-port below is a guess
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
     assert result.exit_code == 0, result.output
     assert "auto-detect skipped" in result.output
