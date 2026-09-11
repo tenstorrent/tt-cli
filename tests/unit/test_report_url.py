@@ -9,20 +9,19 @@ from urllib.parse import parse_qs, urlparse
 
 from tenstorrent.commands.report import (
     _MAX_BODY_CHARS,
-    REPO_TARGETS,
+    ISSUE_TARGET,
     build_issue_url,
 )
 
 
 def test_build_issue_url_round_trips_through_encoding():
-    target = REPO_TARGETS["tt-smi"]
     title = "crash & burn: 100% repro"
     body = "line one\nline two\n<details>with & special = chars?</details>"
-    url = build_issue_url(target, title=title, body=body)
+    url = build_issue_url(ISSUE_TARGET, title=title, body=body)
     parsed = urlparse(url)
     assert parsed.scheme == "https"
     assert parsed.netloc == "github.com"
-    assert parsed.path == "/tenstorrent/tt-smi/issues/new"
+    assert parsed.path == "/tenstorrent/tt-cli/issues/new"
     query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
     assert query["title"] == title
     assert query["body"] == body
