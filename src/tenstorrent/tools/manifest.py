@@ -51,6 +51,11 @@ _TT_PYTHON_TOOL_INFO: dict[str, dict[str, Any]] = {
     "tt-flash": {"golden_key": "flash", "health": ["--version"]},
 }
 
+# The tools tt-installer itself puts into its managed venv (~/.tenstorrent-venv). On a
+# box set up by the installer these exist before `tt update` has ever run, so the
+# registry probes that venv as a last resort — for these names only.
+INSTALLER_MANAGED_TOOLS = frozenset(_TT_PYTHON_TOOL_INFO)
+
 # golden.json keys that are NOT displayed as part of the system stack:
 # smi/flash are the tt-managed uv tools above, firmware is surfaced separately,
 # installer is pinned in the supplement instead (deliberately allowed to be newer
