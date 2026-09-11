@@ -28,7 +28,7 @@ from rich.text import Text
 from .._compat import confirm
 from ..backends.serving.inference_server import InferenceServerBackend
 from ..backends.serving.model_manager import ModelManagerBackend
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..launchers import LAUNCHERS, Launcher
@@ -249,9 +249,11 @@ def _connect(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     # Which client this is comes from the invoked command name, so every client
     # shares this one implementation.
     launcher = _launcher(ctx.info_name)
@@ -297,11 +299,15 @@ for _name, _launcher_obj in LAUNCHERS.items():
 @launch_app.command("list")
 @handle_tt_errors
 def list_apps(
-    ctx: typer.Context, json_mode: JsonFlag = False, quiet: QuietFlag = False
+    ctx: typer.Context,
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Show every client tt can connect, and whether each is usable now."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     appctx.output.emit(_catalog(appctx), renderer=_catalog_renderer)
 
 
@@ -358,10 +364,12 @@ def stop(
     tool: str = typer.Argument(help="Client to stop.", autocompletion=complete_tool),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Stop a client tt runs as a container, keeping its data."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(tool)
     if launcher.hands_over_terminal:
         raise TTError(
@@ -394,10 +402,12 @@ def disconnect(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Undo what tt configured for a client, leaving its own data alone."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(tool)
     executable = _installed_or_none(launcher, appctx.config, appctx.output)
     plan = launcher.disconnect_plan(executable, appctx.runner)
