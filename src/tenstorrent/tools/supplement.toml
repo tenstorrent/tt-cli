@@ -74,6 +74,6 @@ package = "tt-model"
 repo = "https://github.com/tenstorrent/tt-model-manager"
 # Upstream publishes no tags yet, so the pin is a commit. Bumping it reinstalls
 # via registry.ensure() (recorded state != golden pin).
-golden_version = "36957478af122b74912ef1990f17e9451ac13e1b"
+golden_version = "da3137438495ad9a71fda99d3a8e01e767f2a79c"
 python = "3.10"
 health = ["--version"]
