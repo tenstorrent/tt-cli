@@ -20,7 +20,7 @@ from tenstorrent.launchers.base import (
     write_json_config,
 )
 from tenstorrent.launchers.container import container_base_url, port_is_free
-from tenstorrent.launchers.discovery import DEFAULT_BASE_URL, base_url_for
+from tenstorrent.launchers.discovery import DEFAULT_BASE_URL, base_url_for, probe
 from tenstorrent.launchers.apps.openwebui import IMAGE
 from tenstorrent.modelhub.catalog import ModelCatalog
 from tenstorrent.output import OutputManager
@@ -482,3 +482,72 @@ def test_tool_call_parser_reads_only_vllm_devices():
                                          tool_call_parser="hermes")},
     )
     assert tool_call_parser(media_only) is None
+
+
+# -- discovery.probe: the non-raising view `tt model ps` uses -----------------------------
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def test_probe_returns_none_for_a_dead_port():
+    assert probe(f"http://127.0.0.1:{_free_port()}/v1", timeout_s=0.5) is None
+
+
+def test_probe_returns_models_from_a_live_server(served):
+    got = probe(served("Qwen/Qwen3.5-9B"))
+    assert [m.served_id for m in got] == ["Qwen/Qwen3.5-9B"]
+    assert got[0].max_context == 131072
+
+
+def test_probe_returns_none_for_a_404_html_server(served):
+    assert probe(served.reject()) is None
+
+
+def test_probe_returns_none_for_foreign_json(loopback):
+    # a JSON array where an object is expected used to raise AttributeError
+    assert probe(loopback(b"[]"), timeout_s=1) is None
+    assert probe(loopback(b'{"data": "nope"}'), timeout_s=1) is None
+    assert probe(loopback(b'{"data": [1, {"name": "no id"}]}'), timeout_s=1) is None
+
+
+def test_probe_honours_its_timeout(loopback):
+    import time
+
+    t0 = time.monotonic()
+    assert probe(loopback(b"{}", delay_s=3), timeout_s=0.5) is None
+    assert time.monotonic() - t0 < 2
+
+
+@pytest.fixture
+def loopback():
+    """A loopback server answering every GET with a fixed body, optionally slowly."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    servers = []
+
+    def start(body: bytes, *, delay_s: float = 0) -> str:
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                import time
+
+                time.sleep(delay_s)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        servers.append(server)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return f"http://127.0.0.1:{server.server_port}/v1"
+
+    yield start
+    for server in servers:
+        server.shutdown()

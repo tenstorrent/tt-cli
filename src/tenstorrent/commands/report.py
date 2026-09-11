@@ -80,6 +80,27 @@ def _environment_lines(appctx: AppContext) -> list[str]:
         lines.append(f"- devices: unavailable ({err.exit_code.name})")
     except Exception:
         lines.append("- devices: unavailable")
+    try:
+        # Imported inside the fence so a broken import degrades like everything else.
+        from ..backends.serving.inference_server import InferenceServerBackend
+        from ..backends.serving.ps import human_duration, list_served
+
+        runtime = InferenceServerBackend(
+            appctx.registry, appctx.runner, appctx.config, appctx.output
+        ).container_runtime()
+        served = list_served(appctx.runner, runtime)
+        if not served:
+            lines.append("- served models: none")
+        for row in served:
+            # name/backend/port/health only — ServedModel carries no mount paths.
+            detail = f"{row.backend}, port {row.port}, {row.health}"
+            if row.uptime_s is not None:
+                detail += f", up {human_duration(row.uptime_s)}"
+            lines.append(f"- served: {row.name} ({detail})")
+    except TTError as err:
+        lines.append(f"- served models: unavailable ({err.exit_code.name})")
+    except Exception:
+        lines.append("- served models: unavailable")
     return lines
 
 

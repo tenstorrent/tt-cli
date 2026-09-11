@@ -53,6 +53,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`) |
 | `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id |
 | `tt model stop NAME` | Stop a running model server (`--profile` to stop only one profile of a bundle) |
+| `tt model ps` | Model servers running on this machine: name, backend, port, health, uptime (`--all` includes stopped containers; `--no-probe` skips the HTTP health check) |
 
 | Other | Functionality |
 |---|---|
@@ -65,7 +66,7 @@ For a comprehensive view on packaging, publishing and pulling down community mod
 
 ## Interactive clients with `tt launch`
 
-`tt serve` gives you an OpenAI-compatible endpoint; `tt launch` points a client at it. tt discovers what is running by asking the server itself (`GET /v1/models`) and configures the client's endpoint for you.
+`tt serve` gives you an OpenAI-compatible endpoint; `tt launch` points a client at it. tt discovers what is running by asking the server itself (`GET /v1/models`) and configures the client's endpoint for you. `tt model ps` lists what is being served and on which port, using the same probe.
 
 ```bash
 tt launch list                         # what can I connect, and is it usable now?

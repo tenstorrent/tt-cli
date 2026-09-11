@@ -21,6 +21,18 @@ from tenstorrent.errors import ExitCode
 
 
 @pytest.fixture(autouse=True)
+def no_container_runtime(request, monkeypatch):
+    """The served-models collector asks docker; without this every test here would
+    run the real `docker ps` (and probe port 8000) on a developer's box. A test
+    that requests `fake_docker` gets the fake instead."""
+    if "fake_docker" in request.fixturenames:
+        return
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.inference_server.shutil.which", lambda name: None
+    )
+
+
+@pytest.fixture(autouse=True)
 def browser(monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr(
@@ -50,6 +62,7 @@ def test_issue_url_targets_tt_cli(runner):
     assert platform.python_version() in q["body"]
     # isolated_dirs strips TT_TOOL_BIN_*, so the device section degrades gracefully
     assert "devices: unavailable (TOOL_MISSING)" in q["body"]
+    assert "served models: unavailable (TOOL_MISSING)" in q["body"]
     # nothing that identifies the machine or user leaves the box
     assert str(Path.home()) not in q["body"]
 
@@ -115,3 +128,62 @@ def test_issue_title_option(runner):
     result = runner.invoke(app, ["report", "issue", "--no-browser", "-t", "boom"])
     assert result.exit_code == 0
     assert _issue_url(result.output)["title"] == "boom"
+
+
+def _record(cid, name, *, image, port, mounts=()):
+    return {
+        "Id": cid,
+        "Name": f"/{name}",
+        "Config": {"Image": image, "Labels": {}},
+        "Mounts": list(mounts),
+        "State": {"Status": "running", "Running": True, "StartedAt": "2026-09-08T10:00:00Z"},
+        "HostConfig": {"PortBindings": {f"{port}/tcp": [{"HostIp": "", "HostPort": str(port)}]}},
+    }
+
+
+@pytest.mark.fakes_only
+def test_issue_body_lists_served_models(runner, fake_docker, monkeypatch):
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        dead = sock.getsockname()[1]
+    monkeypatch.setattr(
+        "tenstorrent.launchers.discovery.DEFAULT_BASE_URL", f"http://127.0.0.1:{dead}/v1"
+    )
+    other = dead - 1 if dead > 1024 else dead + 1
+    set_containers, _ = fake_docker
+    set_containers([
+        _record("1" * 64, "Qwen3.5-9B",
+                image="ghcr.io/tenstorrent/tt-studio/studio_images:qwen35", port=dead),
+        _record("2" * 64, "tt-inference-server-abcd", image="vllm:1", port=other,
+                mounts=[{
+                    "Type": "volume",
+                    "Name": "volume_id_tt-transformers-Qwen3-32B",
+                    "Source": str(Path.home() / "volumes" / "volume_id_tt-transformers-Qwen3-32B"),
+                }]),
+    ])
+    result = runner.invoke(app, ["report", "issue", "--no-browser"])
+    assert result.exit_code == 0
+    body = _issue_url(result.output)["body"]
+    assert f"- served: Qwen3.5-9B (studio, port {dead}, starting, up " in body
+    assert "- served: Qwen3-32B (inference-server, port " in body
+    # the collector prints identity only — never mount sources or volume names
+    assert "volume_id_" not in body
+    assert str(Path.home()) not in body
+
+
+@pytest.mark.fakes_only
+def test_issue_body_says_none_when_nothing_is_served(runner, fake_docker, monkeypatch):
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        dead = sock.getsockname()[1]
+    monkeypatch.setattr(
+        "tenstorrent.launchers.discovery.DEFAULT_BASE_URL", f"http://127.0.0.1:{dead}/v1"
+    )
+    set_containers, _ = fake_docker
+    set_containers([])
+    result = runner.invoke(app, ["report", "issue", "--no-browser"])
+    assert "- served models: none" in _issue_url(result.output)["body"]
