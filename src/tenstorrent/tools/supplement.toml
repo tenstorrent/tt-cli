@@ -77,3 +77,24 @@ repo = "https://github.com/tenstorrent/tt-model-manager"
 golden_version = "36957478af122b74912ef1990f17e9451ac13e1b"
 python = "3.10"
 health = ["--version"]
+
+[tools.tt-studio]
+# TT-Studio: the third `tt serve` path, for the models only its catalog carries
+# (bundled copy: modelhub/studio_models.json — re-copy it from
+# app/backend/shared_config/models_from_inference_server.json on a bump). tt
+# delegates the whole lifecycle to the checkout's run.py: `run <model>` deploys,
+# `--stop-model <model>` stops. Both exist only on the dev branch (tt-studio #1073,
+# 2026-09-04; not in v2.10.1), hence the branch pin. A branch moves, and
+# registry.ensure() only reinstalls when the pin *string* changes, so the studio
+# backend does a best-effort `git pull --ff-only` before each run (skipped with
+# --offline). Pinned from dev@f7ee462 on 2026-09-04.
+kind = "git-venv"
+golden_version = "dev"
+repo = "https://github.com/tenstorrent/tt-studio"
+entry = "run.py"
+python = "3.12"
+# run.py bootstraps its own deps into .tt_studio_run_venv and re-execs itself, so
+# the managed venv only has to provide the interpreter.
+deps = []
+# Only users who serve a studio-only model need the ~200 MB checkout.
+lazy = true

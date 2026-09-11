@@ -125,6 +125,8 @@ weights alone do not make a model servable.
 | `TT_UPDATE_CHECK_URL` | Where that lookup reads PyPI-shaped project JSON from (URL or local file; default `https://pypi.org/pypi/tenstorrent/json`) |
 | `HF_HOME` | Weights cache root when `paths.hf_model_cache_directory` is unset; exported to tt-model and passed to tt-inference-server so every tool shares one cache |
 | `XDG_CACHE_HOME` | Where tt-model keeps its installed-bundle index (`$XDG_CACHE_HOME/tt-model`), which `tt model list --community` reads |
+| `TT_STUDIO_MODELS_PATH` | Override the bundled copy of TT-Studio's model catalog |
+| `HF_TOKEN` / `HF_TOKEN_PATH` | Hugging Face token handed to every serving backend; with neither set, `<HF_HOME>/token` from `hf auth login` is used |
 | `VISUAL` / `EDITOR` | Editor opened by bare `tt config` |
 
 Telemetry has its own set of variables (`TT_TELEMETRY_*`, `DO_NOT_TRACK`) — see

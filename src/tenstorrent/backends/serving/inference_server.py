@@ -23,7 +23,7 @@ from ...config.store import ConfigStore
 from ...errors import ExitCode, TTError
 from ...models.device import DeviceSnapshot
 from ...models.model import DeviceSupport, ModelInfo
-from ...modelhub.hub import hf_home_dir, uses_host_weight_cache
+from ...modelhub.hub import hf_home_dir, hf_token, uses_host_weight_cache
 from ...output import OutputManager
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
@@ -283,6 +283,12 @@ class InferenceServerBackend:
         env = dict(os.environ)
         source = "huggingface" if uses_host_weight_cache(model) else "noaction"
         env.setdefault("MODEL_SOURCE", source)
+        # run.py reads HF_TOKEN from its environment (or its own .env) and, upstream,
+        # prompts on stdin when neither has one. A token from `hf auth login` is
+        # handed over so a user who already logged in is never asked again.
+        token = hf_token(self.config)
+        if token:
+            env.setdefault("HF_TOKEN", token[0])
         return env
 
     def _python_for(self, entry: Path) -> str:
@@ -339,6 +345,7 @@ class InferenceServerBackend:
             "default_port": os.environ.get("SERVICE_PORT", str(DEFAULT_SERVICE_PORT)),
             "default_port_from_env": "SERVICE_PORT" in os.environ,
             "installed": entry is not None,
+            "hf_token_source": (hf_token(self.config) or (None, None))[1],
         }
         forced = (support.serve_overrides or {}) if support else {}
         settings["docker_image"] = forced.get("docker_image")

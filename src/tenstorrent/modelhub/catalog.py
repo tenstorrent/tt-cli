@@ -14,7 +14,9 @@ and lets the same artifact ship, publish, and drive the CLI.
 
 ModelCatalog is the only consumer-facing surface. It merges an ordered list of
 entry sources, later sources overriding earlier ones by ModelInfo.name; today
-that list is just ModelSupportSource. tt-model bundles (tt-model-manager's
+that list is StudioModelsSource (modelhub/studio.py) then ModelSupportSource,
+so a model tt-inference-server serves is never offered through studio and
+studio only adds the models the support list lacks. tt-model bundles (tt-model-manager's
 self-contained running folders, `tt_kernel_manifest.json` on disk) are
 deliberately NOT a source here: they share no schema with the compat spec (no
 per-device status, no max_context), so `modelhub/bundles.py` lists them
@@ -193,9 +195,11 @@ class ModelCatalog:
         # winning, so an appended source can override the released spec's entry
         # of the same name. tt-model bundles are kept out of this list on
         # purpose — see modelhub/bundles.py.
-        self.sources: list[CatalogSource] = (
-            list(sources) if sources is not None else [ModelSupportSource()]
-        )
+        if sources is None:
+            from .studio import StudioModelsSource
+
+            sources = [StudioModelsSource(), ModelSupportSource()]
+        self.sources: list[CatalogSource] = list(sources)
         self.origin = " + ".join(s.origin for s in self.sources)
 
     def list(self, *, cached_sizes: dict[str, int] | None = None) -> list[ModelInfo]:

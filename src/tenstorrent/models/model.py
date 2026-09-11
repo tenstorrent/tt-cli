@@ -68,3 +68,6 @@ class ModelInfo:
     min_ram_gb: float | None = None
     cached: bool = False
     cache_size_bytes: int | None = None
+    # The serving path that offers this model: "inference-server" (the support
+    # list) or "studio" (a model only TT-Studio's catalog carries).
+    backends: list[str] = field(default_factory=lambda: ["inference-server"])
