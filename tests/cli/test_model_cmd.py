@@ -493,6 +493,7 @@ def fake_docker(monkeypatch, tmp_path):
         lambda name: str(FAKE_BIN_DIR / "docker") if name == "docker" else None,
     )
     monkeypatch.setenv("FAKE_DOCKER_STOP_LOG", str(stop_log))
+    monkeypatch.setenv("FAKE_DOCKER_ARGV_LOG", str(tmp_path / "docker-argv.jsonl"))
 
     def set_containers(entries):
         monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(entries))
@@ -600,6 +601,176 @@ def test_model_stop_without_a_container_runtime_is_tool_missing(
     )
     result = runner.invoke(app, ["model", "stop", "Qwen3-32B"])
     assert result.exit_code == ExitCode.TOOL_MISSING
+
+
+# -- logs --------------------------------------------------------------------------
+@pytest.fixture
+def docker_argv_log(fake_docker):
+    """Where tests/fakes/bin/docker records `docker logs` invocations."""
+    import os
+
+    return Path(os.environ["FAKE_DOCKER_ARGV_LOG"])
+
+
+def _docker_logs_calls(log: Path) -> list[list[str]]:
+    if not log.exists():
+        return []
+    return [json.loads(line)["argv"] for line in log.read_text().splitlines()]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_delegates_to_tt_model(runner, fake_model_manager, isolated_dirs):
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle"]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_forwards_follow_and_profile(
+    runner, fake_model_manager, isolated_dirs
+):
+    result = runner.invoke(
+        app, ["model", "logs", "ns/bundle", "--follow", "--profile", "fast"]
+    )
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle", "--follow", "--profile", "fast"]
+
+
+@pytest.mark.fakes_only
+@pytest.mark.parametrize("flag", [["--since", "10m"], ["--tail", "5"]])
+def test_model_logs_bundle_rejects_since_and_tail(
+    runner, fake_model_manager, isolated_dirs, flag
+):
+    """tt-model logs knows only --follow/--profile; say so instead of dropping the flag."""
+    result = runner.invoke(app, ["model", "logs", "ns/bundle", *flag])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "docker logs" in result.output
+    assert not fake_model_manager.exists()  # tt-model never invoked
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_does_not_install_tt_model(runner, uv_bin, isolated_dirs):
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == ExitCode.TOOL_MISSING
+    assert not uv_bin.exists()
+
+
+def test_model_logs_unknown_name_is_usage(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instrukt"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "Unknown model" in result.output
+
+
+def test_model_logs_rejects_json(runner, fake_checkout, isolated_dirs):
+    result = runner.invoke(app, ["--json", "model", "logs", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "plain text" in result.output
+
+
+def test_model_logs_profile_is_bundle_only(runner, fake_checkout, isolated_dirs):
+    result = runner.invoke(
+        app, ["model", "logs", "Llama-3.1-8B-Instruct", "--profile", "x"]
+    )
+    assert result.exit_code == ExitCode.USAGE
+    assert "profiles" in result.output
+
+
+@pytest.fixture
+def checkout_with_log_history(fake_checkout):
+    """fake_checkout plus an older Llama server log, a run.py log and a spec sidecar,
+    with mtimes ordered so "newest" is unambiguous."""
+    import os
+
+    logs = fake_checkout / "workflow_logs"
+    old = logs / "docker_server" / "vllm_2025-12-31_00-00-00_Llama-3.1-8B-Instruct_p300x2_server.log"
+    old.write_text("old line 1\nold line 2\n")
+    run_log = logs / "run_logs" / "run_2026-01-01_00-00-00_Llama-3.1-8B-Instruct_server_abcd1234.log"
+    run_log.parent.mkdir()
+    run_log.write_text("run.py line\n")
+    spec = logs / "runtime_model_specs" / "runtime_model_spec_2026-01-02_Llama-3.1-8B-Instruct_x.json"
+    spec.parent.mkdir()
+    spec.write_text("{}")
+    newest = logs / "docker_server" / "vllm_2026-01-01_00-00-00_Llama-3.1-8B-Instruct_p300x2_server.log"
+    newest.write_text("line 1\nline 2\nline 3\n")
+    for i, path in enumerate([old, run_log, newest, spec]):
+        os.utime(path, (1_700_000_000 + i, 1_700_000_000 + i))
+    return newest
+
+
+def test_model_logs_prints_the_newest_matching_log_file(
+    runner, checkout_with_log_history, isolated_dirs
+):
+    """Newest by mtime among *_<model>_*.log — not the newer .json sidecar, not the
+    other model's file, not an older run."""
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "line 1\nline 2\nline 3\n"
+    assert str(checkout_with_log_history) in result.output  # the "showing" line
+
+
+def test_model_logs_tail_prints_the_last_n_lines(
+    runner, checkout_with_log_history, isolated_dirs
+):
+    result = runner.invoke(
+        app, ["model", "logs", "Llama-3.1-8B-Instruct", "--tail", "2", "--quiet"]
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "line 2\nline 3\n"
+
+
+def test_model_logs_without_a_matching_file_is_an_error(
+    runner, fake_checkout, isolated_dirs
+):
+    """A model in the catalog that was never served here: say so, point at tt serve."""
+    result = runner.invoke(app, ["model", "logs", "whisper-large-v3"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "No logs for whisper-large-v3" in result.output
+    assert "tt serve whisper-large-v3" in result.output
+
+
+def test_model_logs_without_a_checkout_is_an_error(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "No logs for" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_logs_since_uses_docker_logs_on_the_running_container(
+    runner, fake_docker, docker_argv_log, fake_checkout, isolated_dirs
+):
+    set_containers, _ = fake_docker
+    set_containers([
+        _container(
+            "aaaaaaaaaaaa11",
+            snapshot="/hf/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/rev",
+        ),
+        _container("bbbbbbbbbbbb22", snapshot="/hf/hub/models--Qwen--Qwen3-32B/snapshots/rev"),
+    ])
+    result = runner.invoke(
+        app,
+        ["model", "logs", "Llama-3.1-8B-Instruct", "--since", "10m", "--tail", "5", "-f"],
+    )
+    assert result.exit_code == 0, result.output
+    assert _docker_logs_calls(docker_argv_log) == [
+        ["logs", "--since", "10m", "--tail", "5", "--follow", "aaaaaaaaaaaa"]
+    ]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_since_without_a_running_container_is_usage(
+    runner, fake_docker, docker_argv_log, fake_checkout, isolated_dirs
+):
+    """The file has no time index, so --since needs the live container."""
+    set_containers, _ = fake_docker
+    set_containers([
+        _container("bbbbbbbbbbbb22", snapshot="/hf/hub/models--Qwen--Qwen3-32B/snapshots/rev"),
+    ])
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instruct", "--since", "10m"])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--tail" in result.output
+    assert _docker_logs_calls(docker_argv_log) == []
 
 
 # -- community bundle listing ------------------------------------------------------
@@ -942,8 +1113,9 @@ def test_model_pull_rejects_both_direction_flags(runner, isolated_dirs):
         ["model", "pull", "ns/bundle", "--bundle"],
         ["model", "stop", "ns/bundle"],
         ["model", "rm", "ns/bundle", "--yes"],
+        ["model", "logs", "ns/bundle"],
     ],
-    ids=["serve", "pull", "stop", "rm"],
+    ids=["serve", "pull", "stop", "rm", "logs"],
 )
 def test_every_tt_model_call_gets_the_configured_hf_cache(
     runner, fake_model_manager, always_tty, isolated_dirs, tmp_path, argv

@@ -53,6 +53,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`) |
 | `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id |
 | `tt model stop NAME` | Stop a running model server (`--profile` to stop only one profile of a bundle) |
+| `tt model logs NAME` | Output of a served model: the newest tt-inference-server log file for a catalog model, or `tt-model logs` for a bundle (`--follow`; `--tail N`; `--since` needs a running container; `--profile` for bundles) |
 
 | Other | Functionality |
 |---|---|

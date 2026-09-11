@@ -8,8 +8,12 @@ model is handled here, a Hub bundle id is passed through to tt-model."""
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import sys
+import time
+from pathlib import Path
+from typing import Callable
 
 import typer
 from rich.table import Table
@@ -586,6 +590,183 @@ def _stop_catalog_model(appctx, model) -> None:
         },
         renderer=lambda d: f"Stopped {len(d['stopped'])} container(s) for {d['model']}.",
     )
+
+
+# -- logs --------------------------------------------------------------------------
+@model_app.command("logs", no_args_is_help=True)
+@handle_tt_errors
+def logs_model(
+    ctx: typer.Context,
+    name: str = typer.Argument(
+        help="Model name or tt-model bundle id.",
+        autocompletion=complete_local_model,
+    ),
+    follow: bool = typer.Option(
+        False, "--follow", "-f", help="Keep streaming new output until Ctrl-C."
+    ),
+    since: str = typer.Option(
+        None,
+        "--since",
+        help="Only output after this docker-style duration or timestamp (10m, 2h, "
+        "2026-09-08T12:00:00). Needs a running tt-inference-server container.",
+    ),
+    tail: int = typer.Option(None, "--tail", help="Only the last N lines."),
+    profile: str = typer.Option(
+        None, "--profile", help="tt-model bundles: logs for this profile."
+    ),
+    quiet: QuietFlag = False,
+) -> None:
+    """Show a served model's output.
+
+    A catalog model prints the newest log tt-inference-server wrote for it under
+    the checkout's workflow_logs/ (the running server keeps appending to it); a
+    tt-model bundle id passes through to `tt-model logs`.
+    """
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(quiet=quiet)
+    if appctx.output.json_mode:
+        raise TTError(
+            "`tt model logs` prints plain text, not JSON.",
+            next_step="Drop --json; `tt model ps --json` has the structured view.",
+            exit_code=ExitCode.USAGE,
+        )
+    model, bundle = _dispatch(appctx, name)
+    try:
+        if bundle is not None:
+            _logs_bundle(appctx, bundle, follow=follow, since=since, tail=tail, profile=profile)
+        else:
+            _logs_catalog_model(
+                appctx, model, follow=follow, since=since, tail=tail, profile=profile
+            )
+    except KeyboardInterrupt:
+        # Ctrl-C is how --follow ends; nothing went wrong.
+        return
+
+
+def _logs_bundle(appctx, bundle: str, *, follow: bool, since, tail, profile) -> None:
+    """Passthrough to `tt-model logs`, which knows only --follow/--profile."""
+    if since is not None or tail is not None:
+        raise TTError(
+            "tt-model logs has no --since or --tail.",
+            why="Bundle logs pass straight through to tt-model, which streams the "
+            "whole container log or follows it.",
+            next_step="`docker logs --since <when> --tail <n> <container>` — "
+            "`tt model ps` shows the container name.",
+            exit_code=ExitCode.USAGE,
+        )
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    backend.logs(bundle, follow=follow, profile=profile)
+
+
+def _logs_catalog_model(appctx, model, *, follow: bool, since, tail, profile) -> None:
+    if profile is not None:
+        raise TTError(
+            f"{model.name} is not a tt-model bundle, so it has no profiles.",
+            next_step="Drop --profile.",
+            exit_code=ExitCode.USAGE,
+        )
+    backend = InferenceServerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    if since is not None:
+        # The log file has no time index, so --since means `docker logs --since`
+        # on the live container — the same stream, seekable by time.
+        containers = backend.running_containers()
+        matched = [c for c in containers if c.matches(model)]
+        if not matched:
+            raise TTError(
+                f"No running tt-inference-server container for {model.name}.",
+                why="--since works on a live container's log; the log file on disk "
+                "has no time index to seek by.",
+                next_step=f"`tt model logs {model.name} --tail 200` for the end of "
+                "the last run, or `tt serve` it first.",
+                exit_code=ExitCode.USAGE,
+            )
+        if len(matched) > 1:
+            appctx.output.warn(
+                f"{len(matched)} containers serve {model.name}; showing "
+                f"{matched[0].name} ({matched[0].id})."
+            )
+        runtime = backend.container_runtime()
+        argv = [runtime, "logs", "--since", since]
+        if tail is not None:
+            argv += ["--tail", str(tail)]
+        if follow:
+            argv.append("--follow")
+        argv.append(matched[0].id)
+        appctx.output.status(
+            f"showing {runtime} logs for {matched[0].name}", soft_wrap=True
+        )
+        appctx.runner.stream(argv, tool=runtime, check=False)
+        return
+    path = backend.newest_log_file(model)
+    if path is None:
+        root = backend.checkout_root()
+        where = f"{root / 'workflow_logs'}" if root else "the tt-inference-server checkout"
+        raise TTError(
+            f"No logs for {model.name}.",
+            why=f"Nothing has been served through tt-inference-server on this machine "
+            f"(no *_{model.name}_*.log under {where}).",
+            next_step=f"`tt serve {model.name}`",
+            exit_code=ExitCode.ERROR,
+        )
+    appctx.output.status(f"showing {path}", soft_wrap=True)
+    _print_log_file(path, tail=tail, follow=follow)
+
+
+def _print_log_file(
+    path: Path,
+    *,
+    tail: int | None,
+    follow: bool,
+    poll_s: float = 0.5,
+    should_stop: Callable[[], bool] | None = None,
+) -> None:
+    """cat / tail -n / tail -f for one log file, writing raw bytes to stdout.
+
+    `should_stop` is a test seam for --follow; None means run until Ctrl-C. A
+    file that shrinks (rotated or truncated) is re-read from the start rather
+    than waiting for it to grow past the old offset."""
+    out = sys.stdout.buffer if hasattr(sys.stdout, "buffer") else sys.stdout
+    try:
+        with open(path, "rb") as fh:
+            if tail is not None:
+                last = collections.deque(fh, maxlen=max(tail, 0))
+                for line in last:
+                    out.write(line)
+            else:
+                out.write(fh.read())
+            out.flush()
+            if not follow:
+                return
+            offset = fh.tell()
+            while should_stop is None or not should_stop():
+                time.sleep(poll_s)
+                size = path.stat().st_size
+                if size < offset:
+                    offset = 0
+                fh.seek(offset)
+                chunk = fh.read()
+                if chunk:
+                    out.write(chunk)
+                    out.flush()
+                    offset = fh.tell()
+    except PermissionError as exc:
+        raise TTError(
+            f"Cannot read {path}.",
+            why="It is owned by another user — container-created files are often "
+            "owned by root.",
+            next_step=f"sudo tail -f {path}",
+            exit_code=ExitCode.NEEDS_SUDO,
+        ) from exc
+    except FileNotFoundError as exc:
+        raise TTError(
+            f"{path} disappeared while reading it.",
+            next_step="Re-run `tt model logs` to pick the newest file.",
+            exit_code=ExitCode.ERROR,
+        ) from exc
 
 
 @model_app.command("rm", no_args_is_help=True)
