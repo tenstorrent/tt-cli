@@ -76,6 +76,48 @@ def test_resolve_installed_state_third(registry):
     assert registry.resolve("tt-smi") == installed
 
 
+def _installer_venv_tool(name: str) -> Path:
+    """Drop a fake entry point where tt-installer's managed venv would have it. HOME is
+    the per-test temp home (isolated_dirs), so this never touches the real machine."""
+    path = Path.home() / ".tenstorrent-venv" / "bin" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    return path
+
+
+def test_resolve_falls_back_to_the_installer_venv_for_tt_smi(registry):
+    """A box set up by tt-installer has ~/.tenstorrent-venv/bin/tt-smi before `tt update`
+    ever ran; `tt model list` used to warn "device detection skipped (Required tool
+    'tt-smi' is not installed.)" on exactly that machine."""
+    venv_smi = _installer_venv_tool("tt-smi")
+    assert registry.resolve("tt-smi") == venv_smi
+    assert {r.name: r for r in registry.status()}["tt-smi"].source == "installer"
+
+
+def test_installed_state_beats_the_installer_venv(registry):
+    _installer_venv_tool("tt-smi")
+    installed = registry.paths.tool_bin_dir / "tt-smi"
+    installed.parent.mkdir(parents=True, exist_ok=True)
+    installed.write_text("")
+    ToolState(registry.paths).record("tt-smi", version="5.3.0", path=installed)
+    assert registry.resolve("tt-smi") == installed
+
+
+def test_installer_venv_is_not_probed_for_tools_the_installer_does_not_own(registry):
+    # A stray binary in that venv must never stand in for a pinned tool.
+    _installer_venv_tool("tt-model")
+    with pytest.raises(TTError) as exc:
+        registry.resolve("tt-model")
+    assert exc.value.exit_code == ExitCode.TOOL_MISSING
+
+
+def test_ensure_still_installs_the_pin_when_only_the_installer_venv_has_the_tool(registry):
+    _installer_venv_tool("tt-smi")
+    path = registry.ensure("tt-smi")
+    assert registry._fake_installer.calls == [("tt-smi", False)]
+    assert path == registry.paths.tool_bin_dir / "tt-smi"
+
+
 def test_resolve_stale_state_entry_is_missing(registry):
     ToolState(registry.paths).record(
         "tt-smi", version="5.3.0", path=Path("/nonexistent/tt-smi")

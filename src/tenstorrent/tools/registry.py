@@ -7,6 +7,7 @@ resolve() order (first hit wins):
   1. env TT_TOOL_BIN_<NAME>       (primary test seam, also power users)
   2. config [tools.override]      (persistent per-tool binary override)
   3. installed state              (what we installed via `tt update`)
+  4. ~/.tenstorrent-venv/bin/<tool>  (tt-installer's managed venv; smi/flash only)
 Missing everywhere → TTError(TOOL_MISSING) pointing at `tt update`.
 """
 
@@ -27,13 +28,25 @@ from .installers import (
     ScriptInstaller,
     UvToolInstaller,
 )
-from .manifest import LocalManifestSource, Manifest, ManifestSource, ToolSpec
+from .manifest import (
+    INSTALLER_MANAGED_TOOLS,
+    LocalManifestSource,
+    Manifest,
+    ManifestSource,
+    ToolSpec,
+)
 from .runner import Runner
 from .state import ToolState
 
 
 def env_var_for(tool_name: str) -> str:
     return "TT_TOOL_BIN_" + tool_name.upper().replace("-", "_")
+
+
+def installer_venv_bin(bin_name: str) -> Path:
+    """Where tt-installer's managed venv puts a tool's entry point. Computed per call so
+    a redirected HOME (tests, containers) is honoured."""
+    return Path.home() / ".tenstorrent-venv" / "bin" / bin_name
 
 
 @dataclass(frozen=True)
@@ -43,7 +56,7 @@ class ToolStatus:
     golden_version: str
     installed_version: str | None
     path: str | None
-    source: str  # "env" | "override" | "installed" | "missing"
+    source: str  # "env" | "override" | "installed" | "installer" | "missing"
 
 
 class ToolRegistry:
@@ -94,6 +107,14 @@ class ToolRegistry:
         installed = self.state.get(name)
         if installed and installed.path.exists():
             return installed.path, "installed"
+        # Last resort, and only for the tools tt-installer owns: a machine set up by the
+        # installer has a working tt-smi before `tt update` has run, and "not installed"
+        # was simply wrong there. Anything else keeps failing closed — a stray binary in
+        # that venv must never stand in for a pinned tool.
+        if name in INSTALLER_MANAGED_TOOLS:
+            candidate = installer_venv_bin(self.spec(name).bin_name)
+            if candidate.is_file():
+                return candidate, "installer"
         return None
 
     def resolve(self, name: str) -> Path:
@@ -115,13 +136,17 @@ class ToolRegistry:
         state-installed tool whose recorded version no longer matches the golden
         pin is reinstalled — otherwise a manifest pin bump would never take effect
         for tools installed on demand (script, git-venv). An unknown golden pin
-        (golden.json not fetched yet) never triggers a reinstall."""
+        (golden.json not fetched yet) never triggers a reinstall. The installer-venv
+        fallback is a resolve-time convenience only: `tt update` still installs the
+        pinned copy, which then wins at step 3."""
         spec = self.spec(name)
         found = self._resolve_or_none(name)
         if found is not None:
             path, source = found
-            if source != "installed":
+            if source in ("env", "override"):
                 return path
+            if source == "installer":
+                return self.install(spec, offline=offline).path
             installed = self.state.get(name)
             if (
                 installed is None
