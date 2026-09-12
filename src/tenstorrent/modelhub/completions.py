@@ -38,7 +38,8 @@ def _matches(incomplete: str, names: list[str]) -> list[str]:
 
 
 def complete_catalog_model(incomplete: str) -> list[str]:
-    """Released-spec names only — for `tt model info`, which knows nothing else."""
+    """Released-spec names only. The model verbs complete with complete_model (which
+    adds bundle ids); this stays for a caller that wants just the spec."""
     try:
         return _matches(incomplete, _catalog_names())
     except Exception:

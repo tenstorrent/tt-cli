@@ -198,6 +198,22 @@ class ModelManagerBackend:
             )
         return Path(found[0])
 
+    def is_installed(self) -> bool:
+        """Whether tt-model is already on this machine, without installing it."""
+        return self.registry._resolve_or_none(TOOL) is not None
+
+    def info(self, repo_id: str) -> int:
+        """Stream `tt-model info <repo_id>`: the bundle's manifest and tt-model's
+        compatibility verdict against this machine.
+
+        Inspection, not a launch, so like stop/rm it uses the tool only when it is
+        already installed — `tt model info` must not clone and build a tool just to
+        describe a bundle. Callers check is_installed() and fall back to the
+        catalog row tt can read on its own (modelhub.bundles.describe)."""
+        entry = self._installed_entry()
+        self.output.status(f"Inspecting {repo_id} via tt-model …")
+        return self.runner.stream([str(entry), "info", repo_id], env=self._env(), tool=TOOL)
+
     def stop(self, repo_id: str, *, profile: str | None = None) -> int:
         """Stop a running container package via `tt-model stop`.
 
