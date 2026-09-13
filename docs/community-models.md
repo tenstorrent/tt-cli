@@ -68,9 +68,14 @@ tt-model-manager changes what a finished bring-up *is*: a self-contained bundle 
 
 ```bash
 tt model list --community            # bundles published via tt-model-manager
+tt model search gemma --catalog      # search the Hub for published bundles
 tt model pull you/mymodel
+tt model profiles you/mymodel        # serve profiles a container package offers
 tt serve you/mymodel                 # served via tt-model-manager
-tt serve you/mymodel --port 8080  # unrecognized args pass through to the bundle's engine
+tt serve you/mymodel --profile p150x2 --port 8080 -- --max-model-len 4096
+                                     # pick a profile; unrecognized args pass through to the bundle's engine
+tt model curl "hello" --max-tokens 40   # one chat completion against whatever is serving
+tt model stop you/mymodel
 ```
 
 What arrives is not a description of the author's machine — it's the engine the author actually built. Depending on the packaging path (see below), the bundle carries the author's built tt-nn wheel with their custom kernels compiled in, the vLLM plugin, and the model code, plus an installer that rebuilds the environment in a fresh per-model venv on your box — or an OCI image with all of that baked in. Bundles are served by engines included in the repos themselves (`vllm-plugin`, `tt-dit-server`, etc.). After the pull, everything lives under one directory; only `pull` touches the network.
@@ -113,6 +118,8 @@ tt-model publish   you/my-model                    # list one pushed earlier
 tt-model unpublish you/my-model                    # delist (repo untouched)
 ```
 
+`tt model publish` / `tt model unpublish` do the same from tt (publish asks first, since it makes a private repo public), and `tt model package` / `package-thin` / `push` forward to the tt-model commands above unchanged, so an author never has to leave `tt`.
+
 This is not a submission queue. You push to *your* HF account under *your* governance; the catalog is a static index that stores nothing — every entry points back at your repo. Publishing a model for TT hardware needs no one's permission, including Tenstorrent's. Once published, it appears in `tt model list --community` for everyone, and is servable with `tt serve you/my-model`.
 
 ### What the consumer sees
@@ -126,7 +133,7 @@ Pull and serve can also be split — `tt-model pull` moves bytes only and needs 
 | `tt-model pull org/name` | yes | **no** (fetched at first load, or add `--with-weights`) |
 | `tt-model serve org/name` (nothing installed) | yes | yes |
 
-Around them: `tt-model profiles` lists a bundle's serve profiles, `tt-model serve --profile <name>` picks a non-default one, `tt-model logs -f` follows a boot, `tt-model stop` sends a clean SIGTERM (a SIGKILL would leave the devices needing `tt-smi -r`), and `tt-model rm` removes a pulled package (`--keep-cache` preserves the JIT/weight caches for a fast re-pull).
+Around them: `tt model profiles` lists a bundle's serve profiles, `tt serve --profile <name>` picks a non-default one, `tt model logs -f` follows a boot, `tt model stop` sends a clean SIGTERM (a SIGKILL would leave the devices needing `tt-smi -r`), and `tt model rm` removes a pulled package (`--keep-cache` preserves the JIT/weight caches for a fast re-pull). Each is the `tt-model` command of the same name, called on your behalf; `tt model login` stores your Hugging Face token for gated weights the way `hf auth login` would.
 
 ## When something breaks
 
