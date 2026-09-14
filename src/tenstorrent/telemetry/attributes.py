@@ -75,10 +75,15 @@ def install_properties() -> dict[str, Any]:
     }
 
 
-def person_properties() -> dict[str, Any]:
+def person_properties(*, internal: bool = False) -> dict[str, Any]:
     """Facts kept on the *install's* PostHog person profile (`$set` overwrites on every
     event, `$set_once` sticks from the first one). The profile is keyed by the random
-    per-install id, so it describes a machine's tt install, never a person."""
+    per-install id, so it describes a machine's tt install, never a person.
+
+    `internal` is the self-declared "this is a Tenstorrent staff install" flag
+    (`telemetry.internal` / TT_TELEMETRY_INTERNAL). Kept on the profile as well as on
+    each event so a person-property filter in PostHog excludes the install's whole
+    history, including events recorded before the flag was set."""
     facts = install_properties()
     return {
         "$set": {
@@ -86,6 +91,7 @@ def person_properties() -> dict[str, Any]:
             "os_type": facts["os_type"],
             "os_arch": facts["os_arch"],
             "python_version": facts["python_version"],
+            "internal": bool(internal),
         },
         "$set_once": {
             "first_seen_version": facts["tt_version"],
@@ -315,6 +321,7 @@ def build_event(
     exit_code: ExitCode,
     error: Any = None,
     duration_ms: int = 0,
+    internal: bool = False,
 ) -> dict[str, Any]:
     """One PostHog event for one command. Pure: no I/O, no clock other than `timestamp`.
 
@@ -332,11 +339,12 @@ def build_event(
     properties.update(error_properties(exit_code, error))
     properties["duration_ms"] = max(0, int(duration_ms))
     properties.update(install_properties())
+    properties["internal"] = bool(internal)
     properties["$lib"] = LIB_NAME
     properties["$lib_version"] = __version__
     # No location, not even country: PostHog must not enrich from the request address.
     properties["$geoip_disable"] = True
-    properties.update(person_properties())
+    properties.update(person_properties(internal=internal))
     return {
         "event": COMMAND_EVENT,
         "uuid": str(uuid.uuid4()),
@@ -363,6 +371,7 @@ EVENT_PROPERTY_NAMES: frozenset[str] = frozenset(
         "os_arch",
         "python_version",
         "ci",
+        "internal",
         "$lib",
         "$lib_version",
         "$geoip_disable",

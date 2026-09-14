@@ -54,6 +54,28 @@ def tools_status(
     )
 
 
+@self_app.command("telemetry-id")
+@handle_tt_errors
+def telemetry_id(
+    ctx: typer.Context, json_mode: JsonFlag = False, quiet: QuietFlag = False
+) -> None:
+    """Print this install's anonymous telemetry id.
+
+    A random UUID generated on first use, never derived from hardware or accounts. It is
+    the `distinct_id` on every event this install sends, so it is what you hand to
+    whoever maintains the PostHog list of internal installs — or delete
+    `telemetry.toml` in the data directory to rotate it.
+    """
+    from ..telemetry.state import TelemetryState
+
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.emit(
+        {"distinct_id": TelemetryState(appctx.paths).instance_id()},
+        renderer=lambda data: data["distinct_id"],
+    )
+
+
 # Deliberately NOT wrapped in @handle_tt_errors. The decorator records a usage event and
 # calls session.flush() on the way out, so a decorated drainer would spool an event for
 # every upload and could hand off to another drainer — a feedback loop. This command is

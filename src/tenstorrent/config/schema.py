@@ -25,6 +25,9 @@ DEFAULTS: dict[str, Any] = {
         # command ever waits on the network. "sync" posts in-process (slower, but an
         # event shows up in PostHog immediately) — for development.
         "flush_mode": "async",
+        # Tenstorrent staff set this so their own usage is tagged `internal` and can be
+        # filtered out of product measurements. Never inferred; always self-declared.
+        "internal": False,
     },
     "paths": {
         # Empty string = defer to the HuggingFace defaults / env vars.
@@ -81,6 +84,9 @@ posthog_project_key = "phc_kyqdAU5XuGgkcFtoLjj78rNXNnwoQ9KWj47eBs6TADRr"
 # Override per-run with TT_TELEMETRY_FLUSH_MODE=sync. Set TT_TELEMETRY_LOG_FILE=<path>
 # to also write every event to a file as JSON lines and see exactly what is sent.
 flush_mode = "async"
+# Tenstorrent staff: set to true so this install's usage is tagged `internal` and left
+# out of product measurements. Per-run: TT_TELEMETRY_INTERNAL=1.
+internal = false
 
 [paths]
 # HuggingFace cache root (HF_HOME semantics; weights land in <dir>/hub).
