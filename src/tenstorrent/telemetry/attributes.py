@@ -6,9 +6,11 @@
 Everything a telemetry event carries is produced here, so the anonymization policy has
 exactly one place to audit: command path, *which* options were set (names only), a
 small allowlist of argument values, the exit-code category, the duration, and coarse
-host/version facts. No file paths, tokens, hostnames, or usernames — and no IP: the
-PostHog project is configured to discard the client address at ingest (see
-TELEMETRY.md), so only country-level geolocation survives.
+host/version facts. No file paths, tokens, hostnames, or usernames — and no IP: every
+event carries `$geoip_disable`, which tells PostHog to neither keep the client address
+nor derive a location from it, and the project is configured to discard the address at
+ingest as a second layer (see TELEMETRY.md). What no client can prevent is the server
+*seeing* the address of the connection; only a relay in front of PostHog would.
 
 The value allowlist (`_SAFE_VALUES`) works by **validate then record, never record then
 sanitize**: an argument is only exported when its value is a member of a closed
@@ -332,6 +334,8 @@ def build_event(
     properties.update(install_properties())
     properties["$lib"] = LIB_NAME
     properties["$lib_version"] = __version__
+    # No location, not even country: PostHog must not enrich from the request address.
+    properties["$geoip_disable"] = True
     properties.update(person_properties())
     return {
         "event": COMMAND_EVENT,
@@ -343,8 +347,8 @@ def build_event(
 
 
 # Every property name an event may carry. Closed on purpose: tests assert equality, so
-# growing this set is a reviewed change, and nothing (an `$ip`, a `$geoip_disable`, an
-# SDK-injected default) can appear by accident.
+# growing this set is a reviewed change, and nothing (an `$ip`, an SDK-injected default)
+# can appear by accident.
 EVENT_PROPERTY_NAMES: frozenset[str] = frozenset(
     {
         "command",
@@ -361,6 +365,7 @@ EVENT_PROPERTY_NAMES: frozenset[str] = frozenset(
         "ci",
         "$lib",
         "$lib_version",
+        "$geoip_disable",
         "$set",
         "$set_once",
     }

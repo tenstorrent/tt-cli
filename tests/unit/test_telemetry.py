@@ -162,10 +162,18 @@ def test_person_properties_describe_the_install_only():
     assert props["$lib"] == "tt-cli"
 
 
+def test_every_event_forbids_geoip_enrichment():
+    """No location, not even country-level: `$geoip_disable` tells PostHog not to derive
+    anything from the request address (the project setting discards the address itself).
+    Pinned as exactly True — a falsy or missing value would silently re-enable it."""
+    props = build_event(None, instance_id=INSTANCE, exit_code=ExitCode.OK)["properties"]
+    assert props["$geoip_disable"] is True
+
+
 def test_the_property_set_is_closed():
     """Every name an event may carry is enumerated in attributes.py, and this literal
-    pins it: growing the set is a reviewed change, and neither an `$ip` nor a
-    `$geoip_disable` nor anything SDK-shaped can appear by accident."""
+    pins it: growing the set is a reviewed change, and neither an `$ip` nor anything
+    SDK-shaped can appear by accident."""
     assert EVENT_PROPERTY_NAMES == {
         "command",
         "options_set",
@@ -181,6 +189,7 @@ def test_the_property_set_is_closed():
         "ci",
         "$lib",
         "$lib_version",
+        "$geoip_disable",
         "$set",
         "$set_once",
         # the argument-value allowlist
@@ -209,7 +218,8 @@ def test_command_emits_one_event_with_ok(runner, collected):
     assert isinstance(props["duration_ms"], int) and props["duration_ms"] >= 0
     assert set(props) == {
         "command", "exit_code", "exit_code_name", "duration_ms", "tt_version", "os_type",
-        "os_arch", "python_version", "ci", "$lib", "$lib_version", "$set", "$set_once",
+        "os_arch", "python_version", "ci", "$lib", "$lib_version", "$geoip_disable",
+        "$set", "$set_once",
     }
 
 

@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BATCH_PATH = "/batch/"  # PostHog's path; tt passes the endpoint through verbatim
 # Stamped on every event; the per-event line highlights only what varies between them.
-BORING = {"tt_version", "os_type", "os_arch", "python_version", "$lib", "$lib_version", "$set", "$set_once"}
+BORING = {"tt_version", "os_type", "os_arch", "python_version", "$lib", "$lib_version", "$geoip_disable", "$set", "$set_once"}
 
 
 def _now() -> str:

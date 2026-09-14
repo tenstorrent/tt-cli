@@ -66,9 +66,12 @@ Never collected: free-form argument or option values, file paths, config *values
 (`tt config set` records the key name only — values can hold secrets), environment
 variable values, hostnames, usernames, error messages, or stack traces.
 
-**Location.** PostHog derives a country/region from the address the upload comes from,
-and the project is configured to **discard the IP address itself** at ingest, so no IP
-is stored with the events. Country-level location is the only geographic fact kept.
+**No IP address, no location.** Every event carries `$geoip_disable`, which tells
+PostHog not to derive a location (not even a country) from the address the upload
+comes from, and the project is configured to discard that address at ingest, so no IP
+is stored with the events. Like any HTTPS request, the upload still reaches PostHog's
+servers from your machine's address; only routing it through a relay would hide that,
+and `telemetry.endpoint` accepts one.
 
 The complete list of property names an event may carry is a closed set in the code
 (`EVENT_PROPERTY_NAMES` in `src/tenstorrent/telemetry/attributes.py`), pinned by a
@@ -104,6 +107,7 @@ nothing, so you can inspect the data before deciding. A typical line, pretty-pri
     "ci": false,
     "$lib": "tt-cli",
     "$lib_version": "1.0.1",
+    "$geoip_disable": true,
     "$set": {"tt_version": "1.0.1", "os_type": "Linux", "os_arch": "x86_64", "python_version": "3.12.12"},
     "$set_once": {"first_seen_version": "1.0.1", "first_seen_os_type": "Linux"}
   }
