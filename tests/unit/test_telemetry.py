@@ -157,42 +157,14 @@ def test_every_event_gets_its_own_uuid():
 
 def test_person_properties_describe_the_install_only():
     props = build_event(None, instance_id=INSTANCE, exit_code=ExitCode.OK)["properties"]
-    assert set(props["$set"]) == {"tt_version", "os_type", "os_arch", "python_version", "internal"}
+    assert set(props["$set"]) == {"tt_version", "os_type", "os_arch", "python_version"}
     assert set(props["$set_once"]) == {"first_seen_version", "first_seen_os_type"}
     assert props["$lib"] == "tt-cli"
 
 
-# -- internal (Tenstorrent staff) installs -------------------------------------------
-def test_installs_are_external_unless_they_say_otherwise(runner, collected):
-    assert runner.invoke(app, ["config", "path"]).exit_code == 0
-    props = _props(collected)
-    assert props["internal"] is False
-    assert props["$set"]["internal"] is False
-
-
-def test_internal_flag_in_config_marks_the_event_and_the_profile(runner, collected):
-    """Self-declared, never inferred: staff run `tt config set telemetry.internal true`
-    once. It lands on the event (filter this run) and on the person profile (filter the
-    install's whole history, including events sent before the flag was set)."""
-    ConfigStore(get_paths()).set("telemetry.internal", True)
-    assert runner.invoke(app, ["config", "path"]).exit_code == 0
-    props = _props(collected)
-    assert props["internal"] is True
-    assert props["$set"]["internal"] is True
-
-
-def test_internal_env_var_works_per_run(runner, collected, monkeypatch):
-    monkeypatch.setenv("TT_TELEMETRY_INTERNAL", "1")
-    assert runner.invoke(app, ["config", "path"]).exit_code == 0
-    assert _props(collected)["internal"] is True
-    monkeypatch.setenv("TT_TELEMETRY_INTERNAL", "0")  # "0"/"false"/empty mean unset
-    assert runner.invoke(app, ["config", "path"]).exit_code == 0
-    assert collected[-1]["properties"]["internal"] is False
-
-
+# -- the install id ----------------------------------------------------------------
 def test_telemetry_id_command_prints_the_distinct_id(runner, collected):
-    """What a staff member hands over to be added to PostHog's internal cohort: the
-    same id every event from this install carries, and nothing else."""
+    """The same id every event from this install carries, and nothing else."""
     result = runner.invoke(app, ["self", "telemetry-id", "--json"])
     assert result.exit_code == 0
     shown = json.loads(result.stdout)
@@ -227,7 +199,6 @@ def test_the_property_set_is_closed():
         "os_arch",
         "python_version",
         "ci",
-        "internal",
         "$lib",
         "$lib_version",
         "$geoip_disable",
@@ -259,8 +230,8 @@ def test_command_emits_one_event_with_ok(runner, collected):
     assert isinstance(props["duration_ms"], int) and props["duration_ms"] >= 0
     assert set(props) == {
         "command", "exit_code", "exit_code_name", "duration_ms", "tt_version", "os_type",
-        "os_arch", "python_version", "ci", "internal", "$lib", "$lib_version",
-        "$geoip_disable", "$set", "$set_once",
+        "os_arch", "python_version", "ci", "$lib", "$lib_version", "$geoip_disable",
+        "$set", "$set_once",
     }
 
 

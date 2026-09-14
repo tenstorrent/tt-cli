@@ -52,8 +52,6 @@ _DISABLE_ENV = "TT_TELEMETRY_DISABLED"
 _ENDPOINT_ENV = "TT_TELEMETRY_ENDPOINT"
 _KEY_ENV = "TT_TELEMETRY_POSTHOG_KEY"
 _FLUSH_MODE_ENV = "TT_TELEMETRY_FLUSH_MODE"
-# Self-declared Tenstorrent-staff install (per-run form of `telemetry.internal`).
-_INTERNAL_ENV = "TT_TELEMETRY_INTERNAL"
 # Write every event here as well, one JSON object per line — byte-for-byte what would
 # go into the upload's `batch` array. A test seam, and a far more convincing disclosure
 # than documentation: the user can read exactly what would be sent (cf. Flutter's
@@ -146,12 +144,6 @@ def resolve_endpoint(config: ConfigStore) -> tuple[str, str]:
     endpoint = endpoint.strip()
     endpoint = _LEGACY_ENDPOINTS.get(endpoint.rstrip("/"), endpoint)
     return endpoint, token
-
-
-def is_internal(config: ConfigStore) -> bool:
-    """Has this install declared itself internal (Tenstorrent staff)? Config or env;
-    never inferred from anything about the machine or the user."""
-    return _config_bool(config, "telemetry.internal", False) or env_flag(_INTERNAL_ENV)
 
 
 def flush_mode(config: ConfigStore, output: OutputManager | None = None) -> str:
@@ -249,10 +241,8 @@ class TelemetrySession(_NullSession):
         transport: Transport | None = None,
         spool: Spool | None = None,
         output: OutputManager | None = None,
-        internal: bool = False,
     ) -> None:
         self._instance_id = instance_id
-        self._internal = internal
         self._sinks = list(sinks or [])
         self._transport = transport
         self._spool = spool
@@ -367,7 +357,6 @@ class TelemetrySession(_NullSession):
             transport=send,
             spool=spool,
             output=output,
-            internal=is_internal(config),
         )
 
     @staticmethod
@@ -473,7 +462,6 @@ class TelemetrySession(_NullSession):
                 exit_code=handle.code,
                 error=handle.error,
                 duration_ms=handle.duration_ms(),
-                internal=self._internal,
             )
         except Exception:
             return

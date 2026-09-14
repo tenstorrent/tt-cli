@@ -108,8 +108,7 @@ nothing, so you can inspect the data before deciding. A typical line, pretty-pri
     "$lib": "tt-cli",
     "$lib_version": "1.0.1",
     "$geoip_disable": true,
-    "internal": false,
-    "$set": {"tt_version": "1.0.1", "os_type": "Linux", "os_arch": "x86_64", "python_version": "3.12.12", "internal": false},
+    "$set": {"tt_version": "1.0.1", "os_type": "Linux", "os_arch": "x86_64", "python_version": "3.12.12"},
     "$set_once": {"first_seen_version": "1.0.1", "first_seen_os_type": "Linux"}
   }
 }
@@ -130,27 +129,6 @@ PostHog endpoint that pretty-prints whatever arrives.
 | `telemetry.endpoint` / `TT_TELEMETRY_ENDPOINT` | config / this run | PostHog batch capture URL (`https://us.i.posthog.com/batch/` by default; EU projects use `eu.i.posthog.com`). Empty = inert |
 | `telemetry.posthog_project_key` / `TT_TELEMETRY_POSTHOG_KEY` | config / this run | Write-only ingest key. Empty = inert |
 | `telemetry.flush_mode` / `TT_TELEMETRY_FLUSH_MODE` | config / this run | `async` (default) or `sync` — see below |
-| `telemetry.internal` / `TT_TELEMETRY_INTERNAL=1` | config / this run | Tag this install's events `internal: true` so they are excluded from product measurements (Tenstorrent staff) |
-
-## Internal (Tenstorrent staff) installs
-
-Staff usage would otherwise inflate every adoption and retention number, but nothing
-in an event identifies who sent it — by design. So staff **declare** it, once:
-
-```console
-$ tt config set telemetry.internal true
-```
-
-Every event from that install then carries `internal: true` (and the install's PostHog
-profile gets the same property, so its whole history is excluded, not just events after
-the flag was set). Nothing is inferred from the machine, the network, or any account;
-an install is internal only if it says so. `TT_TELEMETRY_INTERNAL=1` does the same for
-one run.
-
-Forgot to set it? `tt self telemetry-id` prints the install's anonymous id, which is the
-`distinct_id` on its events; the PostHog project keeps a cohort of such ids alongside
-the `internal = true` property filter, and both feed PostHog's "filter out internal and
-test users" setting so every insight excludes them by default.
 
 ## Not telemetry: the update check
 

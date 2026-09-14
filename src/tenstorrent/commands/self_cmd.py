@@ -62,9 +62,8 @@ def telemetry_id(
     """Print this install's anonymous telemetry id.
 
     A random UUID generated on first use, never derived from hardware or accounts. It is
-    the `distinct_id` on every event this install sends, so it is what you hand to
-    whoever maintains the PostHog list of internal installs — or delete
-    `telemetry.toml` in the data directory to rotate it.
+    the `distinct_id` on every event this install sends; delete `telemetry.toml` in the
+    data directory to rotate it.
     """
     from ..telemetry.state import TelemetryState
 
