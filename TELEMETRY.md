@@ -46,8 +46,8 @@ If you opt in, `tt` records **one event per command**, named `tt_command`, carry
   hashed;
 - for `tt device status|info|reset`, **how many** device indices were given — the count,
   not the indices;
-- the outcome: the exit-code category (e.g. `OK`, `NO_DEVICES`), how long the command
-  took, and — when it failed — one bounded fact about *why*: a short fixed label chosen
+- the outcome: the exit-code category (e.g. `OK`, `NO_DEVICES`, or `INTERRUPTED` for a
+  Ctrl-C), how long the command took, and — when it failed — one bounded fact about *why*: a short fixed label chosen
   by the code that raised the error (e.g. `model.unknown`, `tool.missing`), or, for an
   unexpected crash, the exception's class name (e.g. `FileNotFoundError`). Never the
   error message or a stack trace, which can contain paths;

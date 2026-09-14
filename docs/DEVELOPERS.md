@@ -154,6 +154,7 @@ Exit codes are a documented contract:
 | 7 | UNSUPPORTED | Stub / not implemented yet |
 | 8 | OFFLINE | Network needed but offline |
 | 9 | CONFIG | Invalid configuration |
+| 130 | INTERRUPTED | Stopped with Ctrl-C (shell convention: 128 + SIGINT) |
 
 # Testing the local repo
 

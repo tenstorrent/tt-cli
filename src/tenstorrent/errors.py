@@ -25,6 +25,9 @@ class ExitCode(IntEnum):
     UNSUPPORTED = 7  # stub / not implemented on this version or platform
     OFFLINE = 8  # network required but offline (flag or unreachable)
     CONFIG = 9  # invalid configuration or config key
+    # Stopped with Ctrl-C. The shell convention (128 + SIGINT), which main() already
+    # exits with on Abort; named here so telemetry can record it instead of OK.
+    INTERRUPTED = 130
 
 
 class TTError(Exception):

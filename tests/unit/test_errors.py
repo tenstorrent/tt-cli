@@ -15,6 +15,8 @@ def test_exit_code_values_are_the_documented_contract():
     assert ExitCode.UNSUPPORTED == 7
     assert ExitCode.OFFLINE == 8
     assert ExitCode.CONFIG == 9
+    # Ctrl-C: the shell's 128 + SIGINT, deliberately outside the 0-9 block.
+    assert ExitCode.INTERRUPTED == 130
 
 
 def test_tterror_to_dict_round_trip():

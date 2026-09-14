@@ -373,6 +373,36 @@ def test_an_uncaught_exception_in_a_command_is_recorded_by_class(runner, collect
     assert "config.toml" not in json.dumps(collected)
 
 
+def test_an_interrupted_command_is_recorded_as_interrupted(runner, collected, monkeypatch):
+    """Ctrl-C is a BaseException: without its own branch it reaches the decorator's
+    finally with the outcome still at its default, and `tt serve` — normally ended
+    with Ctrl-C — would read as a clean success on every run."""
+
+    def interrupt(self, *args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(OutputManager, "emit", interrupt)
+    result = runner.invoke(app, ["config", "path"], catch_exceptions=True)
+    assert result.exit_code != 0
+    props = _props(collected)
+    assert props["exit_code"] == 130
+    assert props["exit_code_name"] == "INTERRUPTED"
+    assert "exception_type" not in props
+
+
+def test_a_command_that_exits_the_process_reports_its_code(runner, collected, monkeypatch):
+    def leave(self, *args, **kwargs):
+        raise SystemExit(3)
+
+    monkeypatch.setattr(OutputManager, "emit", leave)
+    result = runner.invoke(app, ["config", "path"], catch_exceptions=True)
+    assert result.exit_code == 3
+    props = _props(collected)
+    assert props["exit_code"] == 3
+    assert props["exit_code_name"] == "NO_DEVICES"  # 3 is a documented code
+    assert "exception_type" not in props
+
+
 def test_unknown_model_failure_carries_its_reason(runner, collected):
     result = runner.invoke(app, ["model", "info", "/home/someone/private-finetune"])
     assert result.exit_code == 2

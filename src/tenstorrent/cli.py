@@ -107,6 +107,17 @@ def handle_tt_errors(fn: F) -> F:
                     # message (see telemetry/attributes.py).
                     span.record_exception(exc)
                     raise
+                except KeyboardInterrupt:
+                    # Ctrl-C is how `tt serve` normally ends. Not an Exception, so it
+                    # would otherwise reach the finally with the outcome still at its
+                    # default of OK and every serve session would read as a success.
+                    span.set_exit_code(ExitCode.INTERRUPTED)
+                    raise
+                except SystemExit as exit_exc:
+                    # A command that ends the process itself reports its real code.
+                    code = exit_exc.code
+                    span.set_exit_code(code if isinstance(code, int) else ExitCode.ERROR)
+                    raise
         finally:
             session.flush()
             if appctx is not None:
