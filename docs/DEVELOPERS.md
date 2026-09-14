@@ -147,6 +147,16 @@ Exit codes are a documented contract:
 | 8 | OFFLINE | Network needed but offline |
 | 9 | CONFIG | Invalid configuration |
 
+# Terminal output
+
+How `tt` renders phases, steps, progress, and failures — and the rules for adding
+output — is documented in [cli-output.md](cli-output.md). Read it before changing
+anything the user sees. To see the whole output language at once:
+
+```bash
+python3 scripts/ui_demo.py          # add --fail for the failure paths, -v to unfold detail
+```
+
 # Testing the local repo
 
 From a checkout of the repo:
