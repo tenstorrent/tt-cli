@@ -712,7 +712,7 @@ def _logs_catalog_model(appctx, model, *, follow: bool, since, tail, profile) ->
             argv.append("--follow")
         argv.append(matched[0].id)
         appctx.output.status(
-            f"showing {runtime} logs for {matched[0].name}", soft_wrap=True
+            f"showing {Path(runtime).name} logs for {matched[0].name}", soft_wrap=True
         )
         appctx.runner.stream(argv, tool=runtime, check=False)
         return
