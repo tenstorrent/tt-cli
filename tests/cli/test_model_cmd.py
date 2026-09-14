@@ -619,7 +619,9 @@ def _docker_logs_calls(log: Path) -> list[list[str]]:
 
 
 @pytest.mark.fakes_only
-def test_model_logs_bundle_delegates_to_tt_model(runner, fake_model_manager, isolated_dirs):
+def test_model_logs_bundle_delegates_to_tt_model(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
     result = runner.invoke(app, ["model", "logs", "ns/bundle"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
@@ -628,7 +630,7 @@ def test_model_logs_bundle_delegates_to_tt_model(runner, fake_model_manager, iso
 
 @pytest.mark.fakes_only
 def test_model_logs_bundle_forwards_follow_and_profile(
-    runner, fake_model_manager, isolated_dirs
+    runner, fake_model_manager, fake_docker, isolated_dirs
 ):
     result = runner.invoke(
         app, ["model", "logs", "ns/bundle", "--follow", "--profile", "fast"]
@@ -636,6 +638,64 @@ def test_model_logs_bundle_forwards_follow_and_profile(
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
     assert record["argv"] == ["logs", "ns/bundle", "--follow", "--profile", "fast"]
+
+
+def _tt_model_container(repo: str, profile: str, *, running: bool = True) -> dict:
+    return {
+        "Id": f"{abs(hash((repo, profile))):012x}"[:12],
+        "Name": f"/tt-model-{repo.split('/')[-1]}-{profile}",
+        "Config": {"Image": "tt-model/x:1"},
+        "Labels": {
+            "org.tenstorrent.tt-model": repo.split("/")[-1],
+            "org.tenstorrent.tt-model.repo": repo,
+            "org.tenstorrent.tt-model.profile": profile,
+        },
+        "State": {"Running": running},
+    }
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_names_the_running_profile(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
+    """tt-model's own default matches profile names as substrings (p150 claims the
+    p150x2 container), so tt names the profile it can see running."""
+    set_containers, _ = fake_docker
+    set_containers(
+        [
+            _tt_model_container("ns/bundle", "p150x2"),
+            _tt_model_container("ns/bundle", "p150", running=False),
+            _tt_model_container("ns/other", "p150"),
+        ]
+    )
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle", "--profile", "p150x2"]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_leaves_the_profile_to_tt_model_when_ambiguous(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
+    set_containers, _ = fake_docker
+    set_containers(
+        [_tt_model_container("ns/bundle", "a"), _tt_model_container("ns/bundle", "b")]
+    )
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle"]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_reports_a_tt_model_failure(
+    runner, fake_model_manager, fake_docker, isolated_dirs, monkeypatch
+):
+    monkeypatch.setenv("FAKE_TT_MODEL_FAIL", "1")
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert "tt-model logs exited with 1" in result.output
 
 
 @pytest.mark.fakes_only

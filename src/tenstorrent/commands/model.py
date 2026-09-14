@@ -657,7 +657,22 @@ def _logs_bundle(appctx, bundle: str, *, follow: bool, since, tail, profile) -> 
     backend = ModelManagerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     )
-    backend.logs(bundle, follow=follow, profile=profile)
+    if profile is None:
+        # tt-model's own default picks the wrong container when profile names
+        # nest (p150 vs p150x2); name the one that is actually running instead.
+        running = backend.running_profiles(bundle)
+        if len(running) == 1:
+            profile = running[0]
+    rc = backend.logs(bundle, follow=follow, profile=profile)
+    if rc not in (0, 130):  # 130 = the user's Ctrl-C on --follow
+        raise TTError(
+            f"tt-model logs exited with {rc}.",
+            why="tt-model could not show the bundle's container log; its message is "
+            "above.",
+            next_step="`tt model ps` lists the running bundles and their profiles; "
+            f"`tt model logs {bundle} --profile <name>` picks one.",
+            exit_code=ExitCode.TOOL_FAILED,
+        )
 
 
 def _logs_catalog_model(appctx, model, *, follow: bool, since, tail, profile) -> None:

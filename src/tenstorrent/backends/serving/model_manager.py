@@ -169,6 +169,30 @@ class ModelManagerBackend:
         }
         return sorted(ports)
 
+    def running_profiles(self, repo_id: str) -> list[str]:
+        """Profiles of `repo_id`'s containers that are running right now.
+
+        tt-model names a container `tt-model-<name>-<profile>` and, when asked for
+        logs without a profile, picks the first profile whose name is a *substring*
+        of a running container — so `p150` claims the `p150x2` container and docker
+        then reports it missing. Its labels say exactly which profile is up, so tt
+        reads them and asks for that one. Best effort: no docker → nothing."""
+        docker = shutil.which("docker")
+        if docker is None:
+            return []
+        try:
+            listed = self.runner.capture(
+                [
+                    docker, "ps",
+                    "--filter", f"label={_LABEL}.repo={repo_id}",
+                    "--format", f'{{{{.Label "{_LABEL}.profile"}}}}',
+                ],
+                tool="docker",
+            )
+        except TTError:
+            return []
+        return [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+
     def unsupported_workflow(self, workflow: str) -> TTError:
         return TTError(
             f"tt-model cannot run the {workflow!r} workflow.",
