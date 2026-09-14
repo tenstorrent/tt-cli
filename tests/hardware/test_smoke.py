@@ -241,8 +241,13 @@ def test_detached_drainer_delivers_through_a_real_process(isolated_dirs, monkeyp
             time.sleep(0.2)
 
         assert received, f"the detached drainer never reached the collector.\n{_why(spool, env)}"
+        # The collector records the body *before* it replies, and the drainer only drops
+        # spool.sending.jsonl once it has seen the 2xx — so give it the rest of the
+        # deadline to finish rather than asserting inside that window.
+        while time.monotonic() < deadline and spool.sending_path.exists():
+            time.sleep(0.2)
         assert spool.stats().spans == 0, "spool not cleaned up after a successful upload"
-        assert not spool.sending_path.exists()
+        assert not spool.sending_path.exists(), "in-flight batch not dropped after a successful upload"
     finally:
         server.shutdown()
         server.server_close()

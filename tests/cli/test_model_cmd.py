@@ -467,9 +467,6 @@ def test_serve_still_installs_tt_model_on_demand(runner, uv_bin, isolated_dirs):
 
 
 # -- stopping catalog-model containers ---------------------------------------------
-FAKE_BIN_DIR = Path(__file__).parent.parent / "fakes" / "bin"
-
-
 def _container(cid, *, snapshot=None, volume=None, name=None, image="img:1"):
     mounts = []
     if snapshot:
@@ -482,22 +479,6 @@ def _container(cid, *, snapshot=None, volume=None, name=None, image="img:1"):
         "Config": {"Image": image},
         "Mounts": mounts,
     }
-
-
-@pytest.fixture
-def fake_docker(monkeypatch, tmp_path):
-    """Point the backend's runtime lookup at the fake docker and collect its stops."""
-    stop_log = tmp_path / "docker-stop.log"
-    monkeypatch.setattr(
-        "tenstorrent.backends.serving.inference_server.shutil.which",
-        lambda name: str(FAKE_BIN_DIR / "docker") if name == "docker" else None,
-    )
-    monkeypatch.setenv("FAKE_DOCKER_STOP_LOG", str(stop_log))
-
-    def set_containers(entries):
-        monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(entries))
-
-    return set_containers, stop_log
 
 
 @pytest.mark.fakes_only
