@@ -38,6 +38,7 @@ class TTError(Exception):
         next_step: str | None = None,
         exit_code: ExitCode | int = ExitCode.ERROR,
         details: dict[str, Any] | None = None,
+        reason: str | None = None,
     ) -> None:
         super().__init__(what)
         self.what = what
@@ -45,6 +46,11 @@ class TTError(Exception):
         self.next_step = next_step
         self.exit_code = ExitCode(exit_code)
         self.details = details or {}
+        # A stable, machine-readable slug for *this* failure site (dotted snake_case,
+        # e.g. "tool_missing.tt_smi"). Coarser than the message, finer than the exit
+        # code: it is what usage telemetry records so failures can be counted without
+        # ever sending the text, which may carry paths or tool argv. Optional.
+        self.reason = reason
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +60,7 @@ class TTError(Exception):
                 "next_step": self.next_step,
                 "exit_code": int(self.exit_code),
                 "code": self.exit_code.name,
+                "reason": self.reason,
                 "details": self.details,
             }
         }

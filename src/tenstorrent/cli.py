@@ -73,12 +73,12 @@ def handle_tt_errors(fn: F) -> F:
     def wrapper(*args, **kwargs):
         ctx = _find_context(args, kwargs)
         appctx = ctx.obj if ctx is not None else None
-        # One usage span per command invocation, keyed on the same AppContext the
+        # One usage event per command invocation, keyed on the same AppContext the
         # error handling uses. NULL_SESSION when telemetry is off/unavailable.
         session = appctx.telemetry if appctx is not None else NULL_SESSION
         try:
             with contextlib.ExitStack() as stack:
-                span = stack.enter_context(session.command_span(ctx))
+                span = stack.enter_context(session.command_event(ctx))
                 if appctx is not None:
                     # A command that hands the terminal over (exec_tty) never returns,
                     # so neither the span nor the flush below would ever run. Close
@@ -102,8 +102,10 @@ def handle_tt_errors(fn: F) -> F:
                 except typer.Exit as exit_exc:
                     span.set_exit_code(getattr(exit_exc, "exit_code", 0) or 0)
                     raise
-                except Exception:
-                    span.set_exit_code(ExitCode.ERROR)
+                except Exception as exc:
+                    # A crash. Only the exception's class name is recorded, never its
+                    # message (see telemetry/attributes.py).
+                    span.record_exception(exc)
                     raise
         finally:
             session.flush()

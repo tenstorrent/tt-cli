@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""Span-attribute builders — the single chokepoint for what leaves the machine.
+"""Event builders — the single chokepoint for what leaves the machine.
 
-Everything a span carries is produced here, so the anonymization policy has exactly
-one place to audit: command path, *which* options were set (names only), a small
-allowlist of argument values, the exit-code category, and coarse host/version facts.
-No file paths, tokens, hostnames, or usernames.
+Everything a telemetry event carries is produced here, so the anonymization policy has
+exactly one place to audit: command path, *which* options were set (names only), a
+small allowlist of argument values, the exit-code category, the duration, and coarse
+host/version facts. No file paths, tokens, hostnames, or usernames — and no IP: the
+PostHog project is configured to discard the client address at ingest (see
+TELEMETRY.md), so only country-level geolocation survives.
 
 The value allowlist (`_SAFE_VALUES`) works by **validate then record, never record then
 sanitize**: an argument is only exported when its value is a member of a closed
@@ -17,12 +19,21 @@ or a pasted token can never leave the box. Values are never truncated and never 
 a hash of a path is still a stable per-user identifier, which would destroy the analytic
 value while keeping the re-identification risk.
 
+The same rule covers errors: the exit-code *category*, an optional `reason` slug a
+raise site attaches on purpose (validated against a closed grammar), and for a crash
+the exception's *class name*. Never the message, never a stack frame — both routinely
+carry paths and tool argv.
+
 Deliberately absent, and must stay absent:
 - `tt config set <value>` — the schema's own keys include telemetry.posthog_project_key
   (a secret) plus path keys and tools.override.* (absolute paths with the username).
   The *key* is recorded; the value never is.
 - `tt compile` / `tt train` argv — permissive by design, so arbitrary local filenames.
 - `tt report feedback` — specced to carry free-text feedback and optionally an email.
+- `tt launch <client> --url` — free text; the client is identified by the command path.
+
+`EVENT_PROPERTY_NAMES` is the complete, closed set of property names an event may
+carry. A test pins it, so adding a property is a deliberate, reviewed change.
 """
 
 from __future__ import annotations
@@ -30,49 +41,79 @@ from __future__ import annotations
 import functools
 import platform
 import re
+import uuid
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable
 
 from .. import __version__
-from ..errors import ExitCode
+from ..errors import ExitCode, TTError
 from .env import is_ci
 
+# The one event tt sends: one per leaf command invocation.
+COMMAND_EVENT = "tt_command"
+# PostHog's library identification — what its SDK views group on.
+LIB_NAME = "tt-cli"
 
-def resource_attributes(instance_id: str) -> dict[str, Any]:
-    """Process-wide facts. `instance_id` is a random per-install UUID (a rotation-safe
-    pseudonym, not a fingerprint) — no hostname, username, or environment dump."""
+
+# -- install-level facts --------------------------------------------------------------
+def install_properties() -> dict[str, Any]:
+    """Process-wide facts stamped on every event. No hostname, username, or
+    environment dump."""
     return {
-        "service.name": "tt",
-        "service.version": __version__,
-        "os.type": platform.system(),
-        "os.arch": platform.machine(),
-        "process.runtime.version": platform.python_version(),
-        "tt.instance_id": instance_id,
+        "tt_version": __version__,
+        "os_type": platform.system(),
+        "os_arch": platform.machine(),
+        "python_version": platform.python_version(),
         # Whether a person or a build ran this. A boolean derived from a fixed list of
         # env var *names* (see env.py) — never the values, which carry repo slugs, branch
-        # names, build URLs and job numbers. Recorded rather than used to drop the span:
+        # names, build URLs and job numbers. Recorded rather than used to drop the event:
         # CI usage is real usage, and this lets it be separated out downstream.
-        "tt.ci": is_ci(),
+        "ci": is_ci(),
     }
 
 
-def command_attributes(click_ctx: Any) -> dict[str, Any]:
-    """Per-command facts: command path, names of options set, allowlisted arg values."""
-    attrs: dict[str, Any] = {}
+def person_properties() -> dict[str, Any]:
+    """Facts kept on the *install's* PostHog person profile (`$set` overwrites on every
+    event, `$set_once` sticks from the first one). The profile is keyed by the random
+    per-install id, so it describes a machine's tt install, never a person."""
+    facts = install_properties()
+    return {
+        "$set": {
+            "tt_version": facts["tt_version"],
+            "os_type": facts["os_type"],
+            "os_arch": facts["os_arch"],
+            "python_version": facts["python_version"],
+        },
+        "$set_once": {
+            "first_seen_version": facts["tt_version"],
+            "first_seen_os_type": facts["os_type"],
+        },
+    }
+
+
+# -- per-command facts ----------------------------------------------------------------
+def command_properties(click_ctx: Any) -> dict[str, Any]:
+    """Command path, names of options set, allowlisted arg values."""
+    props: dict[str, Any] = {}
     if click_ctx is None:
-        return attrs
+        return props
     command = getattr(click_ctx, "command_path", None)
     if command:
-        attrs["tt.command"] = command
+        props["command"] = command
     options = _options_set(click_ctx)
     if options:
-        attrs["tt.options_set"] = options
-    attrs.update(_safe_values(click_ctx))
-    return attrs
+        props["options_set"] = options
+    props.update(_safe_values(click_ctx))
+    return props
 
 
 # -- the value allowlist -------------------------------------------------------------
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+# `reason` slugs are dotted snake_case chosen at the raise site. Anything that does not
+# match is dropped: a slug is a closed vocabulary by construction, not a message.
+_REASON_RE = re.compile(r"^[a-z0-9_]+(\.[a-z0-9_]+)*$")
+_REASON_MAX_LEN = 64
 
 
 @functools.lru_cache(maxsize=1)
@@ -158,27 +199,27 @@ def _member(value: Any, vocabulary: frozenset[str]) -> str | None:
     return text if text in vocabulary else None
 
 
-# (command path without the program name) -> {param name: (attribute, validator)}
+# (command path without the program name) -> {param name: (property, validator)}
 _SAFE_VALUES: dict[str, dict[str, tuple[str, Callable[[Any], Any]]]] = {
-    "model pull": {"name": ("tt.model", _model_name)},
-    "model info": {"name": ("tt.model", _model_name)},
-    "model compile": {"name": ("tt.model", _model_name)},
+    "model pull": {"name": ("model", _model_name)},
+    "model info": {"name": ("model", _model_name)},
+    "model compile": {"name": ("model", _model_name)},
     "model list": {
-        "model_type": ("tt.model_type", _model_type),
-        "hardware": ("tt.hardware", _hardware),
+        "model_type": ("model_type", _model_type),
+        "hardware": ("hardware", _hardware),
     },
     "serve": {
-        "model": ("tt.model", _model_name),
-        "workflow": ("tt.workflow", _enum_value),
-        "device": ("tt.device_config", _device_config),
+        "model": ("model", _model_name),
+        "workflow": ("workflow", _enum_value),
+        "device": ("device_config", _device_config),
     },
-    "config get": {"key": ("tt.config_key", _config_key)},
+    "config get": {"key": ("config_key", _config_key)},
     # NB: no "value" entry, and there must never be one.
-    "config set": {"key": ("tt.config_key", _config_key)},
-    "update": {"version": ("tt.installer_version", _installer_version)},
-    "device status": {"index": ("tt.device_count", _index_count)},
-    "device info": {"index": ("tt.device_count", _index_count)},
-    "device reset": {"index": ("tt.device_count", _index_count)},
+    "config set": {"key": ("config_key", _config_key)},
+    "update": {"version": ("installer_version", _installer_version)},
+    "device status": {"index": ("device_count", _index_count)},
+    "device info": {"index": ("device_count", _index_count)},
+    "device reset": {"index": ("device_count", _index_count)},
 }
 
 
@@ -186,7 +227,7 @@ def _safe_values(click_ctx: Any) -> dict[str, Any]:
     """Allowlisted argument values for this command, dropping anything unrecognised.
 
     Records regardless of whether the user supplied the value or it came from a default:
-    a bounded default (`--workflow server`) is safe and worth knowing. `tt.options_set`
+    a bounded default (`--workflow server`) is safe and worth knowing. `options_set`
     already distinguishes supplied from defaulted.
     """
     command = getattr(click_ctx, "command_path", None)
@@ -197,8 +238,8 @@ def _safe_values(click_ctx: Any) -> dict[str, Any]:
     allowed = _SAFE_VALUES.get(" ".join(str(command).split()[1:]))
     if not allowed:
         return {}
-    attrs: dict[str, Any] = {}
-    for name, (attribute, validate) in allowed.items():
+    props: dict[str, Any] = {}
+    for name, (prop, validate) in allowed.items():
         if name not in params or params[name] is None:
             continue
         try:
@@ -208,17 +249,8 @@ def _safe_values(click_ctx: Any) -> dict[str, Any]:
             # fall through to recording the raw value.
             continue
         if safe is not None:
-            attrs[attribute] = safe
-    return attrs
-
-
-def error_attributes(exit_code: ExitCode) -> dict[str, Any]:
-    """Only the exit-code *category* — never the error's what/why text, which can
-    contain paths or tool argv (see errors.py)."""
-    return {
-        "tt.exit_code": int(exit_code),
-        "tt.exit_code_name": exit_code.name,
-    }
+            props[prop] = safe
+    return props
 
 
 def _options_set(click_ctx: Any) -> list[str]:
@@ -243,3 +275,94 @@ def _options_set(click_ctx: Any) -> list[str]:
         if getattr(source, "name", "DEFAULT") != "DEFAULT":
             names.append(name)
     return sorted(names)
+
+
+# -- outcome --------------------------------------------------------------------------
+def error_properties(exit_code: ExitCode, error: Any = None) -> dict[str, Any]:
+    """The exit-code *category*, plus one bounded fact about the failure.
+
+    A TTError contributes its `reason` slug when the raise site set one and it passes
+    the slug grammar; anything else about it (what/why/next_step) is text that can
+    carry paths or tool argv, so it never leaves. Any other exception contributes only
+    its class name — `str(exc)`, `exc.args`, and notes are never read.
+    """
+    props: dict[str, Any] = {
+        "exit_code": int(exit_code),
+        "exit_code_name": exit_code.name,
+    }
+    if isinstance(error, TTError):
+        reason = _reason(getattr(error, "reason", None))
+        if reason is not None:
+            props["reason"] = reason
+    elif isinstance(error, BaseException):
+        props["exception_type"] = type(error).__name__
+    return props
+
+
+def _reason(value: Any) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > _REASON_MAX_LEN:
+        return None
+    return value if _REASON_RE.match(value) else None
+
+
+# -- the event ------------------------------------------------------------------------
+def build_event(
+    click_ctx: Any,
+    *,
+    instance_id: str,
+    exit_code: ExitCode,
+    error: Any = None,
+    duration_ms: int = 0,
+) -> dict[str, Any]:
+    """One PostHog event for one command. Pure: no I/O, no clock other than `timestamp`.
+
+    - `uuid` is minted here so a batch that is retried after a lost response is
+      deduplicated server-side rather than double-counted.
+    - `timestamp` is the capture time in UTC (tz-aware ISO 8601). Events sit in the
+      spool for minutes to days before upload, and a naive local time would shift them
+      by the user's UTC offset.
+    - `distinct_id` is the random per-install id from telemetry.toml: identified
+      events (a person profile per *install*) are what make retention, lifecycle and
+      cohort insights work; the id is generated, not derived from hardware or accounts.
+    """
+    properties: dict[str, Any] = {}
+    properties.update(command_properties(click_ctx))
+    properties.update(error_properties(exit_code, error))
+    properties["duration_ms"] = max(0, int(duration_ms))
+    properties.update(install_properties())
+    properties["$lib"] = LIB_NAME
+    properties["$lib_version"] = __version__
+    properties.update(person_properties())
+    return {
+        "event": COMMAND_EVENT,
+        "uuid": str(uuid.uuid4()),
+        "distinct_id": instance_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "properties": properties,
+    }
+
+
+# Every property name an event may carry. Closed on purpose: tests assert equality, so
+# growing this set is a reviewed change, and nothing (an `$ip`, a `$geoip_disable`, an
+# SDK-injected default) can appear by accident.
+EVENT_PROPERTY_NAMES: frozenset[str] = frozenset(
+    {
+        "command",
+        "options_set",
+        "exit_code",
+        "exit_code_name",
+        "reason",
+        "exception_type",
+        "duration_ms",
+        "tt_version",
+        "os_type",
+        "os_arch",
+        "python_version",
+        "ci",
+        "$lib",
+        "$lib_version",
+        "$set",
+        "$set_once",
+    }
+    | {prop for params in _SAFE_VALUES.values() for prop, _ in params.values()}
+)
