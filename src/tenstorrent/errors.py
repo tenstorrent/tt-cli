@@ -50,7 +50,7 @@ class TTError(Exception):
         self.exit_code = ExitCode(exit_code)
         self.details = details or {}
         # A stable, machine-readable slug for *this* failure site (dotted snake_case,
-        # e.g. "tool_missing.tt_smi"). Coarser than the message, finer than the exit
+        # e.g. "tool.missing.tt_smi"). Coarser than the message, finer than the exit
         # code: it is what usage telemetry records so failures can be counted without
         # ever sending the text, which may carry paths or tool argv. Optional.
         self.reason = reason

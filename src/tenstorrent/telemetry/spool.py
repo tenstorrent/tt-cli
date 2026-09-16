@@ -3,10 +3,10 @@
 
 """The on-disk event spool: append always, hand off rarely.
 
-`tt` must never block on a remote POST (measured: one in-process export against a live
-endpoint costs ~300-400 ms, of which only ~11-50 ms is real network). So the live path
-writes events here — a JSONL append, measured at 0.01 ms — and a separate detached
-process uploads the accumulated batch later (see drain.py).
+`tt` must never block on a remote POST: tens of milliseconds on a good link, and up to
+the full timeout on a firewalled one. So the live path writes events here — a JSONL
+append, measured at 0.01 ms — and a separate detached process uploads the accumulated
+batch later (see drain.py).
 
 Each line is one PostHog event exactly as it will appear inside the `batch` array of
 the upload (see attributes.build_event), so the drain is a verbatim passthrough: what
@@ -217,8 +217,8 @@ class Spool:
         """Delete every spooled event without sending it (durable opt-out).
 
         Spooling opens a window where data sits unsent; if the user opts out inside it,
-        uploading anyway would be worse than an in-process flush, where opt-out was
-        immediate and total. The lock file is left alone — it carries no event data.
+        that data must not be uploaded. The lock file is left alone — it carries no
+        event data.
         """
         for path in (self.path, self.sending_path, self.started_path):
             _unlink(path)

@@ -104,7 +104,8 @@ class ToolRegistry:
                 f"Required tool {name!r} is not installed.",
                 next_step="Run `tt update` to install the latest Tenstorrent system software.",
                 exit_code=ExitCode.TOOL_MISSING,
-                reason="tool.missing",
+                # Manifest names are kebab-case; the slug grammar is snake_case.
+                reason=f"tool.missing.{name.replace('-', '_')}",
                 details={"tool": name},
             )
         return found[0]

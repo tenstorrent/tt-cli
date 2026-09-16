@@ -35,7 +35,7 @@ from .spool import Spool
 # minutes on a firewalled machine. Per-event uuids make the retry idempotent.
 _POST_TIMEOUT_S = 10.0
 # How much of an error response to keep. PostHog's failures are short JSON documents
-# ("Project API key invalid"), and unlike an OTLP receiver they say what went wrong.
+# that say what went wrong ("Project API key invalid").
 _DETAIL_CHARS = 200
 
 # A spooled line must carry these to be worth sending; PostHog drops the event

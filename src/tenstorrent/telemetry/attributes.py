@@ -6,11 +6,9 @@
 Everything a telemetry event carries is produced here, so the anonymization policy has
 exactly one place to audit: command path, *which* options were set (names only), a
 small allowlist of argument values, the exit-code category, the duration, and coarse
-host/version facts. No file paths, tokens, hostnames, or usernames — and no IP: every
-event carries `$geoip_disable`, which tells PostHog to neither keep the client address
-nor derive a location from it, and the project is configured to discard the address at
-ingest as a second layer (see TELEMETRY.md). What no client can prevent is the server
-*seeing* the address of the connection; only a relay in front of PostHog would.
+host/version facts. No file paths, tokens, hostnames, or usernames — and no IP or
+location: every event carries `$geoip_disable`, and the PostHog project discards the
+client address at ingest (see TELEMETRY.md for the full policy).
 
 The value allowlist (`_SAFE_VALUES`) works by **validate then record, never record then
 sanitize**: an argument is only exported when its value is a member of a closed

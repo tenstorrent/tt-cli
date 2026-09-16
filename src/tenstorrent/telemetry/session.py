@@ -490,10 +490,8 @@ class TelemetrySession(_NullSession):
         """Sync mode: post pending events, giving up after _FLUSH_TIMEOUT_MS.
 
         The POST runs on a daemon thread we simply stop waiting on — the ceiling is
-        ours, and an abandoned thread dies with the process without delaying exit. (The
-        previous, OpenTelemetry-based implementation learned this the hard way: the
-        SDK's force_flush ignored its own timeout and blocked for 20 s against a
-        firewalled endpoint, on every command.)
+        ours, not the HTTP client's, and an abandoned thread dies with the process
+        without delaying exit.
         """
         pending, self._pending = self._pending, []
         if not pending or self._transport is None:
