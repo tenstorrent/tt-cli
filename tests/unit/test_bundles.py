@@ -5,16 +5,23 @@
 
 `_classify` covers the tags tt-model-manager writes today (see cli.py's
 `mesh_topology.lower()` and build.py's `_card_tags` upstream); `hardware_for`
-covers the same data read back from a pulled bundle's own manifest."""
+covers the same data read back from a pulled bundle's own manifest;
+`hardware_from_hub_manifest` covers a never-pulled bundle whose tags carry
+none, by fetching that same manifest from the Hub instead."""
 
 from __future__ import annotations
 
+import json
+
 from tenstorrent.modelhub.bundles import (
+    MANIFEST_NAME,
     _classify,
     _hardware_chips,
     _is_hardware_tag,
     hardware_for,
+    hardware_from_hub_manifest,
     hardware_satisfies,
+    search_community,
 )
 
 
@@ -105,3 +112,84 @@ def test_hardware_satisfies_falls_back_to_an_exact_match_for_unknown_tags():
     assert hardware_satisfies("galaxy", "galaxy")
     assert not hardware_satisfies("galaxy", "p150")
     assert not hardware_satisfies("p150", "galaxy")
+
+
+def test_hardware_from_hub_manifest_reads_the_fetched_file(tmp_path, monkeypatch):
+    manifest_path = tmp_path / MANIFEST_NAME
+    manifest_path.write_text(json.dumps({"container": {"serve": {"hardware": "P150"}}}))
+
+    def fake_download(repo_id, filename):
+        assert (repo_id, filename) == ("ns/untagged", MANIFEST_NAME)
+        return str(manifest_path)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    assert hardware_from_hub_manifest("ns/untagged") == ["p150"]
+
+
+def test_hardware_from_hub_manifest_is_empty_on_any_failure(monkeypatch):
+    def boom(repo_id, filename):
+        raise OSError("404")
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", boom)
+    assert hardware_from_hub_manifest("ns/gone") == []
+
+
+class _Repo:
+    def __init__(self, id, tags):
+        self.id = id
+        self.tags = tags
+        self.downloads = 0
+
+
+def test_search_community_fetches_the_manifest_for_an_untagged_bundle(monkeypatch):
+    """No board tag and never pulled here: the manifest on the Hub is the only
+    source left, so it is fetched — but only for this one bundle, not the
+    tagged one beside it."""
+    monkeypatch.setattr(
+        "huggingface_hub.HfApi.list_models",
+        lambda self, **kw: iter(
+            [_Repo("ns/untagged", ["blackhole"]), _Repo("ns/tagged", ["blackhole", "p300"])]
+        ),
+    )
+    calls = []
+
+    def fake_hardware_from_hub_manifest(repo_id):
+        calls.append(repo_id)
+        return ["p150"]
+
+    monkeypatch.setattr(
+        "tenstorrent.modelhub.bundles.hardware_from_hub_manifest",
+        fake_hardware_from_hub_manifest,
+    )
+    found = {b.name: b.hardware for b in search_community()}
+    assert found == {"ns/untagged": ["p150"], "ns/tagged": ["p300"]}
+    assert calls == ["ns/untagged"]  # never called for the already-tagged bundle
+
+
+def test_search_community_skips_the_hub_manifest_for_an_installed_bundle(
+    tmp_path, monkeypatch
+):
+    """A bundle pulled here already has a local manifest — hardware_for reads
+    that, so the untagged fallback must not also hit the Hub."""
+    from tenstorrent.modelhub import bundles
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    root = tmp_path / "tt-model"
+    pulled = root / "pulled" / "ns__untagged"
+    pulled.mkdir(parents=True)
+    (pulled / MANIFEST_NAME).write_text(
+        json.dumps({"container": {"serve": {"hardware": "p300x2"}}})
+    )
+    (root / "installed.json").write_text(json.dumps({"ns/untagged": {"repo_id": "ns/untagged"}}))
+
+    monkeypatch.setattr(
+        "huggingface_hub.HfApi.list_models",
+        lambda self, **kw: iter([_Repo("ns/untagged", ["blackhole"])]),
+    )
+
+    def boom(repo_id):  # pragma: no cover - must never run
+        raise AssertionError("the Hub manifest fallback ran for an installed bundle")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.hardware_from_hub_manifest", boom)
+    (found,) = bundles.search_community()
+    assert found.hardware == ["p300x2"]

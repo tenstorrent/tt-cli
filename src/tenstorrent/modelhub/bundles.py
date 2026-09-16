@@ -202,12 +202,10 @@ def weights_repo_for(repo_id: str, entry: dict) -> str | None:
     return None
 
 
-def hardware_for(repo_id: str, entry: dict) -> list[str]:
-    """Board/mesh targets a *pulled* bundle's manifest declares, from every serve
-    profile — a container image can validate more than one board (see
-    tt_kernel.build._card_tags upstream, which tags each one the same way).
-    [] when there is no manifest to read, same as engine_for/weights_repo_for."""
-    manifest = _manifest_for(repo_id, entry) or {}
+def _hardware_from_manifest(manifest: dict) -> list[str]:
+    """Board/mesh targets a manifest dict declares, from every serve profile — a
+    container image can validate more than one board (see tt_kernel.build's
+    _card_tags upstream, which tags each one the same way)."""
     serve = (manifest.get("container") or {}).get("serve") or {}
     default_hw = serve.get("hardware") or serve.get("mesh_device")
     found = {str(default_hw).strip().lower()} if default_hw else set()
@@ -218,6 +216,32 @@ def hardware_for(repo_id: str, entry: dict) -> list[str]:
         if hw:
             found.add(str(hw).strip().lower())
     return sorted(found)
+
+
+def hardware_for(repo_id: str, entry: dict) -> list[str]:
+    """Board/mesh targets a *pulled* bundle's manifest declares. [] when there is
+    no manifest to read, same as engine_for/weights_repo_for."""
+    return _hardware_from_manifest(_manifest_for(repo_id, entry) or {})
+
+
+def hardware_from_hub_manifest(repo_id: str) -> list[str]:
+    """Board/mesh targets read straight from a bundle's manifest on the Hub — the
+    fallback for a bundle whose repo tags carry none (tag_repo writes are
+    best-effort in tt-model-manager's cli.py, and a container package predating
+    build.py's _card_tags fix was never tagged with one at all).
+
+    One Hub fetch, paid only by a bundle that reaches here still untagged after
+    both the repo tags and (if pulled) the local manifest came up empty — not
+    by the listing as a whole. [] on any failure (network, 404, private,
+    malformed manifest): the tag gap this covers is rare enough that a silent
+    miss is the right default, same as is_bundle_repo's None-means-unknown."""
+    try:
+        from huggingface_hub import hf_hub_download
+
+        manifest = json.loads(Path(hf_hub_download(repo_id, MANIFEST_NAME)).read_text())
+    except Exception:  # noqa: BLE001 — network/404/auth/malformed all mean "no data"
+        return []
+    return _hardware_from_manifest(manifest)
 
 
 def serve_details(repo_id: str) -> dict | None:
@@ -354,7 +378,11 @@ def search_community(
 
     Network-only by nature: the catalog is a Hub index, so there is nothing local
     to fall back on. `config` enables the weights-cache lookup for installed
-    bundles (it resolves the HF cache root)."""
+    bundles (it resolves the HF cache root).
+
+    An untagged, never-pulled bundle costs one extra Hub fetch each (see
+    hardware_from_hub_manifest) -- bounded by how many bundles actually lack the
+    tag, not by the catalog size; 2 of 46 published bundles need it today."""
     from huggingface_hub import HfApi
     from huggingface_hub.errors import HfHubHTTPError
 
@@ -385,6 +413,11 @@ def search_community(
             # The manifest is authoritative; the tag is only a hint.
             engine = engine_for(repo_id, entry) or engine
             hardware = hardware_for(repo_id, entry) or hardware
+        elif not hardware:
+            # Untagged and never pulled here: the only source left is the
+            # bundle's own manifest on the Hub, fetched only because the tag
+            # came up empty (see hardware_from_hub_manifest).
+            hardware = hardware_from_hub_manifest(repo_id)
         bundles.append(
             BundleInfo(
                 name=repo_id,
