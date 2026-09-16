@@ -115,13 +115,29 @@ _COMMUNITY_CAPTION = (
     "source: `HF` is tt-model's public community catalog on the Hub, `local` is "
     "installed on this machine — a bundle in both is listed twice, once per source. "
     "arch is the architecture family the bundle declares (blackhole, wormhole_b0); "
-    "board and mesh tags are left out, as is any tag tt does not recognise. "
+    "hardware is the board/mesh target(s) it validates against (p150x4, p300x2), "
+    "filterable with --hw — a bundle needing fewer chips of the same arch than "
+    "the target matches too; any other tag tt does not recognise is left out. "
     "Every bundle serves with `tt serve <name>`; weights are referenced rather "
     "than shipped. `--json` carries the engine and packaging kind as well."
 )
 
 
-def _community_table(rows: list[dict]) -> Table:
+def _hardware_cell(row: dict, hardware: str | None) -> str:
+    """One line per hardware tag, each on its own row rather than comma-packed —
+    a bundle rarely has more than one or two, so this reads as a short list, not
+    a wall of text. Under --hw, only the tag(s) that actually satisfy the target
+    are shown — whether one uses the whole box or just part of it is visible by
+    comparing it to the --hw value already typed, so it needs no extra label."""
+    tags = row.get("hardware") or []
+    if hardware:
+        tags = [t for t in tags if bundles.hardware_satisfies(t, hardware)]
+    else:
+        tags = sorted(tags)
+    return "\n".join(tags) or "—"
+
+
+def _community_table(rows: list[dict], *, hardware: str | None = None) -> Table:
     """Same shape as the catalog table, minus columns the Hub does not publish."""
     table = Table(title="Community model bundles (tt-model)", caption=_COMMUNITY_CAPTION)
     # fold rather than ellipsize: the id is what you paste into `tt serve`
@@ -131,7 +147,7 @@ def _community_table(rows: list[dict]) -> Table:
     # `kind`/`engine` are how a bundle is built rather than something you pick one
     # on — all four stay in --json, and `tt serve <id> --dry-run` reports the
     # engine of a bundle that has been pulled.
-    for column in ("source", "arch", "weights"):
+    for column in ("source", "arch", "hardware", "weights"):
         table.add_column(column)
     for row in rows:
         # Render the value itself rather than a literal, so the table can never
@@ -140,6 +156,7 @@ def _community_table(rows: list[dict]) -> Table:
             row["name"],
             row.get("source") or "—",
             ", ".join(row.get("arch") or []) or "—",
+            _hardware_cell(row, hardware),
             _weights_cell(row),
         )
     return table
@@ -168,7 +185,9 @@ def list_models(
     hardware: str = typer.Option(
         None,
         "--hw",
-        help="Filter to a device config (e.g. p300x2); skips auto-detection.",
+        help="Filter to a device config (e.g. p300x2); skips auto-detection. "
+        "For --community, matches any bundle whose board/mesh tag needs no more "
+        "chips than this, on the same chip family.",
     ),
     all_devices: bool = typer.Option(
         False, "--all", help="Every model on every device, not just this machine's."
@@ -186,15 +205,19 @@ def list_models(
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
     if community:
+        if all_devices:
+            raise TTError(
+                "--all does not apply to community bundles.",
+                why="Every bundle is already listed regardless of this machine's "
+                "hardware; --all only changes catalog auto-detection.",
+                next_step="Drop --all.",
+                exit_code=ExitCode.USAGE,
+            )
         _list_community(
             appctx,
             cached=cached,
             model_type=model_type,
-            device_flags=[
-                flag
-                for flag, given in (("--hw", hardware), ("--all", all_devices))
-                if given
-            ],
+            hardware=hardware.lower() if hardware else None,
         )
         return
     detected = not hardware and not all_devices
@@ -218,23 +241,18 @@ def list_models(
 
 
 def _list_community(
-    appctx, *, cached: bool, model_type: str | None, device_flags: list[str]
+    appctx, *, cached: bool, model_type: str | None, hardware: str | None
 ) -> None:
     """`tt model list --community`: the Hub-published bundle catalog.
 
     Separate from the released spec listing rather than merged into it — a bundle
     has no per-device status or max_context, and blurring the two would hide which
-    tool serves what. Device filters do not apply (bundles advertise an arch, not a
-    tt-inference-server device config), so passing them is a usage error rather
-    than a silently ignored flag."""
-    if device_flags:
-        raise TTError(
-            f"{' and '.join(device_flags)} does not apply to community bundles.",
-            why="Bundles advertise an arch (blackhole), not a tt-inference-server "
-            "device config (p300x2), so there is nothing to filter against.",
-            next_step="Drop the flag — every listed bundle targets the arch shown.",
-            exit_code=ExitCode.USAGE,
-        )
+    tool serves what. --hw filters on the board/mesh tag a bundle publishes, and
+    a bundle needing fewer chips of the same arch than the target has is a match
+    too — a p150 (1 chip) bundle shows up for --hw p300x2 (4 chips), not just
+    --hw p150 (see bundles.hardware_satisfies). This is a client-side match
+    against tags already fetched by the one Hub call the listing makes, so it
+    adds no extra latency."""
     if model_type:
         raise TTError(
             "--type does not apply to community bundles.",
@@ -264,9 +282,14 @@ def _list_community(
     found = sorted(local + listed, key=lambda b: (b.name.lower(), b.source))
     if cached:  # --cached reads as "what do I have locally" on this listing too
         found = [b for b in found if b.source == "local"]
+    if hardware:
+        found = [
+            b for b in found
+            if any(bundles.hardware_satisfies(hw, hardware) for hw in b.hardware)
+        ]
     appctx.output.emit(
         {"source": "tt-model-catalog", "bundles": [dataclasses.asdict(b) for b in found]},
-        renderer=lambda payload: _community_table(payload["bundles"]),
+        renderer=lambda payload: _community_table(payload["bundles"], hardware=hardware),
     )
 
 

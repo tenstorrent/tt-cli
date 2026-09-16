@@ -639,6 +639,7 @@ def test_model_list_community_shows_bundles(runner, monkeypatch, isolated_dirs):
         "name",
         "source",
         "arch",
+        "hardware",
         "weights",
     ]
 
@@ -701,11 +702,58 @@ def test_model_list_community_does_not_read_the_support_list(
     assert result.exit_code == 0, result.output
 
 
-def test_model_list_community_rejects_device_filters(runner, isolated_dirs):
-    for argv in (["--hw", "p300x2"], ["--all"]):
-        result = runner.invoke(app, ["model", "list", "--community", *argv])
-        assert result.exit_code == ExitCode.USAGE, argv
-        assert "does not apply" in result.output
+def test_model_list_community_rejects_all_flag(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "list", "--community", "--all"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "does not apply" in result.output
+
+
+def test_model_list_community_hw_matches_a_bundle_needing_no_more_chips(
+    runner, monkeypatch, isolated_dirs
+):
+    """--hw p300 (2 blackhole chips) matches a bundle needing fewer or exactly as
+    many chips of the same arch, not just an identical board tag."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/fits", "arch": ["blackhole"], "hardware": ["p150"]},  # 1 chip
+        {"name": "ns/exact", "arch": ["blackhole"], "hardware": ["p300"]},  # 2 chips
+        {"name": "ns/too-big", "arch": ["blackhole"], "hardware": ["p150x4"]},  # 4 chips
+        {"name": "ns/wrong-arch", "arch": ["wormhole_b0"], "hardware": ["n150"]},
+        {"name": "ns/untagged", "arch": ["blackhole"]},
+    ])
+    result = runner.invoke(
+        app, ["model", "list", "--community", "--hw", "p300", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    names = {b["name"] for b in json.loads(result.output)["bundles"]}
+    assert names == {"ns/fits", "ns/exact"}
+
+
+def test_model_list_community_hw_shows_the_hardware_column(
+    runner, monkeypatch, isolated_dirs
+):
+    """--hw keeps the hardware column, showing only the tag(s) that satisfy the
+    filter — whether one uses the whole box or part of it is visible by
+    comparing it to the --hw value already typed."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/whole-box", "arch": ["blackhole"], "hardware": ["p300x2"]},
+        {"name": "ns/part-of-box", "arch": ["blackhole"], "hardware": ["p150"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community", "--hw", "p300x2"])
+    assert result.exit_code == 0, result.output
+    assert "hardware" in _table_header(result.output)
+    assert "p300x2" in result.output
+    assert "p150" in result.output
+
+
+def test_model_list_community_hw_is_case_insensitive(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [{"name": "ns/alpha", "hardware": ["p150x4"]}])
+    result = runner.invoke(
+        app, ["model", "list", "--community", "--hw", "P150X4", "--json"]
+    )
+    names = [b["name"] for b in json.loads(result.output)["bundles"]]
+    assert names == ["ns/alpha"]
 
 
 def test_model_list_community_rejects_type_filter(runner, isolated_dirs):

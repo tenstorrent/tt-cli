@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,6 +52,61 @@ _SKIP_TAG_PREFIXES = ("region:", "license:", "arxiv:", "dataset:", "base_model:"
 # until then its bundles show an empty arch rather than a wrong one.
 _ARCH_TAGS = frozenset({"blackhole", "wormhole_b0", "grayskull"})
 
+# Board/mesh tags: both packaging paths in tt-model-manager write these (cli.py's
+# `mesh_topology.lower()`, build.py's `_card_tags`) as a board label optionally
+# suffixed with the device count, e.g. "p150x4", "p300x2", "n300".
+_HARDWARE_TAG_RE = re.compile(r"^(?P<base>[a-z]\d+)(?:x(?P<mult>\d+))?$")
+
+# Chips per board, and the board's chip family — the vocabulary of boards a tag can name.
+_BOARD_CHIPS = {"p100": 1, "p150": 1, "n150": 1, "e150": 1, "p300": 2, "n300": 2}
+_BOARD_ARCH = {
+    "p100": "blackhole",
+    "p150": "blackhole",
+    "p300": "blackhole",
+    "n150": "wormhole_b0",
+    "n300": "wormhole_b0",
+    "e150": "grayskull",
+}
+
+
+def _is_hardware_tag(tag: str) -> bool:
+    match = _HARDWARE_TAG_RE.match(tag)
+    return bool(match and match.group("base") in _BOARD_CHIPS)
+
+
+def _hardware_chips(tag: str) -> tuple[str, int] | None:
+    """(chip arch, total chip count) for a board/mesh tag, or None if the tag is
+    not one of ours — a bare board is one board's worth of chips, "x4" etc. is
+    that many boards."""
+    match = _HARDWARE_TAG_RE.match(tag)
+    if not match:
+        return None
+    base = match.group("base")
+    if base not in _BOARD_CHIPS:
+        return None
+    mult = int(match.group("mult") or 1)
+    return _BOARD_ARCH[base], _BOARD_CHIPS[base] * mult
+
+
+def hardware_satisfies(bundle_tag: str, target_tag: str) -> bool:
+    """Whether a bundle validated for `bundle_tag` can run on `target_tag`.
+
+    Same chip arch, and no more chips than the target provides — a model
+    authored for one p150 (1 blackhole chip) also runs on a p300x2 (4 blackhole
+    chips): the board packaging differs but the chip budget is a superset.
+    tt_kernel.manifest.compare() gates launch on arch + exact device_count; this
+    generalises equality to "at least as many" because discovery asks "can this
+    run here", not "is this the exact mesh it was validated on".
+
+    Falls back to an exact string match when either tag is not in our board
+    grammar, so an unrecognised tag is still filterable, just not comparable."""
+    bundle = _hardware_chips(bundle_tag)
+    target = _hardware_chips(target_tag)
+    if bundle is None or target is None:
+        return bundle_tag == target_tag
+    (bundle_arch, bundle_chips), (target_arch, target_chips) = bundle, target
+    return bundle_arch == target_arch and bundle_chips <= target_chips
+
 
 @dataclass(frozen=True)
 class BundleInfo:
@@ -61,6 +117,7 @@ class BundleInfo:
     kind: str | None = None  # container | self-contained | thin
     engine: str | None = None  # vLLM today
     arch: list[str] = field(default_factory=list)  # blackhole, wormhole_b0, 1x4, …
+    hardware: list[str] = field(default_factory=list)  # board/mesh targets, e.g. p150x4
     downloads: int | None = None
     installed: bool = False  # a local install recorded by tt-model
     # Weights live in the shared HF cache, but which repo they come from is only
@@ -145,6 +202,24 @@ def weights_repo_for(repo_id: str, entry: dict) -> str | None:
     return None
 
 
+def hardware_for(repo_id: str, entry: dict) -> list[str]:
+    """Board/mesh targets a *pulled* bundle's manifest declares, from every serve
+    profile — a container image can validate more than one board (see
+    tt_kernel.build._card_tags upstream, which tags each one the same way).
+    [] when there is no manifest to read, same as engine_for/weights_repo_for."""
+    manifest = _manifest_for(repo_id, entry) or {}
+    serve = (manifest.get("container") or {}).get("serve") or {}
+    default_hw = serve.get("hardware") or serve.get("mesh_device")
+    found = {str(default_hw).strip().lower()} if default_hw else set()
+    for profile in (manifest.get("container") or {}).get("serve_profiles") or []:
+        if not isinstance(profile, dict):
+            continue
+        hw = profile.get("hardware") or profile.get("mesh_device") or default_hw
+        if hw:
+            found.add(str(hw).strip().lower())
+    return sorted(found)
+
+
 def serve_details(repo_id: str) -> dict | None:
     """Launch settings a *pulled* bundle records in its own manifest, or None.
 
@@ -189,9 +264,10 @@ def serve_details(repo_id: str) -> dict | None:
     }
 
 
-def _classify(tags: list[str]) -> tuple[str | None, str | None, list[str]]:
+def _classify(tags: list[str]) -> tuple[str | None, str | None, list[str], list[str]]:
     kind = engine = None
     arch: list[str] = []
+    hardware: list[str] = []
     for tag in tags:
         if tag in _KIND_TAGS:
             kind = kind or _KIND_TAGS[tag]
@@ -201,7 +277,9 @@ def _classify(tags: list[str]) -> tuple[str | None, str | None, list[str]]:
             continue
         elif tag in _ARCH_TAGS:
             arch.append(tag)
-    return kind, engine, sorted(arch)
+        elif _is_hardware_tag(tag):
+            hardware.append(tag)
+    return kind, engine, sorted(arch), sorted(hardware)
 
 
 MANIFEST_NAME = "tt_kernel_manifest.json"  # tt-model's on-disk contract, unrenamed
@@ -256,6 +334,7 @@ def local_bundles(config: ConfigStore | None = None) -> list[BundleInfo]:
                 kind="container" if entry.get("container") else None,
                 engine=engine_for(repo_id, entry),
                 arch=[arch] if arch else [],
+                hardware=hardware_for(repo_id, entry),
                 installed=True,
                 weights_repo=weights_repo,
                 weights_bytes=weights_bytes,
@@ -298,19 +377,21 @@ def search_community(
         repo_id = str(getattr(repo, "id", "") or "")
         if not repo_id:
             continue
-        kind, engine, arch = _classify(list(getattr(repo, "tags", None) or []))
+        kind, engine, arch, hardware = _classify(list(getattr(repo, "tags", None) or []))
         entry = installed.get(repo_id.lower())
         weights_repo = weights_bytes = None
         if entry is not None:
             weights_repo, weights_bytes = _weights_state(repo_id, entry, sizes)
             # The manifest is authoritative; the tag is only a hint.
             engine = engine_for(repo_id, entry) or engine
+            hardware = hardware_for(repo_id, entry) or hardware
         bundles.append(
             BundleInfo(
                 name=repo_id,
                 kind=kind,
                 engine=engine,
                 arch=arch,
+                hardware=hardware,
                 downloads=getattr(repo, "downloads", None),
                 installed=entry is not None,
                 weights_repo=weights_repo,
