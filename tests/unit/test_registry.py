@@ -10,6 +10,7 @@ from tenstorrent.config.store import ConfigStore
 from tenstorrent.errors import ExitCode, TTError
 from tenstorrent.tools.installers import InstallResult
 from tenstorrent.tools.manifest import ToolSpec
+from tenstorrent.tools import registry as registry_module
 from tenstorrent.tools.registry import ToolRegistry, env_var_for
 from tenstorrent.tools.runner import Runner
 from tenstorrent.tools.state import ToolState
@@ -77,9 +78,10 @@ def test_resolve_installed_state_third(registry):
 
 
 def _installer_venv_tool(name: str) -> Path:
-    """Drop a fake entry point where tt-installer's managed venv would have it. HOME is
-    the per-test temp home (isolated_dirs), so this never touches the real machine."""
-    path = Path.home() / ".tenstorrent-venv" / "bin" / name
+    """Drop a fake entry point where the registry probes for tt-installer's managed
+    venv. isolated_dirs redirects that probe into the per-test temp dir in both modes,
+    so this never touches (or sees) the real ~/.tenstorrent-venv."""
+    path = registry_module.installer_venv_bin(name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\n")
     return path
