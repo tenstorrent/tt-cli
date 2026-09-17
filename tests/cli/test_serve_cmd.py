@@ -13,6 +13,9 @@ from tenstorrent.errors import ExitCode
 SMALL_SUPPORT = (
     Path(__file__).parent.parent / "fakes" / "data" / "model_support_small.json"
 )
+SMALL_STUDIO = (
+    Path(__file__).parent.parent / "fakes" / "data" / "studio_models_small.json"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +23,7 @@ def small_spec(monkeypatch):
     """Pin the catalog to the fixture: these tests assert on the exact flags a
     model's support entry produces."""
     monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(SMALL_SUPPORT))
+    monkeypatch.setenv("TT_STUDIO_MODELS_PATH", str(SMALL_STUDIO))
 
 
 @pytest.fixture(autouse=True)
@@ -817,3 +821,304 @@ def test_serve_rejects_a_device_the_model_has_no_entry_for(runner, docker_presen
     assert "no support entry for n300" in result.output
     assert "galaxy" in result.output  # it lists what the model does have
     assert not fake_server.exists()
+
+
+# -- --backend routing: inference-server | studio | model-manager | auto ---------------
+
+
+@pytest.fixture
+def studio_docker(monkeypatch):
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.studio.shutil.which",
+        lambda name: "/usr/bin/docker" if name == "docker" else None,
+    )
+
+
+@pytest.fixture
+def fake_studio(studio_bin):
+    """Recorded-argv log for the fake tt-studio run.py (fake mode only)."""
+    return studio_bin
+
+
+@pytest.fixture
+def serve_tty(monkeypatch):
+    monkeypatch.setattr("tenstorrent.commands.serve._stdin_isatty", lambda: True)
+
+
+def _studio_argv(log) -> list[str]:
+    return json.loads(log.read_text().splitlines()[-1])
+
+
+@pytest.mark.fakes_only
+def test_auto_routes_a_studio_only_model_to_studio(
+    runner, studio_docker, fake_studio, fakes_dir, tmp_path, monkeypatch
+):
+    cwd_log = tmp_path / "studio-cwd.log"
+    monkeypatch.setenv("FAKE_STUDIO_CWD_LOG", str(cwd_log))
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
+    assert result.exit_code == 0, result.output
+    assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]
+    # run.py resolves its compose file, .env and driver from cwd
+    assert cwd_log.read_text().strip() == str((fakes_dir / "studio-repo").resolve())
+    assert "stops the model" in result.output
+
+
+@pytest.mark.fakes_only
+def test_auto_prefers_the_inference_server_when_both_know_the_model(
+    runner, docker_present, fake_server, fake_studio, isolated_dirs
+):
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(fake_server.read_text().splitlines()[-1])[:2] == [
+        "--model", "Llama-3.1-8B-Instruct",
+    ]
+    assert not fake_studio.exists()
+
+
+def test_studio_is_refused_for_a_model_the_inference_server_serves(
+    runner, studio_docker, fake_studio, fake_server
+):
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--backend", "studio"])
+    assert result.exit_code == ExitCode.UNSUPPORTED, result.output
+    assert "not offered through studio" in result.output
+    assert "--backend inference-server" in result.output
+    assert not fake_studio.exists() and not fake_server.exists()
+
+
+def test_inference_server_refuses_a_studio_only_model(runner, docker_present, fake_server):
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--backend", "inference-server"])
+    assert result.exit_code == ExitCode.UNSUPPORTED, result.output
+    assert "--backend studio" in result.output
+    assert not fake_server.exists()
+
+
+def test_model_manager_refuses_a_catalog_model(runner, fake_model_manager):
+    result = runner.invoke(
+        app, ["serve", "Llama-3.1-8B-Instruct", "--backend", "model-manager"]
+    )
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "bundle" in result.output
+    assert not fake_model_manager.exists()
+
+
+def test_studio_refuses_a_bundle_id(runner, fake_studio):
+    result = runner.invoke(app, ["serve", "acme/demo", "--backend", "studio"])
+    assert result.exit_code == ExitCode.UNSUPPORTED, result.output
+    assert not fake_studio.exists()
+
+
+@pytest.mark.fakes_only
+def test_explicit_model_manager_still_serves_a_bundle(runner, fake_model_manager):
+    result = runner.invoke(app, ["serve", "acme/demo", "--backend", "model-manager"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(fake_model_manager.read_text().splitlines()[-1])["argv"] == [
+        "serve", "acme/demo",
+    ]
+
+
+def test_studio_only_serves_the_server_workflow(runner, studio_docker, fake_studio):
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--workflow", "benchmarks"])
+    assert result.exit_code == ExitCode.UNSUPPORTED, result.output
+    assert not fake_studio.exists()
+
+
+@pytest.mark.fakes_only
+def test_studio_warns_that_device_and_port_are_not_its_options(
+    runner, studio_docker, fake_studio
+):
+    result = runner.invoke(
+        app, ["serve", "Qwen3.5-9B", "--device", "p300x2", "--port", "9000"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "studio allocates" in result.output
+    assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]  # nothing forwarded
+
+
+def test_studio_needs_docker(runner, fake_studio, monkeypatch):
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.studio.shutil.which", lambda name: None
+    )
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
+    assert result.exit_code == ExitCode.TOOL_MISSING, result.output
+    assert not fake_studio.exists()
+
+
+@pytest.mark.fakes_only
+def test_studio_failure_is_tool_failed(runner, studio_docker, fake_studio, monkeypatch):
+    monkeypatch.setenv("FAKE_STUDIO_FAIL", "1")
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+
+
+def test_studio_dry_run_needs_neither_docker_nor_a_checkout(runner, isolated_dirs):
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--dry-run", "--json"])
+    assert result.exit_code == 0, result.output
+    plan = json.loads(result.output)
+    assert plan["backend"] == "studio"
+    assert plan["model"] == "Qwen3.5-9B"
+    assert plan["installed"] is False and plan["cwd"] is None
+    assert plan["argv"] == ["<run.py>", "run", "Qwen3.5-9B"]
+    assert plan["hf_token_source"] is None
+    assert not (isolated_dirs / "data" / "tools").exists()  # nothing cloned
+
+
+@pytest.mark.fakes_only
+def test_studio_dry_run_reports_the_installed_checkout(runner, fake_studio, fakes_dir):
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--backend", "studio", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "TT-Studio" in result.output
+    assert str(fakes_dir / "studio-repo") in result.output
+    assert not fake_studio.exists()  # a dry run never launches
+
+
+# -- the picker: `tt serve --backend X` with no model ---------------------------------
+
+
+@pytest.mark.fakes_only
+def test_picker_lists_the_backends_models_and_serves_the_choice(
+    runner, serve_tty, studio_docker, fake_studio
+):
+    # no tt-smi wired → no device filter → only the studio-only models are
+    # offered (the shared ones belong to inference-server); "2" is Qwen3.8-27B
+    result = runner.invoke(app, ["serve", "--backend", "studio"], input="2\n")
+    assert result.exit_code == 0, result.output
+    assert "1. Qwen3.5-9B" in result.output
+    assert "2. Qwen3.8-27B" in result.output
+    assert "Llama" not in result.output
+    assert _studio_argv(fake_studio) == ["run", "Qwen3.8-27B"]
+
+
+@pytest.mark.fakes_only
+def test_picker_filters_to_the_detected_device(
+    runner, serve_tty, studio_docker, fake_studio, fake_bin, monkeypatch
+):
+    monkeypatch.setenv("TT_TOOL_BIN_TT_SMI", str(fake_bin / "tt-smi"))
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "multi")  # p300x2
+    result = runner.invoke(app, ["serve", "--backend", "studio"], input="1\n")
+    assert result.exit_code == 0, result.output
+    assert "Models for p300x2" in result.output
+    assert "Qwen3.8-27B" in result.output
+    assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]
+
+
+@pytest.mark.fakes_only
+def test_picker_for_auto_shows_which_backend_serves_each(
+    runner, serve_tty, docker_present, fake_server
+):
+    result = runner.invoke(app, ["serve", "--backend", "auto"], input="1\n")
+    assert result.exit_code == 0, result.output
+    assert "Llama-3.1-8B-Instruct  inference-server" in result.output
+    assert "Qwen3.5-9B" in result.output and "studio" in result.output
+    assert json.loads(fake_server.read_text().splitlines()[-1])[1] == "Llama-3.1-8B-Instruct"
+
+
+def test_picker_is_a_usage_error_without_a_terminal(runner):
+    result = runner.invoke(app, ["serve", "--backend", "studio"])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "needs a terminal" in result.output
+
+
+def test_picker_is_a_usage_error_under_json(runner, serve_tty):
+    result = runner.invoke(app, ["serve", "--backend", "studio", "--json"])
+    assert result.exit_code == ExitCode.USAGE, result.output
+
+
+def test_bare_serve_still_shows_help(runner):
+    result = runner.invoke(app, ["serve"])
+    assert result.exit_code == 0
+    assert "Usage" in result.output
+
+
+def test_model_manager_picker_needs_a_pulled_bundle(runner, serve_tty, fake_model_manager):
+    result = runner.invoke(app, ["serve", "--backend", "model-manager"])
+    assert result.exit_code == ExitCode.ERROR, result.output
+    assert "tt model list --community" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_manager_picker_offers_pulled_bundles(
+    runner, serve_tty, fake_model_manager, pulled_bundle
+):
+    result = runner.invoke(app, ["serve", "--backend", "model-manager"], input="1\n")
+    assert result.exit_code == 0, result.output
+    assert "1. acme/demo" in result.output
+    assert json.loads(fake_model_manager.read_text().splitlines()[-1])["argv"] == [
+        "serve", "acme/demo",
+    ]
+
+
+# -- HF_TOKEN seeding -------------------------------------------------------------------
+
+
+@pytest.fixture
+def inference_env_log(tmp_path, monkeypatch):
+    log = tmp_path / "inference-env.jsonl"
+    monkeypatch.setenv("FAKE_INFERENCE_ENV_LOG", str(log))
+    return log
+
+
+def _seen_token(log) -> str | None:
+    return json.loads(log.read_text().splitlines()[-1])["HF_TOKEN"]
+
+
+@pytest.mark.fakes_only
+def test_shell_hf_token_reaches_run_py(
+    runner, docker_present, fake_server, inference_env_log, monkeypatch
+):
+    monkeypatch.setenv("HF_TOKEN", "hf_from_shell")
+    assert runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"]).exit_code == 0
+    assert _seen_token(inference_env_log) == "hf_from_shell"
+
+
+@pytest.mark.fakes_only
+def test_login_store_token_is_seeded_when_the_shell_has_none(
+    runner, docker_present, fake_server, inference_env_log, isolated_dirs
+):
+    hf_home = isolated_dirs / "hf"
+    hf_home.mkdir(parents=True, exist_ok=True)
+    (hf_home / "token").write_text("hf_from_login\n")
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert _seen_token(inference_env_log) == "hf_from_login"
+
+
+@pytest.mark.fakes_only
+def test_no_token_anywhere_seeds_nothing(
+    runner, docker_present, fake_server, inference_env_log
+):
+    assert runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"]).exit_code == 0
+    assert _seen_token(inference_env_log) is None
+
+
+@pytest.mark.fakes_only
+def test_login_store_token_reaches_studio_and_tt_model(
+    runner, studio_docker, fake_studio, fake_model_manager, isolated_dirs, tmp_path, monkeypatch
+):
+    hf_home = isolated_dirs / "hf"
+    hf_home.mkdir(parents=True, exist_ok=True)
+    (hf_home / "token").write_text("hf_from_login")
+    env_log = tmp_path / "studio-env.jsonl"
+    monkeypatch.setenv("FAKE_STUDIO_ENV_LOG", str(env_log))
+    assert runner.invoke(app, ["serve", "Qwen3.5-9B"]).exit_code == 0
+    assert json.loads(env_log.read_text())["HF_TOKEN"] == "hf_from_login"
+    assert runner.invoke(app, ["serve", "acme/demo"]).exit_code == 0
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["hf_token"] == "hf_from_login"
+
+
+def test_dry_run_names_the_token_source_but_never_the_token(
+    runner, isolated_dirs, monkeypatch
+):
+    hf_home = isolated_dirs / "hf"
+    hf_home.mkdir(parents=True, exist_ok=True)
+    (hf_home / "token").write_text("hf_secret_value")
+    result = runner.invoke(
+        app, ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2", "--dry-run", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["hf_token_source"] == "hf-login"
+    assert "hf_secret_value" not in result.output
+    monkeypatch.setenv("HF_TOKEN", "hf_other_secret")
+    human = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2", "--dry-run"])
+    assert "from the shell" in human.output
+    assert "hf_other_secret" not in human.output

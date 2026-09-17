@@ -1,0 +1,54 @@
+{
+  "_comment": [
+    "Trimmed copy of tt-studio's models_from_inference_server.json shape, covering:",
+    "a model the support list also has (Llama-3.1-8B-Instruct), a single-chip",
+    "P150 model that studio widens onto the multi-card Blackhole boards",
+    "(Qwen3.5-9B), a P300x2-only studio model (Qwen3.8-27B), and a media model",
+    "(whisper-large-v3) for the type/engine mapping. parse_studio_models ignores",
+    "keys it does not read."
+  ],
+  "source": {"artifact_version": "0.20.0"},
+  "total_models": 4,
+  "models": [
+    {
+      "model_name": "Llama-3.1-8B-Instruct",
+      "model_type": "CHAT",
+      "display_model_type": "LLM",
+      "device_configurations": ["N150", "P150", "P300x2", "T3K"],
+      "hf_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+      "inference_engine": "vLLM",
+      "status": "FUNCTIONAL",
+      "param_count": 8
+    },
+    {
+      "model_name": "Qwen3.5-9B",
+      "model_type": "CHAT",
+      "display_model_type": "LLM",
+      "device_configurations": ["P150"],
+      "hf_model_id": "Qwen/Qwen3.5-9B",
+      "inference_engine": "vLLM",
+      "status": "EXPERIMENTAL",
+      "param_count": 9
+    },
+    {
+      "model_name": "Qwen3.8-27B",
+      "model_type": "CHAT",
+      "display_model_type": "LLM",
+      "device_configurations": ["P300x2"],
+      "hf_model_id": "Qwen/Qwen3.8-27B",
+      "inference_engine": "vLLM",
+      "status": "EXPERIMENTAL",
+      "param_count": null
+    },
+    {
+      "model_name": "whisper-large-v3",
+      "model_type": "SPEECH_RECOGNITION",
+      "display_model_type": "AUDIO",
+      "device_configurations": ["N150", "P150"],
+      "hf_model_id": "openai/whisper-large-v3",
+      "inference_engine": "media",
+      "status": "COMPLETE",
+      "param_count": null
+    }
+  ]
+}

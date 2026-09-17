@@ -3,14 +3,17 @@
 
 """`tt serve` — run inference (or benchmarks/evals) on a model. [beta]
 
-Two serving paths, picked by the model name: a name in tt-inference-server's
-released spec goes to tt-inference-server; a Hugging Face bundle id
-(`namespace/name`) that the spec does not know falls back to tt-model."""
+Three serving paths. `--backend auto` (the default) picks by the model name: a
+name in tt-inference-server's released spec goes to tt-inference-server; a name
+only TT-Studio's catalog knows goes to studio; a Hugging Face bundle id
+(`namespace/name`) neither knows falls back to tt-model. An explicit --backend
+forces one, and with no model at all opens a picker of what that backend serves."""
 
 from __future__ import annotations
 
 import json
 import shlex
+import sys
 from enum import Enum
 
 import typer
@@ -27,9 +30,13 @@ from ..backends.serving.model_manager import (
     ModelManagerBackend,
     looks_like_bundle_id,
 )
+from ..backends.serving.studio import StudioBackend
+from .._compat import IntRange, prompt
 from ..cli import JsonFlag, QuietFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
+from ..models.model import ModelInfo
+from ..modelhub import bundles
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub.completions import complete_model
 
@@ -38,6 +45,18 @@ class Workflow(str, Enum):
     server = "server"
     benchmarks = "benchmarks"
     evals = "evals"
+
+
+class Backend(str, Enum):
+    auto = "auto"
+    inference_server = "inference-server"
+    studio = "studio"
+    model_manager = "model-manager"
+
+
+def _stdin_isatty() -> bool:
+    """Test seam: CliRunner replaces sys.stdin, so tests patch this, not isatty."""
+    return sys.stdin.isatty()
 
 
 def _autodetect_device(appctx) -> str | None:
@@ -70,9 +89,17 @@ def _autodetect_device(appctx) -> str | None:
 def serve(
     ctx: typer.Context,
     model: str = typer.Argument(
+        None,
         help="Catalog model name (Llama-3.1-8B-Instruct) or a tt-model bundle id "
-        "(namespace/name).",
+        "(namespace/name). Omit it with --backend to pick from a list.",
         autocompletion=complete_model,
+    ),
+    backend: Backend = typer.Option(
+        Backend.auto,
+        "--backend",
+        help="inference-server, studio, model-manager, or auto: inference-server "
+        "when its spec has the model, studio for the models only studio carries, "
+        "model-manager for a bundle id.",
     ),
     workflow: Workflow = typer.Option(
         Workflow.server, "--workflow", help="server, benchmarks, or evals."
@@ -105,8 +132,8 @@ def serve(
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
 ) -> None:
-    """[beta] Serve a model for inference via tt-inference-server, or via tt-model
-    when the name is a bundle id the released spec does not cover.
+    """[beta] Serve a model for inference via tt-inference-server, TT-Studio, or
+    tt-model (for a bundle id neither catalog covers).
 
     For a bundle id, anything tt serve does not recognize is passed to tt-model —
     its own flags and its vLLM passthrough: `tt serve ns/model -- --port 8080 --follow`.
@@ -119,8 +146,11 @@ def serve(
     # its vLLM passthrough reach it unchanged.
     extra_args = list(ctx.args)
     catalog = ModelCatalog()
+    if model is None:
+        model = _pick_model(appctx, catalog, backend)
     entry = catalog.find(model)
-    if entry is None:
+    chosen = _resolve_backend(entry, model, backend, catalog_origin=catalog.origin)
+    if chosen is Backend.model_manager:
         _serve_with_tt_model_manager(
             appctx, model, catalog_origin=catalog.origin,
             workflow=workflow, device=device, offline=offline,
@@ -135,7 +165,13 @@ def serve(
             next_step="Drop them, or use `tt serve --workflow/--device`.",
             exit_code=ExitCode.USAGE,
         )
-    backend = InferenceServerBackend(
+    if chosen is Backend.studio:
+        _serve_with_studio(
+            appctx, entry, workflow=workflow, device=device, offline=offline,
+            port=port, dry_run=dry_run,
+        )
+        return
+    server = InferenceServerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     )
     if device is None:
@@ -146,13 +182,13 @@ def serve(
     if dry_run:
         # No preflight and no install: a dry run must not require docker, or fetch
         # a checkout, to describe what it would do.
-        plan = backend.plan(
+        plan = server.plan(
             entry, workflow=workflow.value, device=device, port=port, force=force
         )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
-    backend.preflight(entry)
-    backend.serve(
+    server.preflight(entry)
+    server.serve(
         entry,
         workflow=workflow.value,
         device=device,
@@ -160,6 +196,128 @@ def serve(
         port=port,
         force=force,
     )
+
+
+def _resolve_backend(
+    entry: ModelInfo | None, model: str, backend: Backend, *, catalog_origin: str
+) -> Backend:
+    """Which path serves `model`. auto: the support list first, then studio, then a
+    bundle id. An explicit choice the model does not offer is refused rather than
+    handed to a tool that will fail later with less context."""
+    if entry is None:
+        if backend in (Backend.auto, Backend.model_manager):
+            # _serve_with_tt_model_manager keeps the bundle-shape guard and its error.
+            return Backend.model_manager
+        raise TTError(
+            f"{model} is not a {backend.value} model.",
+            why=f"It is not in the model catalog ({catalog_origin}); only tt-model "
+            "bundle ids (namespace/name) serve outside it.",
+            next_step=f"Run `tt model list` to see what {backend.value} serves, or drop "
+            "--backend.",
+            exit_code=ExitCode.UNSUPPORTED,
+        )
+    if backend is Backend.auto:
+        return (
+            Backend.inference_server
+            if Backend.inference_server.value in entry.backends
+            else Backend.studio
+        )
+    if backend is Backend.model_manager:
+        raise TTError(
+            f"{entry.name} is a catalog model, not a tt-model bundle.",
+            why="model-manager serves bundle ids (namespace/name) only.",
+            next_step=f"Drop --backend, or use `tt serve {entry.name} --backend "
+            f"{entry.backends[0]}`.",
+            exit_code=ExitCode.USAGE,
+        )
+    if backend.value not in entry.backends:
+        alternatives = " or ".join(
+            f"`tt serve {entry.name} --backend {b}`" for b in entry.backends
+        )
+        raise TTError(
+            f"{entry.name} is not served through {backend.value}.",
+            why=f"tt serves it through {', '.join(entry.backends)}"
+            + (
+                "; models tt-inference-server serves are not offered through studio."
+                if backend is Backend.studio
+                else "."
+            ),
+            next_step=f"Use {alternatives}, or drop --backend.",
+            exit_code=ExitCode.UNSUPPORTED,
+        )
+    return backend
+
+
+def _pick_model(appctx, catalog: ModelCatalog, backend: Backend) -> str:
+    """Interactive fallback for `tt serve --backend X` with no model: a numbered
+    list of what that backend serves here, on stderr, answered with a number."""
+    if appctx.output.json_mode or appctx.output.quiet or not _stdin_isatty():
+        raise TTError(
+            "No model given.",
+            why="The interactive picker needs a terminal and is disabled with "
+            "--json/--quiet.",
+            next_step="Pass a model: `tt serve <model>` (see `tt model list`).",
+            exit_code=ExitCode.USAGE,
+        )
+    choices_display = None
+    if backend is Backend.model_manager:
+        choices = [b.name for b in bundles.local_bundles(config=appctx.config)]
+        if not choices:
+            raise TTError(
+                "No tt-model bundles are pulled on this machine.",
+                next_step="`tt model list --community` to browse, "
+                "`tt model pull <namespace>/<name>` to fetch one.",
+                exit_code=ExitCode.ERROR,
+            )
+        label = "Pulled tt-model bundles"
+    else:
+        models = catalog.list()
+        if backend is not Backend.auto:
+            models = [m for m in models if backend.value in m.backends]
+        device = _autodetect_device(appctx)
+        if device:
+            models = [
+                m for m in models if device in m.hardware and m.devices[device].supported
+            ]
+        if not models:
+            raise TTError(
+                f"No {backend.value} models for this machine.",
+                next_step="`tt model list --all` shows every model on every device.",
+                exit_code=ExitCode.ERROR,
+            )
+        choices = [m.name for m in models]
+        label = f"Models for {device}" if device else "Models"
+        if backend is Backend.auto:
+            width = max(len(name) for name in choices)
+            choices_display = [
+                f"{m.name:<{width}}  {', '.join(m.backends)}" for m in models
+            ]
+    appctx.output.status(f"{label} ({backend.value}):")
+    for i, text in enumerate(choices_display or choices, start=1):
+        appctx.output.status(f"  {i:>3}. {text}")
+    # err=True keeps the prompt on stderr: stdout stays the tool's own output.
+    choice = prompt("Model", default=1, type=IntRange(1, len(choices)), err=True)
+    return choices[choice - 1]
+
+
+def _serve_with_studio(
+    appctx,
+    entry: ModelInfo,
+    *,
+    workflow: Workflow,
+    device: str | None,
+    offline: bool,
+    port: int | None,
+    dry_run: bool,
+) -> None:
+    studio = StudioBackend(appctx.registry, appctx.runner, appctx.config, appctx.output)
+    if workflow is not Workflow.server:
+        raise studio.unsupported_workflow(workflow.value)
+    if dry_run:
+        appctx.output.emit(studio.plan(entry, offline=offline), renderer=_plan_renderer)
+        return
+    studio.preflight(entry)
+    studio.serve(entry, offline=offline, device=device, port=port)
 
 
 def _plan_renderer(plan: dict) -> Group:
@@ -213,6 +371,15 @@ def _plan_renderer(plan: dict) -> Group:
             table.add_row("tt-model", "not installed — the first serve installs it")
         if plan["extra_args"]:
             table.add_row("passthrough", " ".join(plan["extra_args"]))
+    elif plan.get("backend") == "studio":
+        table.add_row("backend", "TT-Studio")
+        table.add_row("checkout", plan["cwd"] or "not installed — the first serve clones it")
+        table.add_row("HF token", _token_cell(plan["hf_token_source"]))
+        table.add_row(
+            "deploy",
+            "[dim]studio picks the chips and the port; run.py reports the endpoint "
+            "once the model is healthy[/dim]",
+        )
     else:
         table.add_row("backend", "tt-inference-server")
         table.add_row("workflow", plan["workflow"])
@@ -254,6 +421,7 @@ def _plan_renderer(plan: dict) -> Group:
             table.add_row(
                 "tt-inference-server", "not installed — serving installs it first"
             )
+        table.add_row("HF token", _token_cell(plan["hf_token_source"]))
         table.add_row(
             "port",
             f"{plan['port']}  [dim](--port override)[/dim]"
@@ -266,6 +434,15 @@ def _plan_renderer(plan: dict) -> Group:
     # with an ellipsis, and a command you cannot copy is worse than none.
     command = Text(" ".join(shlex.quote(a) for a in plan["argv"]), style="dim")
     return Group(table, Text("\ncommand:", style="bold"), command)
+
+
+def _token_cell(source: str | None) -> str:
+    """Where HF_TOKEN would come from — never the token itself."""
+    if source == "env":
+        return "from the shell (HF_TOKEN)"
+    if source == "hf-login":
+        return "from the Hugging Face login store"
+    return "none [dim](gated models need `hf auth login` or HF_TOKEN)[/dim]"
 
 
 def _serve_with_tt_model_manager(
