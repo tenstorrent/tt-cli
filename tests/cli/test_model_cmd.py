@@ -621,6 +621,13 @@ def _table_header(output: str) -> str:
     return next(line for line in output.splitlines() if "┃" in line)
 
 
+def _json_payload(output: str) -> dict:
+    """Parse --json output, skipping a leading detection-warning line: with no
+    tt-smi wired and neither --hw nor --all given, detection now runs for
+    --community too (same as the catalog side) and warns before the payload."""
+    return json.loads(output[output.index("{"):])
+
+
 def test_model_list_community_shows_bundles(runner, monkeypatch, isolated_dirs):
     _stub_bundles(monkeypatch, [
         {"name": "ns/alpha", "kind": "container", "engine": "vLLM",
@@ -667,7 +674,7 @@ def test_model_list_community_json_contract(runner, monkeypatch, isolated_dirs):
          "arch": ["blackhole"], "downloads": 3, "installed": True},
     ])
     result = runner.invoke(app, ["model", "list", "--community", "--json"])
-    payload = json.loads(result.output)
+    payload = _json_payload(result.output)
     assert payload["source"] == "tt-model-catalog"
     assert payload["bundles"][0]["name"] == "ns/alpha"
     assert payload["bundles"][0]["installed"] is True
@@ -684,7 +691,7 @@ def test_model_list_community_cached_filters_to_installed(
     ])
     _stub_local(monkeypatch, [{"name": "ns/alpha"}])
     result = runner.invoke(app, ["model", "list", "--community", "--cached", "--json"])
-    rows = json.loads(result.output)["bundles"]
+    rows = _json_payload(result.output)["bundles"]
     assert [(b["name"], b["source"]) for b in rows] == [("ns/alpha", "local")]
 
 
@@ -702,10 +709,51 @@ def test_model_list_community_does_not_read_the_support_list(
     assert result.exit_code == 0, result.output
 
 
-def test_model_list_community_rejects_all_flag(runner, isolated_dirs):
-    result = runner.invoke(app, ["model", "list", "--community", "--all"])
-    assert result.exit_code == ExitCode.USAGE
-    assert "does not apply" in result.output
+@pytest.mark.fakes_only
+def test_model_list_community_defaults_to_this_machines_detected_hardware(
+    runner, smi_bin, monkeypatch, isolated_dirs
+):
+    """Like the catalog side: with no --hw and no --all, --community filters to
+    what this machine can actually run, not the whole Hub catalog."""
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "normal")  # detects as p300
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/fits", "arch": ["blackhole"], "hardware": ["p150"]},
+        {"name": "ns/too-big", "arch": ["blackhole"], "hardware": ["p300x2"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community", "--json"])
+    assert result.exit_code == 0, result.output
+    names = [b["name"] for b in json.loads(result.output)["bundles"]]
+    assert names == ["ns/fits"]
+
+
+@pytest.mark.fakes_only
+def test_model_list_community_all_skips_detection(
+    runner, smi_bin, monkeypatch, isolated_dirs
+):
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "normal")  # detects as p300
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/fits", "arch": ["blackhole"], "hardware": ["p150"]},
+        {"name": "ns/too-big", "arch": ["blackhole"], "hardware": ["p300x2"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community", "--all", "--json"])
+    assert result.exit_code == 0, result.output
+    names = {b["name"] for b in json.loads(result.output)["bundles"]}
+    assert names == {"ns/fits", "ns/too-big"}
+    assert smi_bin.exists() is False  # --all never shells tt-smi
+
+
+def test_model_list_community_with_no_detection_tool_shows_everything(
+    runner, monkeypatch, isolated_dirs
+):
+    """No tt-smi wired: detection degrades to a warning and the unfiltered list,
+    same as the catalog side — a data gap must never hide a bundle outright."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/alpha", "arch": ["blackhole"], "hardware": ["p150"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community"])
+    assert result.exit_code == 0, result.output
+    assert "device detection skipped" in result.output
+    assert "ns/alpha" in result.output
 
 
 def test_model_list_community_hw_matches_a_bundle_needing_no_more_chips(
@@ -822,7 +870,7 @@ def test_model_list_community_includes_unpublished_local_bundles(
     _stub_local(monkeypatch, [{"name": "someone/private", "kind": "container"}])
     result = runner.invoke(app, ["model", "list", "--community", "--json"])
     assert result.exit_code == 0, result.output
-    rows = {b["name"]: b["source"] for b in json.loads(result.output)["bundles"]}
+    rows = {b["name"]: b["source"] for b in _json_payload(result.output)["bundles"]}
     assert rows == {"ns/published": "HF", "someone/private": "local"}
 
 
@@ -834,7 +882,7 @@ def test_model_list_community_lists_a_bundle_once_per_source(
     _stub_bundles(monkeypatch, [{"name": "ns/both", "downloads": 7}])
     _stub_local(monkeypatch, [{"name": "ns/both"}])
     result = runner.invoke(app, ["model", "list", "--community", "--json"])
-    payload = json.loads(result.output)["bundles"]
+    payload = _json_payload(result.output)["bundles"]
     assert [b["source"] for b in payload] == ["HF", "local"]
     assert [b["name"] for b in payload] == ["ns/both", "ns/both"]
     assert payload[0]["downloads"] == 7  # only the Hub publishes this
