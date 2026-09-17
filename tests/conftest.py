@@ -26,6 +26,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tenstorrent.telemetry.env import CI_ENV_VARS
+from tenstorrent.tools import registry as registry_module
 
 FAKES_DIR = Path(__file__).parent / "fakes"
 FAKE_BIN = FAKES_DIR / "bin"
@@ -190,6 +191,14 @@ def isolated_dirs(request, tmp_path, monkeypatch):
     # Never inherit manifest/golden overrides from the outer shell.
     for var in ("TT_MANIFEST_PATH", "TT_GOLDEN_PATH"):
         monkeypatch.delenv(var, raising=False)
+    # The registry's last-resort probe of tt-installer's venv (~/.tenstorrent-venv) is
+    # redirected in BOTH modes. Under --hardware HOME stays real (below), so without
+    # this a runner provisioned by the installer would make every "nothing installed"
+    # test find its real tt-smi. Real tools reach tests through TT_TOOL_BIN_* only.
+    installer_venv_bin = tmp_path / "installer-venv" / "bin"
+    monkeypatch.setattr(
+        registry_module, "installer_venv_bin", lambda name: installer_venv_bin / name
+    )
     # Golden versions come from tt-sw-manifest's golden.json, which `tt update`
     # fetches at the pinned tag — a network call the fake suite must never make.
     # Point TT_GOLDEN_PATH at a verbatim captured copy (v1.0.0) so versions are
