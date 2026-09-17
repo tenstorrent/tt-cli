@@ -24,6 +24,7 @@ from rich.text import Text
 
 if TYPE_CHECKING:  # pragma: no cover
     from .errors import TTError
+    from .ui.console import Ui
 
 
 def to_jsonable(value: Any) -> Any:
@@ -52,8 +53,35 @@ class OutputManager:
         self.json_mode = json_mode
         self.quiet = quiet
         self.verbose = verbose
-        self.data_console = Console(highlight=False)
-        self.status_console = Console(stderr=True, highlight=False)
+        # Imported here, not at module scope: keeps output.py import-cheap and
+        # avoids a package-level cycle with ui/ (which type-hints OutputManager).
+        from .ui.theme import THEME
+
+        self.data_console = Console(highlight=False, theme=THEME)
+        self.status_console = Console(stderr=True, highlight=False, theme=THEME)
+
+    @property
+    def ui(self) -> "Ui":
+        """The terminal design layer: phases, collapsing steps, activity row, cards.
+
+        Hung off OutputManager rather than AppContext because every backend
+        already receives an OutputManager and none receives an AppContext — so
+        `output.ui` costs zero signature changes. Lazy, and constructed once per
+        invocation, which keeps phase/step state out of module globals (they would
+        leak between in-process CliRunner runs).
+        """
+        cached = self.__dict__.get("_ui")
+        if cached is None:
+            from .ui.console import Ui
+
+            cached = self.__dict__["_ui"] = Ui(self)
+        return cached
+
+    def release_ui(self) -> None:
+        """Tear the UI down without building one that never existed."""
+        cached = self.__dict__.get("_ui")
+        if cached is not None:
+            cached.release()
 
     def apply_flags(
         self,

@@ -34,6 +34,12 @@ class AppContext:
 
     def run_before_exec(self) -> None:
         """Guarded: a hook must never stop the hand-off it precedes."""
+        # First, always: give the terminal back. exec_tty never returns, so a live
+        # spinner thread would otherwise still be painting over the child's UI.
+        try:
+            self.output.release_ui()
+        except Exception:
+            pass
         for hook in self.before_exec:
             try:
                 hook()
