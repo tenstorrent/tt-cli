@@ -130,10 +130,20 @@ def _hardware_cell(row: dict, hardware: str | None) -> str:
     a bundle rarely has more than one or two, so this reads as a short list, not
     a wall of text. Under --hw, only the tag(s) that actually satisfy the target
     are shown — whether one uses the whole box or just part of it is visible by
-    comparing it to the --hw value already typed, so it needs no extra label."""
+    comparing it to the --hw value already typed, so it needs no extra label.
+    A literal tag match for the target wins outright, over even an equivalent
+    board (p150x4 and p300x2 both name 4 blackhole chips): if the bundle is
+    tagged for the exact box asked for, that is the only line shown, not that
+    tag plus its same-size sibling. Lacking a literal match, an equivalent tag
+    is preferred the same way — only falling back to every tag that merely
+    fits (a smaller box) when nothing names the target's chip budget at all."""
     tags = row.get("hardware") or []
     if hardware:
         tags = [t for t in tags if bundles.hardware_satisfies(t, hardware)]
+        exact = [t for t in tags if t.lower() == hardware.lower()]
+        equivalent = exact or [t for t in tags if bundles.hardware_equivalent(t, hardware)]
+        if equivalent:
+            tags = equivalent
     else:
         tags = sorted(tags)
     return "\n".join(tags) or "—"

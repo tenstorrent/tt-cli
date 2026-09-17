@@ -793,6 +793,70 @@ def test_model_list_community_hw_shows_the_hardware_column(
     assert "p150" in result.output
 
 
+def test_model_list_community_hw_prefers_the_exact_tag(
+    runner, monkeypatch, isolated_dirs
+):
+    """A bundle tagged for several boards (e.g. it also validates on a smaller
+    one) shows only the tag that exactly matches --hw, not every tag that
+    happens to fit underneath it — the row should not balloon with alternatives
+    nobody asked for once an exact match exists."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/multi", "arch": ["blackhole"], "hardware": ["p150", "p150x4"]},
+        {"name": "ns/small-only", "arch": ["blackhole"], "hardware": ["p150"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community", "--hw", "p150x4"])
+    assert result.exit_code == 0, result.output
+    rows = {}
+    for line in result.output.splitlines():
+        if line.startswith("│") and "ns/" in line:
+            cells = [c.strip() for c in line.strip("│").split("│")]
+            rows[cells[0]] = cells[-2]  # hardware is second-to-last column
+    assert rows["ns/multi"] == "p150x4"
+    assert rows["ns/small-only"] == "p150"
+
+
+def _hardware_column_by_name(output: str) -> dict[str, str]:
+    """Group the wrapped physical lines of a rendered table back into one
+    hardware-column string per row — a multi-tag cell prints as several
+    box-drawn lines with a blank name column on every line after the first."""
+    rows: dict[str, list[str]] = {}
+    current = None
+    for line in output.splitlines():
+        if not line.startswith("│"):
+            continue
+        cells = [c.strip() for c in line.strip("│").split("│")]
+        name, hw = cells[0], cells[-2]
+        if name:
+            current = name
+            rows[current] = [hw] if hw else []
+        elif current is not None and hw:
+            rows[current].append(hw)
+    return {name: "\n".join(hw) for name, hw in rows.items()}
+
+
+def test_model_list_community_hw_treats_equivalent_boards_as_exact(
+    runner, monkeypatch, isolated_dirs
+):
+    """p150x4 (four 1-chip boards) and p300x2 (two 2-chip boards) both name 4
+    blackhole chips, so a bundle tagged only for the other board is an exact
+    fit for a --hw request expressed as this one. A bundle tagged for both
+    still collapses to the literal match — the equivalent sibling tag is not
+    kept alongside it. A bundle with only smaller tags still shows every tag
+    that fits, since none of them names the target's chip budget at all."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/tagged-p150x4", "arch": ["blackhole"], "hardware": ["p150x4"]},
+        {"name": "ns/tagged-both", "arch": ["blackhole"],
+         "hardware": ["p150", "p150x4", "p300x2"]},
+        {"name": "ns/subset-only", "arch": ["blackhole"], "hardware": ["p150", "p150x2"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community", "--hw", "p300x2"])
+    assert result.exit_code == 0, result.output
+    rows = _hardware_column_by_name(result.output)
+    assert rows["ns/tagged-p150x4"] == "p150x4"
+    assert rows["ns/tagged-both"] == "p300x2"
+    assert rows["ns/subset-only"] == "p150\np150x2"
+
+
 def test_model_list_community_hw_is_case_insensitive(
     runner, monkeypatch, isolated_dirs
 ):
