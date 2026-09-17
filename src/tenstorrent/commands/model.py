@@ -169,10 +169,10 @@ def _community_table(
 
 
 def _weights_cell(row: dict) -> str:
-    """✓ + size when the referenced weights are in the HF cache, — when they are
-    not, ? when the bundle is not pulled so the reference is unknown."""
+    """✓ + size when the referenced weights are in the HF cache, — otherwise
+    (not cached, or the bundle is not pulled so the reference is unknown)."""
     if not row["installed"] or not row.get("weights_repo"):
-        return "?"
+        return "—"
     size = row.get("weights_bytes")
     return f"✓ {_human_size(size)}" if size is not None else "—"
 

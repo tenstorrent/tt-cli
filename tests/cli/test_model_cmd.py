@@ -833,7 +833,8 @@ def test_model_list_community_offline_shows_local_bundles_only(
 
 
 def test_model_list_community_weights_cell_states(runner, monkeypatch, isolated_dirs):
-    """Three distinct states: cached with a size, referenced but absent, unknown."""
+    """Cached with a size vs. not: everything else (referenced but absent, or the
+    bundle not pulled so the reference is unknown) reads the same, a dash."""
     _stub_bundles(monkeypatch, [
         {"name": "ns/cached", "installed": True,
          "weights_repo": "org/w", "weights_bytes": 2_000_000_000},
@@ -850,7 +851,7 @@ def test_model_list_community_weights_cell_states(runner, monkeypatch, isolated_
             weights[cells[0]] = cells[-1]
     assert weights["ns/cached"] == "✓ 1.9 GB"
     assert weights["ns/nocache"] == "—"  # referenced, but not in the cache
-    assert weights["ns/unpulled"] == "?"  # not pulled, so the reference is unknown
+    assert weights["ns/unpulled"] == "—"  # not pulled, so the reference is unknown
 
 
 def _stub_local(monkeypatch, entries):
