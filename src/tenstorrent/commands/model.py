@@ -125,31 +125,18 @@ _COMMUNITY_CAPTION = (
 )
 
 
-def _hardware_cell(row: dict, hardware: str | None, *, narrow: bool) -> str:
+def _hardware_cell(row: dict, hardware: str | None) -> str:
     """Comma-separated hardware tags — a bundle rarely has more than one or two,
-    so this reads as a short list, not a wall of text. Under a detected or
-    unfiltered listing, every tag that satisfies `hardware` (or every tag, if
-    there is no target at all) is shown — a bundle validated on several boards
-    should not hide the ones a detected target didn't ask about by name.
-    `narrow` is only set for an explicit --hw: there, a literal tag match for
-    the target wins outright, over even an equivalent board (p150x4 and
-    p300x2 both name 4 blackhole chips) — if the bundle is tagged for the
-    exact box asked for, that is the only tag shown, not that tag plus its
-    same-size sibling. Lacking a literal match, an equivalent tag is preferred
-    the same way — only falling back to every tag that merely fits (a smaller
-    box) when nothing names the target's chip budget at all."""
+    so this reads as a short list, not a wall of text. Only depends on the
+    resolved hardware value, never on whether it came from --hw or from
+    detection, so the two read identically whenever that value is the same.
+    Under a target, every tag that satisfies it is shown, not just the
+    closest one — a bundle also validated on a smaller p150 or p150x2 still
+    shows those alongside a p300x2 match, since any of them is something the
+    target can actually run."""
     tags = row.get("hardware") or []
     if hardware:
-        tags = [t for t in tags if bundles.hardware_satisfies(t, hardware)]
-        if narrow:
-            exact = [t for t in tags if t.lower() == hardware.lower()]
-            equivalent = exact or [
-                t for t in tags if bundles.hardware_equivalent(t, hardware)
-            ]
-            if equivalent:
-                tags = equivalent
-        else:
-            tags = sorted(tags)
+        tags = sorted(t for t in tags if bundles.hardware_satisfies(t, hardware))
     else:
         tags = sorted(tags)
     return ", ".join(tags) or "—"
@@ -172,16 +159,13 @@ def _community_table(
     # engine of a bundle that has been pulled.
     for column in ("source", "hardware", "weights"):
         table.add_column(column)
-    # Only an explicit --hw narrows the hardware cell to its best match; a
-    # detected target still shows every board the bundle fits on.
-    narrow = bool(hardware) and not detected
     for row in rows:
         # Render the value itself rather than a literal, so the table can never
         # disagree with --json about what a row's source is.
         table.add_row(
             row["name"],
             row.get("source") or "—",
-            _hardware_cell(row, hardware, narrow=narrow),
+            _hardware_cell(row, hardware),
             _weights_cell(row),
         )
     return table

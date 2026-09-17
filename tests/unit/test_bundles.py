@@ -18,7 +18,6 @@ from tenstorrent.modelhub.bundles import (
     _classify,
     _hardware_chips,
     _is_hardware_tag,
-    hardware_equivalent,
     hardware_for,
     hardware_from_hub_manifest,
     hardware_satisfies,
@@ -113,24 +112,6 @@ def test_hardware_satisfies_falls_back_to_an_exact_match_for_unknown_tags():
     assert hardware_satisfies("galaxy", "galaxy")
     assert not hardware_satisfies("galaxy", "p150")
     assert not hardware_satisfies("p150", "galaxy")
-
-
-def test_hardware_equivalent_matches_the_same_chip_budget_across_boards():
-    # p150x4: four 1-chip boards; p300x2: two 2-chip boards — both 4 blackhole chips
-    assert hardware_equivalent("p150x4", "p300x2")
-    assert hardware_equivalent("p300x2", "p150x4")
-    assert hardware_equivalent("p150", "p150")  # the target itself
-
-
-def test_hardware_equivalent_rejects_a_smaller_or_bigger_or_different_arch_chip_budget():
-    assert not hardware_equivalent("p150", "p300x2")  # 1 chip vs 4 chips
-    assert not hardware_equivalent("p150x4", "p150")  # 4 chips vs 1 chip
-    assert not hardware_equivalent("n300", "p300")  # wormhole_b0 vs blackhole
-
-
-def test_hardware_equivalent_falls_back_to_an_exact_match_for_unknown_tags():
-    assert hardware_equivalent("galaxy", "galaxy")
-    assert not hardware_equivalent("galaxy", "p150")
 
 
 def test_hardware_from_hub_manifest_reads_the_fetched_file(tmp_path, monkeypatch):

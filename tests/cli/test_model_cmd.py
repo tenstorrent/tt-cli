@@ -804,13 +804,13 @@ def _hardware_cell_by_name(output: str) -> dict[str, str]:
     return rows
 
 
-def test_model_list_community_hw_prefers_the_exact_tag(
+def test_model_list_community_hw_shows_every_satisfying_tag(
     runner, monkeypatch, isolated_dirs
 ):
-    """A bundle tagged for several boards (e.g. it also validates on a smaller
-    one) shows only the tag that exactly matches --hw, not every tag that
-    happens to fit underneath it — the row should not balloon with alternatives
-    nobody asked for once an exact match exists."""
+    """A bundle tagged for several boards shows every tag that satisfies --hw,
+    not just the one closest to it — a p150x4 bundle that also validates on a
+    p150 shows both once --hw asks for something either one fits under, since
+    both are things the target can actually run."""
     _stub_bundles(monkeypatch, [
         {"name": "ns/multi", "arch": ["blackhole"], "hardware": ["p150", "p150x4"]},
         {"name": "ns/small-only", "arch": ["blackhole"], "hardware": ["p150"]},
@@ -818,22 +818,20 @@ def test_model_list_community_hw_prefers_the_exact_tag(
     result = runner.invoke(app, ["model", "list", "--community", "--hw", "p150x4"])
     assert result.exit_code == 0, result.output
     rows = _hardware_cell_by_name(result.output)
-    assert rows["ns/multi"] == "p150x4"
+    assert rows["ns/multi"] == "p150, p150x4"
     assert rows["ns/small-only"] == "p150"
 
 
-def test_model_list_community_hw_treats_equivalent_boards_as_exact(
+def test_model_list_community_hw_shows_an_equivalent_board_alongside_a_subset(
     runner, monkeypatch, isolated_dirs
 ):
     """p150x4 (four 1-chip boards) and p300x2 (two 2-chip boards) both name 4
-    blackhole chips, so a bundle tagged only for the other board is an exact
-    fit for a --hw request expressed as this one. A bundle tagged for both
-    still collapses to the literal match — the equivalent sibling tag is not
-    kept alongside it. A bundle with only smaller tags still shows every tag
-    that fits, since none of them names the target's chip budget at all."""
+    blackhole chips, so a bundle tagged only for the other board still shows
+    up under a --hw request expressed as this one. A bundle tagged for every
+    size shows every one of them, not just the equivalent or the closest fit."""
     _stub_bundles(monkeypatch, [
         {"name": "ns/tagged-p150x4", "arch": ["blackhole"], "hardware": ["p150x4"]},
-        {"name": "ns/tagged-both", "arch": ["blackhole"],
+        {"name": "ns/tagged-all", "arch": ["blackhole"],
          "hardware": ["p150", "p150x4", "p300x2"]},
         {"name": "ns/subset-only", "arch": ["blackhole"], "hardware": ["p150", "p150x2"]},
     ])
@@ -841,7 +839,7 @@ def test_model_list_community_hw_treats_equivalent_boards_as_exact(
     assert result.exit_code == 0, result.output
     rows = _hardware_cell_by_name(result.output)
     assert rows["ns/tagged-p150x4"] == "p150x4"
-    assert rows["ns/tagged-both"] == "p300x2"
+    assert rows["ns/tagged-all"] == "p150, p150x4, p300x2"
     assert rows["ns/subset-only"] == "p150, p150x2"
 
 
@@ -857,27 +855,24 @@ def test_model_list_community_hw_is_case_insensitive(
 
 
 @pytest.mark.fakes_only
-def test_model_list_community_detected_hardware_shows_every_fitting_tag(
+def test_model_list_community_detected_hardware_matches_the_equivalent_explicit_hw(
     runner, smi_bin, monkeypatch, isolated_dirs
 ):
-    """Detection only decides which bundles are worth showing at all — unlike
-    an explicit --hw, it must not also narrow a shown bundle's hardware cell
-    down to one tag: someone on a p300x2 should still see that a bundle also
-    validates on a smaller p150 or p150x2, not just the exact board name."""
+    """The hardware cell depends only on the resolved target, not on whether it
+    came from detection or from --hw: a bundle on a machine that auto-detects
+    as p300x2 must read exactly like `--hw p300x2` typed by hand — same rows,
+    every fitting tag shown, in both."""
     monkeypatch.setenv("FAKE_SMI_SCENARIO", "multi")  # detects as p300x2
     _stub_bundles(monkeypatch, [
         {"name": "ns/multi", "arch": ["blackhole"],
          "hardware": ["p150", "p150x2", "p300x2"]},
     ])
-    result = runner.invoke(app, ["model", "list", "--community"])
-    assert result.exit_code == 0, result.output
-    rows = _hardware_cell_by_name(result.output)
-    assert rows["ns/multi"] == "p150, p150x2, p300x2"
-
-    result = runner.invoke(app, ["model", "list", "--community", "--hw", "p300x2"])
-    assert result.exit_code == 0, result.output
-    rows = _hardware_cell_by_name(result.output)
-    assert rows["ns/multi"] == "p300x2"
+    detected = runner.invoke(app, ["model", "list", "--community"])
+    assert detected.exit_code == 0, detected.output
+    explicit = runner.invoke(app, ["model", "list", "--community", "--hw", "p300x2"])
+    assert explicit.exit_code == 0, explicit.output
+    assert _hardware_cell_by_name(detected.output) == _hardware_cell_by_name(explicit.output)
+    assert _hardware_cell_by_name(detected.output)["ns/multi"] == "p150, p150x2, p300x2"
 
 
 def test_model_list_community_rejects_type_filter(runner, isolated_dirs):

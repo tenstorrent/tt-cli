@@ -108,20 +108,6 @@ def hardware_satisfies(bundle_tag: str, target_tag: str) -> bool:
     return bundle_arch == target_arch and bundle_chips <= target_chips
 
 
-def hardware_equivalent(bundle_tag: str, target_tag: str) -> bool:
-    """Whether `bundle_tag` names the exact chip budget `target_tag` does, even
-    across board packaging — a p300x2 (two 2-chip boards) and a p150x4 (four
-    1-chip boards) both name 4 blackhole chips, so a bundle tagged for one is
-    the exact fit for a target expressed as the other, not just a smaller box
-    that happens to satisfy it. Same string-match fallback as
-    hardware_satisfies for a tag outside our board grammar."""
-    bundle = _hardware_chips(bundle_tag)
-    target = _hardware_chips(target_tag)
-    if bundle is None or target is None:
-        return bundle_tag == target_tag
-    return bundle == target
-
-
 @dataclass(frozen=True)
 class BundleInfo:
     """One published tt-model bundle. Field order IS the --json contract."""
