@@ -633,19 +633,19 @@ def test_model_list_community_shows_bundles(runner, monkeypatch, isolated_dirs):
         {"name": "ns/alpha", "kind": "container", "engine": "vLLM",
          "arch": ["blackhole"], "downloads": 3, "installed": True},
         {"name": "ns/beta", "kind": "thin", "engine": "vLLM",
-         "arch": ["wormhole_b0", "1x4"], "installed": False},
+         "arch": ["wormhole_b0", "1x4"], "hardware": ["n300"], "installed": False},
     ])
     result = runner.invoke(app, ["model", "list", "--community"])
     assert result.exit_code == 0, result.output
     assert "ns/alpha" in result.output and "ns/beta" in result.output
-    assert "wormhole_b0" in result.output
-    # The table answers "can I run this, and is it here already". kind and engine
-    # are how a bundle is built, not something you pick one on; both stay in --json.
+    assert "n300" in result.output
+    # The table answers "can I run this, and is it here already". kind, engine
+    # and arch (hardware already implies the chip family) are not something you
+    # pick one on; all three stay in --json.
     header = _table_header(result.output)
     assert [c.strip() for c in header.strip("┃").split("┃")] == [
         "name",
         "source",
-        "arch",
         "hardware",
         "weights",
     ]

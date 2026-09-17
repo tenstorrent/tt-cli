@@ -114,8 +114,8 @@ def _list_table(payload: dict, *, detected: bool = False) -> Table:
 _COMMUNITY_CAPTION = (
     "source: `HF` is tt-model's public community catalog on the Hub, `local` is "
     "installed on this machine — a bundle in both is listed twice, once per source. "
-    "arch is the architecture family the bundle declares (blackhole, wormhole_b0); "
-    "hardware is the board/mesh target(s) it validates against (p150x4, p300x2). "
+    "hardware is the board/mesh target(s) it validates against (p150x4, p300x2), "
+    "which already implies the chip family (blackhole, wormhole_b0). "
     "By default only bundles that fit this machine's detected hardware are shown "
     "(a bundle needing fewer chips of the same arch still counts as fitting); use "
     "--hw for a different target or --all for every bundle regardless of hardware. "
@@ -154,7 +154,7 @@ def _community_table(
     # `kind`/`engine` are how a bundle is built rather than something you pick one
     # on — all four stay in --json, and `tt serve <id> --dry-run` reports the
     # engine of a bundle that has been pulled.
-    for column in ("source", "arch", "hardware", "weights"):
+    for column in ("source", "hardware", "weights"):
         table.add_column(column)
     for row in rows:
         # Render the value itself rather than a literal, so the table can never
@@ -162,7 +162,6 @@ def _community_table(
         table.add_row(
             row["name"],
             row.get("source") or "—",
-            ", ".join(row.get("arch") or []) or "—",
             _hardware_cell(row, hardware),
             _weights_cell(row),
         )
