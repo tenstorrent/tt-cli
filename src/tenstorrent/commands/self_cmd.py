@@ -54,13 +54,34 @@ def tools_status(
     )
 
 
-# Deliberately NOT wrapped in @handle_tt_errors. The decorator opens a usage span and
-# calls session.flush() on the way out, so a decorated drainer would spool a span for
+@self_app.command("telemetry-id")
+@handle_tt_errors
+def telemetry_id(
+    ctx: typer.Context, json_mode: JsonFlag = False, quiet: QuietFlag = False
+) -> None:
+    """Print this install's anonymous telemetry id.
+
+    A random UUID generated on first use, never derived from hardware or accounts. It is
+    the `distinct_id` on every event this install sends; delete `telemetry.toml` in the
+    data directory to rotate it.
+    """
+    from ..telemetry.state import TelemetryState
+
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.emit(
+        {"distinct_id": TelemetryState(appctx.paths).instance_id()},
+        renderer=lambda data: data["distinct_id"],
+    )
+
+
+# Deliberately NOT wrapped in @handle_tt_errors. The decorator records a usage event and
+# calls session.flush() on the way out, so a decorated drainer would spool an event for
 # every upload and could hand off to another drainer — a feedback loop. This command is
 # the one leaf in the CLI that must stay invisible to telemetry.
 @self_app.command("send-telemetry")
 def send_telemetry(ctx: typer.Context, json_mode: JsonFlag = False) -> None:
-    """Upload spooled usage spans, then exit. Normally launched detached by `tt` itself.
+    """Upload spooled usage events, then exit. Normally launched detached by `tt` itself.
 
     Run it by hand to force delivery (or to see why delivery is failing) — the same
     process a command would have spawned, with its result printed instead of discarded.
@@ -71,10 +92,10 @@ def send_telemetry(ctx: typer.Context, json_mode: JsonFlag = False) -> None:
     appctx.output.apply_flags(json_mode=json_mode)
     result = drain(appctx.paths, appctx.config)
     appctx.output.emit(
-        {"status": result.status, "spans": result.spans, "detail": result.detail},
+        {"status": result.status, "events": result.events, "detail": result.detail},
         renderer=lambda data: (
             f"telemetry: {data['status']}"
-            + (f" ({data['spans']} span(s))" if data["spans"] else "")
+            + (f" ({data['events']} event(s))" if data["events"] else "")
             + (f" — {data['detail']}" if data["detail"] else "")
         ),
     )
@@ -121,7 +142,7 @@ def self_update(
 
 
 # Deliberately NOT wrapped in @handle_tt_errors, for the same reason as send-telemetry:
-# it runs detached in the background, so a span for it would count a check as usage,
+# it runs detached in the background, so an event for it would count a check as usage,
 # and the decorator's own after-command hook could spawn another check.
 @self_app.command("check-update")
 def check_update(ctx: typer.Context, json_mode: JsonFlag = False) -> None:
