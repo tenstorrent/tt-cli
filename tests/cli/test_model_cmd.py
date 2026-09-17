@@ -793,6 +793,17 @@ def test_model_list_community_hw_shows_the_hardware_column(
     assert "p150" in result.output
 
 
+def _hardware_cell_by_name(output: str) -> dict[str, str]:
+    """The rendered hardware column, keyed by bundle name — one comma-joined
+    line per row, so a straight line-by-line parse is enough."""
+    rows = {}
+    for line in output.splitlines():
+        if line.startswith("│") and "ns/" in line:
+            cells = [c.strip() for c in line.strip("│").split("│")]
+            rows[cells[0]] = cells[-2]  # hardware is second-to-last column
+    return rows
+
+
 def test_model_list_community_hw_prefers_the_exact_tag(
     runner, monkeypatch, isolated_dirs
 ):
@@ -806,32 +817,9 @@ def test_model_list_community_hw_prefers_the_exact_tag(
     ])
     result = runner.invoke(app, ["model", "list", "--community", "--hw", "p150x4"])
     assert result.exit_code == 0, result.output
-    rows = {}
-    for line in result.output.splitlines():
-        if line.startswith("│") and "ns/" in line:
-            cells = [c.strip() for c in line.strip("│").split("│")]
-            rows[cells[0]] = cells[-2]  # hardware is second-to-last column
+    rows = _hardware_cell_by_name(result.output)
     assert rows["ns/multi"] == "p150x4"
     assert rows["ns/small-only"] == "p150"
-
-
-def _hardware_column_by_name(output: str) -> dict[str, str]:
-    """Group the wrapped physical lines of a rendered table back into one
-    hardware-column string per row — a multi-tag cell prints as several
-    box-drawn lines with a blank name column on every line after the first."""
-    rows: dict[str, list[str]] = {}
-    current = None
-    for line in output.splitlines():
-        if not line.startswith("│"):
-            continue
-        cells = [c.strip() for c in line.strip("│").split("│")]
-        name, hw = cells[0], cells[-2]
-        if name:
-            current = name
-            rows[current] = [hw] if hw else []
-        elif current is not None and hw:
-            rows[current].append(hw)
-    return {name: "\n".join(hw) for name, hw in rows.items()}
 
 
 def test_model_list_community_hw_treats_equivalent_boards_as_exact(
@@ -851,10 +839,10 @@ def test_model_list_community_hw_treats_equivalent_boards_as_exact(
     ])
     result = runner.invoke(app, ["model", "list", "--community", "--hw", "p300x2"])
     assert result.exit_code == 0, result.output
-    rows = _hardware_column_by_name(result.output)
+    rows = _hardware_cell_by_name(result.output)
     assert rows["ns/tagged-p150x4"] == "p150x4"
     assert rows["ns/tagged-both"] == "p300x2"
-    assert rows["ns/subset-only"] == "p150\np150x2"
+    assert rows["ns/subset-only"] == "p150, p150x2"
 
 
 def test_model_list_community_hw_is_case_insensitive(
@@ -866,6 +854,30 @@ def test_model_list_community_hw_is_case_insensitive(
     )
     names = [b["name"] for b in json.loads(result.output)["bundles"]]
     assert names == ["ns/alpha"]
+
+
+@pytest.mark.fakes_only
+def test_model_list_community_detected_hardware_shows_every_fitting_tag(
+    runner, smi_bin, monkeypatch, isolated_dirs
+):
+    """Detection only decides which bundles are worth showing at all — unlike
+    an explicit --hw, it must not also narrow a shown bundle's hardware cell
+    down to one tag: someone on a p300x2 should still see that a bundle also
+    validates on a smaller p150 or p150x2, not just the exact board name."""
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "multi")  # detects as p300x2
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/multi", "arch": ["blackhole"],
+         "hardware": ["p150", "p150x2", "p300x2"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community"])
+    assert result.exit_code == 0, result.output
+    rows = _hardware_cell_by_name(result.output)
+    assert rows["ns/multi"] == "p150, p150x2, p300x2"
+
+    result = runner.invoke(app, ["model", "list", "--community", "--hw", "p300x2"])
+    assert result.exit_code == 0, result.output
+    rows = _hardware_cell_by_name(result.output)
+    assert rows["ns/multi"] == "p300x2"
 
 
 def test_model_list_community_rejects_type_filter(runner, isolated_dirs):
