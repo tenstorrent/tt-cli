@@ -217,7 +217,7 @@ def isolated_dirs(request, tmp_path, monkeypatch):
     # file and a patched spawn.
     monkeypatch.setenv("TT_NO_UPDATE_CHECK", "1")
     # Telemetry is off by default under test: the suite must never touch the network.
-    # Tests that exercise telemetry delete this and inject an in-memory exporter.
+    # Tests that exercise telemetry delete this and inject an in-memory transport.
     monkeypatch.setenv("TT_TELEMETRY_DISABLED", "1")
     # DO_NOT_TRACK opts telemetry out, and CI markers force synchronous delivery and
     # set tt.ci on the span. Both are read from the ambient environment, so leaving them
@@ -226,9 +226,8 @@ def isolated_dirs(request, tmp_path, monkeypatch):
     # machine it runs on. Tests that care set them back explicitly.
     for var in ("DO_NOT_TRACK", *CI_ENV_VARS):
         monkeypatch.delenv(var, raising=False)
-    # Exempt loopback from any ambient proxy. Telemetry delivery goes through httpx
-    # (drain) and requests (the OTLP exporter), and BOTH honour HTTP_PROXY/ALL_PROXY
-    # with no implicit localhost bypass — so on a box behind a proxy, every test that
+    # Exempt loopback from any ambient proxy. Telemetry delivery goes through httpx,
+    # which honours HTTP_PROXY/ALL_PROXY with no implicit localhost bypass — so on a box behind a proxy, every test that
     # asserts against a local collector fails with the collector simply never being
     # reached. That is not hypothetical: it is what broke
     # test_detached_drainer_delivers_through_a_real_process on the QuietBox while the

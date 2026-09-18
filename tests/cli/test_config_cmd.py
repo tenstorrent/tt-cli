@@ -168,7 +168,7 @@ def test_config_sync_adds_missing_settings(runner, isolated_dirs):
     assert "telemetry.flush_mode" in result.output
     text = path.read_text()
     assert 'flush_mode = "async"' in text
-    assert "# How spans are delivered" in text  # arrives with its documentation
+    assert "# How events are delivered" in text  # arrives with its documentation
 
 
 def test_config_sync_dry_run_touches_nothing(runner, isolated_dirs):
