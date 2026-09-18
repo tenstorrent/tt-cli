@@ -483,7 +483,10 @@ def test_bounded_filters_and_enums_are_recorded(runner, collected):
     assert props["hardware"] == "p300"
 
 
-def test_unknown_filter_values_are_dropped(runner, collected):
+def test_unknown_filter_values_are_dropped(runner, collected, monkeypatch):
+    # No --type: `tt model list` also fetches community bundles, so keep this
+    # test network-free the way the rest of the suite is.
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", lambda **kw: [])
     result = runner.invoke(app, ["model", "list", "--hw", "definitely-not-a-board"])
     assert result.exit_code == 0
     props = _props(collected)

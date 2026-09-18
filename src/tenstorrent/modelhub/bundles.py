@@ -11,8 +11,10 @@ packaging, which is what a listing wants), and `tt model list` must not have to
 install tt-model just to show what exists.
 
 Bundles deliberately do NOT go through ModelCatalog: they share no schema with
-the released compat spec (no per-device status, no max_context), and merging them
-into the spec listing would blur which tool can serve what.
+the released compat spec (no per-device status, no max_context). `tt model
+list` still shows both together, but only by normalizing each into a display
+row at render time — see commands/model.py:_catalog_row/_bundle_row — never by
+folding a BundleInfo into a ModelInfo.
 """
 
 from __future__ import annotations
@@ -394,8 +396,8 @@ def search_community(
         raise TTError(
             "Could not reach the Hugging Face Hub.",
             why=str(exc),
-            next_step="Check your connection, or drop --community to list the "
-            "released model catalog (which is bundled).",
+            next_step="Check your connection, or pass --catalog to list the "
+            "released model catalog without contacting the Hub.",
             exit_code=ExitCode.ERROR,
         ) from exc
     installed = installed_bundles()
