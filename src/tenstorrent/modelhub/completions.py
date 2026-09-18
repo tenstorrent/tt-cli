@@ -63,3 +63,12 @@ def complete_local_model(incomplete: str) -> list[str]:
         return _matches(incomplete, [*_catalog_names(), *_installed_ids()])
     except Exception:
         return []
+
+
+def complete_bundle_id(incomplete: str) -> list[str]:
+    """Bundle ids only — installed and cached community — for the verbs that exist
+    only for tt-model bundles (profiles, publish, unpublish)."""
+    try:
+        return _matches(incomplete, [*_installed_ids(), *bundles.cached_community_names()])
+    except Exception:
+        return []
