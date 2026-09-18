@@ -356,6 +356,131 @@ def test_an_unknown_future_engine_kind_is_still_recognized():
         assert (engine, arch) == (tag, ["blackhole"]), tag
 
 
+_WHITELIST_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "whitelist_v1.json"
+
+
+def test_fetch_whitelist_reads_the_reviewed_ids_from_the_dataset_file(monkeypatch):
+    """The fixture is the cross-repo contract: byte-identical to tt-model-manager's, so
+    what its writer commits is what this reader parses."""
+    from tenstorrent.modelhub import bundles
+
+    calls = []
+
+    def fake_download(**kw):
+        calls.append(kw)
+        return str(_WHITELIST_FIXTURE)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    assert bundles.fetch_whitelist() == {"ns/reviewed-model"}
+    (kw,) = calls
+    assert kw["repo_id"] == "tenstorrent/tt-model-whitelist"
+    assert kw["repo_type"] == "dataset" and kw["filename"] == "whitelist.json"
+    # a reviewer may have edited it minutes ago — never serve a cached copy
+    assert kw["force_download"] is True
+
+
+@pytest.mark.parametrize("text", [
+    "not json",
+    "[]",
+    '{"entries": {}}',                # no schema at all
+    '{"schema": "1", "entries": {}}',  # a string, not a number
+    '{"schema": 0, "entries": {}}',    # older than this reader's floor
+    '{"schema": 1}',
+    '{"schema": 1, "entries": []}',
+    '{"schema": 2, "entries": []}',    # a future schema that re-shaped `entries`
+])
+def test_fetch_whitelist_refuses_a_document_it_cannot_trust(tmp_path, monkeypatch, text):
+    """Unavailable, not empty: an empty set would mark every bundle "not reviewed"."""
+    from tenstorrent.modelhub import bundles
+
+    p = tmp_path / "whitelist.json"
+    p.write_text(text)
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda **kw: str(p))
+    with pytest.raises(bundles.WhitelistUnavailable):
+        bundles.fetch_whitelist()
+
+
+def test_fetch_whitelist_reads_a_newer_schema_it_still_recognises(tmp_path, monkeypatch):
+    """A released `tt` must not start erroring the day the writer adds a field. The
+    floor is the shape this reader uses — `entries` keyed by repo id — so a newer
+    schema with extra keys reads fine, and only a re-shaped `entries` is refused."""
+    from tenstorrent.modelhub import bundles
+
+    p = tmp_path / "whitelist.json"
+    p.write_text(
+        '{"schema": 2, "generated_at": "2026-10-01T00:00:00Z",'
+        ' "entries": {"ns/model": {"repo": "ns/model", "tier": "gold"}}}'
+    )
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda **kw: str(p))
+    assert bundles.fetch_whitelist() == {"ns/model"}
+
+
+def _raise(exc):
+    def _boom(**kw):
+        raise exc
+    return _boom
+
+
+def test_fetch_whitelist_reports_a_missing_or_unreachable_file_as_unavailable(monkeypatch):
+    import httpx
+    from huggingface_hub.errors import HfHubHTTPError
+
+    from tenstorrent.modelhub import bundles
+
+    # hf_hub 1.x errors carry the real response; a 404 is what a not-yet-created
+    # dataset or a missing whitelist.json looks like
+    request = httpx.Request("GET", "https://huggingface.co/datasets/x/y")
+    monkeypatch.setattr(
+        "huggingface_hub.hf_hub_download",
+        _raise(HfHubHTTPError("404", response=httpx.Response(404, request=request))),
+    )
+    with pytest.raises(bundles.WhitelistUnavailable):
+        bundles.fetch_whitelist()
+
+
+@pytest.mark.parametrize("exc", [
+    # httpx.HTTPError is NOT an OSError, and hf_hub re-raises these verbatim from its
+    # metadata call — caught by type, they reached the user as a traceback.
+    "connect",
+    "timeout",
+    "proxy",
+    "runtime",
+])
+def test_fetch_whitelist_survives_a_transport_error_hf_hub_does_not_wrap(monkeypatch, exc):
+    import httpx
+
+    from tenstorrent.modelhub import bundles
+
+    request = httpx.Request("GET", "https://huggingface.co/datasets/x/y")
+    raised = {
+        "connect": httpx.ConnectError("name resolution failed", request=request),
+        "timeout": httpx.ReadTimeout("timed out", request=request),
+        "proxy": httpx.ProxyError("proxy refused", request=request),
+        "runtime": RuntimeError("etag is empty"),
+    }[exc]
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", _raise(raised))
+    with pytest.raises(bundles.WhitelistUnavailable):
+        bundles.fetch_whitelist()
+
+
+def test_with_review_state_marks_hub_rows_and_leaves_local_rows_unknown():
+    from tenstorrent.modelhub.bundles import BundleInfo, with_review_state
+
+    rows = [
+        BundleInfo(name="NS/Reviewed", source="HF"),
+        BundleInfo(name="ns/plain", source="HF"),
+        BundleInfo(name="ns/reviewed", source="local", installed=True),
+    ]
+    marked = with_review_state(rows, {"ns/reviewed"})
+    assert [(b.name, b.whitelisted) for b in marked] == [
+        ("NS/Reviewed", True),     # keyed case-insensitively
+        ("ns/plain", False),
+        ("ns/reviewed", None),     # local: nothing on disk can say
+    ]
+    # unavailable whitelist: every Hub row stays "cannot tell", never False
+    assert all(b.whitelisted is None for b in with_review_state(rows, None))
+
+
 def test_the_manifest_wins_when_a_tag_disagrees(tmp_path, monkeypatch):
     """Tags live in the model card and can be edited after packaging; the manifest
     is the artifact, so a pulled bundle trusts it."""

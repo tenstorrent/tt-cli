@@ -116,6 +116,9 @@ _COMMUNITY_CAPTION = (
     "installed on this machine — a bundle in both is listed twice, once per source. "
     "arch is the architecture family the bundle declares (blackhole, wormhole_b0); "
     "board and mesh tags are left out, as is any tag tt does not recognise. "
+    "reviewed: ✓ means Tenstorrent has reviewed this bundle (--whitelisted lists "
+    "only those), — means not reviewed, ? means unknown — a local install, or the "
+    "whitelist could not be fetched. "
     "Every bundle serves with `tt serve <name>`; weights are referenced rather "
     "than shipped. `--json` carries the engine and packaging kind as well."
 )
@@ -131,7 +134,9 @@ def _community_table(rows: list[dict]) -> Table:
     # `kind`/`engine` are how a bundle is built rather than something you pick one
     # on — all four stay in --json, and `tt serve <id> --dry-run` reports the
     # engine of a bundle that has been pulled.
-    for column in ("source", "arch", "weights"):
+    # `reviewed` earns a column where kind/engine/installed did not: it is the one
+    # thing here a reader picks ON — "which of these does Tenstorrent stand behind".
+    for column in ("source", "arch", "reviewed", "weights"):
         table.add_column(column)
     for row in rows:
         # Render the value itself rather than a literal, so the table can never
@@ -140,9 +145,18 @@ def _community_table(rows: list[dict]) -> Table:
             row["name"],
             row.get("source") or "—",
             ", ".join(row.get("arch") or []) or "—",
+            _reviewed_cell(row),
             _weights_cell(row),
         )
     return table
+
+
+def _reviewed_cell(row: dict) -> str:
+    """✓ reviewed by Tenstorrent, — not reviewed, ? unknown (a local row has no tags)."""
+    reviewed = row.get("whitelisted")
+    if reviewed is None:
+        return "?"
+    return "✓" if reviewed else "—"
 
 
 def _weights_cell(row: dict) -> str:
@@ -179,6 +193,11 @@ def list_models(
         help="List community tt-model bundles from the Hub instead of the released "
         "model catalog.",
     ),
+    whitelisted: bool = typer.Option(
+        False,
+        "--whitelisted",
+        help="With --community: only bundles Tenstorrent has reviewed.",
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
 ) -> None:
@@ -190,6 +209,7 @@ def list_models(
             appctx,
             cached=cached,
             model_type=model_type,
+            whitelisted=whitelisted,
             device_flags=[
                 flag
                 for flag, given in (("--hw", hardware), ("--all", all_devices))
@@ -197,6 +217,15 @@ def list_models(
             ],
         )
         return
+    if whitelisted:
+        raise TTError(
+            "--whitelisted only applies to community bundles.",
+            why="The released catalog is curated by definition — every model in it is "
+            "one Tenstorrent supports.",
+            next_step="Add --community to browse community bundles, or drop "
+            "--whitelisted.",
+            exit_code=ExitCode.USAGE,
+        )
     detected = not hardware and not all_devices
     device = hardware.lower() if hardware else (None if all_devices else _detect_device(appctx))
     models = ModelCatalog().list()
@@ -218,7 +247,12 @@ def list_models(
 
 
 def _list_community(
-    appctx, *, cached: bool, model_type: str | None, device_flags: list[str]
+    appctx,
+    *,
+    cached: bool,
+    model_type: str | None,
+    device_flags: list[str],
+    whitelisted: bool = False,
 ) -> None:
     """`tt model list --community`: the Hub-published bundle catalog.
 
@@ -242,6 +276,29 @@ def _list_community(
             next_step="Run `tt model info` on a bundle id, or drop --type.",
             exit_code=ExitCode.USAGE,
         )
+    if whitelisted and cached:
+        # Not a silently-empty listing: nothing on disk says whether a bundle is
+        # reviewed, so every local row is "unknown", and the two filters together can
+        # only ever match the subset that is also listed — not what either flag says.
+        raise TTError(
+            "--whitelisted and --cached cannot be combined.",
+            why="Whether Tenstorrent reviewed a bundle is read from the whitelist on "
+            "the Hub; tt-model's local install index cannot say.",
+            next_step="Use one or the other: --whitelisted for the reviewed "
+            "catalog, --cached for what is on this machine.",
+            exit_code=ExitCode.USAGE,
+        )
+    if whitelisted and appctx.offline:
+        # Same shape as --cached, for the same reason, and before any I/O: offline
+        # shows local rows only, and none of them can be reviewed-or-not.
+        raise TTError(
+            "--whitelisted needs the network.",
+            why="The reviewed subset is read from Tenstorrent's whitelist on the "
+            "Hugging Face Hub, and --offline never reads the Hub.",
+            next_step="Drop --whitelisted to see what is installed here, or re-run "
+            "online.",
+            exit_code=ExitCode.USAGE,
+        )
     # Local installs first: they need no network, and they are the only source for a
     # bundle nobody published — someone shares an id, you pull it, the Hub shows
     # nothing. Catalog rows win on name, since a listed bundle is the richer record.
@@ -259,11 +316,38 @@ def _list_community(
         # Refresh the shell-completion cache: tab-time must never touch the Hub,
         # so this listing is where `tt serve <TAB>` learns community bundle ids.
         bundles.save_community_cache([b.name for b in listed])
+        # AFTER the catalog call, so an unreachable Hub yields one error rather than a
+        # warning and then an error. Skipped under --cached, which discards every Hub
+        # row below — the fetch would be wasted and its failure would warn about a
+        # column that can only read `?` for the rows printed.
+        allow = None
+        if not cached:
+            try:
+                allow = bundles.fetch_whitelist(appctx.config)
+            except bundles.WhitelistUnavailable as exc:
+                if whitelisted:
+                    raise TTError(
+                        "Could not read Tenstorrent's whitelist.",
+                        why=str(exc),
+                        next_step="Retry, or drop --whitelisted to see the whole "
+                        "catalog with the reviewed column marked `?`.",
+                        exit_code=ExitCode.ERROR,
+                        reason="whitelist.unavailable",
+                    ) from exc
+                appctx.output.warn(
+                    f"could not read Tenstorrent's whitelist ({exc}); the reviewed "
+                    "column shows `?`."
+                )
+        listed = bundles.with_review_state(listed, allow)
     # Not merged by name: a bundle that is both published and installed gets one
     # row per source, so the listing shows both facts instead of picking one.
     found = sorted(local + listed, key=lambda b: (b.name.lower(), b.source))
     if cached:  # --cached reads as "what do I have locally" on this listing too
         found = [b for b in found if b.source == "local"]
+    if whitelisted:
+        # `is True` on purpose: a local row's None means "no tags on disk to read",
+        # which must not pass a filter asking for reviewed bundles.
+        found = [b for b in found if b.whitelisted is True]
     appctx.output.emit(
         {"source": "tt-model-catalog", "bundles": [dataclasses.asdict(b) for b in found]},
         renderer=lambda payload: _community_table(payload["bundles"]),

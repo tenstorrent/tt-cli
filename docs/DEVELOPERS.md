@@ -106,6 +106,15 @@ published as HuggingFace repos. These are served by engines included in the repo
 passing through anything `tt serve` does not recognize (`tt serve repo/model --
 --port 8080 --follow`).
 
+Anyone can list a bundle in that catalog, so the listing carries no promise that a
+bundle works. `--whitelisted` narrows it to the subset a Tenstorrent reviewer has
+marked with `tt-model whitelist`; the `reviewed` column shows the same fact for every
+row. The whitelist is one file in a dataset repo Tenstorrent controls
+(`WHITELIST_REPO` in `modelhub/bundles.py`, mirroring tt-model-manager's
+`TT_MODEL_WHITELIST_*` constants) — not a repo tag, which an author could set on
+their own repo. `tt` refetches it on every listing; if it cannot be read the column
+shows `?`, and `--whitelisted` is an error rather than an empty table.
+
 `tt model pull` also accepts an ordinary HuggingFace repo id, fetching its weights
 into the same cache — useful to pre-warm before serving — with a warning that
 weights alone do not make a model servable.

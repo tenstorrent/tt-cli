@@ -604,14 +604,34 @@ def test_model_stop_without_a_container_runtime_is_tool_missing(
 
 # -- community bundle listing ------------------------------------------------------
 def _stub_bundles(monkeypatch, entries):
-    """Replace the Hub query; the suite must stay network-free."""
+    """Replace the Hub query AND the whitelist fetch; the suite must stay network-free.
+
+    An entry's `whitelisted: True` puts it on the stubbed whitelist, so the listing
+    derives the same value the entry declared; the review state is annotated after the
+    catalog query, the way the real command does it."""
     from tenstorrent.modelhub.bundles import BundleInfo
 
-    made = [BundleInfo(**e) for e in entries]
+    made = [BundleInfo(**{k: v for k, v in e.items() if k != "whitelisted"}) for e in entries]
+    allow = {e["name"].lower() for e in entries if e.get("whitelisted") is True}
     monkeypatch.setattr(
         "tenstorrent.modelhub.bundles.search_community", lambda **kw: made
     )
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.fetch_whitelist", lambda config=None: allow)
     return made
+
+
+def _stub_whitelist_unavailable(monkeypatch) -> list:
+    """Make the whitelist unreadable; the returned list records each call."""
+    from tenstorrent.modelhub.bundles import WhitelistUnavailable
+
+    calls = []
+
+    def boom(config=None):
+        calls.append(config)
+        raise WhitelistUnavailable("dataset 404")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.fetch_whitelist", boom)
+    return calls
 
 
 def _table_header(output: str) -> str:
@@ -639,6 +659,7 @@ def test_model_list_community_shows_bundles(runner, monkeypatch, isolated_dirs):
         "name",
         "source",
         "arch",
+        "reviewed",
         "weights",
     ]
 
@@ -685,6 +706,118 @@ def test_model_list_community_cached_filters_to_installed(
     result = runner.invoke(app, ["model", "list", "--community", "--cached", "--json"])
     rows = json.loads(result.output)["bundles"]
     assert [(b["name"], b["source"]) for b in rows] == [("ns/alpha", "local")]
+
+
+def test_model_list_community_whitelisted_keeps_only_reviewed_bundles(
+    runner, monkeypatch, isolated_dirs
+):
+    """A local row's `whitelisted` is None — "no tags on disk to read" — which must not
+    pass a filter asking for bundles Tenstorrent reviewed."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/reviewed", "installed": False, "whitelisted": True},
+        {"name": "ns/plain", "installed": False, "whitelisted": False},
+        {"name": "ns/unknown", "installed": False},        # whitelisted defaults to None
+    ])
+    result = runner.invoke(
+        app, ["model", "list", "--community", "--whitelisted", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.output)["bundles"]
+    assert [b["name"] for b in rows] == ["ns/reviewed"]
+
+
+def test_model_list_community_reports_review_state_in_json_and_table(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/reviewed", "arch": ["blackhole"], "installed": False,
+         "whitelisted": True},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community", "--json"])
+    assert json.loads(result.output)["bundles"][0]["whitelisted"] is True
+    shown = runner.invoke(app, ["model", "list", "--community"])
+    assert "reviewed" in shown.output
+
+
+def test_model_list_community_local_rows_cannot_claim_a_review(
+    runner, monkeypatch, isolated_dirs
+):
+    """tt-model's install index records no tags, so a local-only bundle reports None
+    rather than False — "we cannot tell" is not "not reviewed"."""
+    _stub_bundles(monkeypatch, [])
+    _stub_local(monkeypatch, [{"name": "ns/local-only"}])
+    result = runner.invoke(app, ["model", "list", "--community", "--json"])
+    rows = json.loads(result.output)["bundles"]
+    assert [(b["name"], b["whitelisted"]) for b in rows] == [("ns/local-only", None)]
+
+
+def test_model_list_whitelisted_needs_community(runner, monkeypatch, isolated_dirs):
+    result = runner.invoke(app, ["model", "list", "--whitelisted"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "only applies to community bundles" in result.output
+
+
+def test_model_list_community_whitelisted_with_cached_is_a_usage_error(
+    runner, monkeypatch, isolated_dirs
+):
+    result = runner.invoke(
+        app, ["model", "list", "--community", "--whitelisted", "--cached"]
+    )
+    assert result.exit_code == ExitCode.USAGE
+    assert "cannot be combined" in result.output
+
+
+def test_model_list_community_whitelisted_offline_is_a_usage_error(
+    runner, monkeypatch, isolated_dirs
+):
+    """--offline shows local rows only, none of which can be reviewed-or-not; the old
+    behaviour was a silently empty table, exactly what the --cached guard exists to
+    prevent. Refused before any I/O."""
+    _stub_bundles(monkeypatch, [])
+    result = runner.invoke(
+        app, ["--offline", "model", "list", "--community", "--whitelisted"]
+    )
+    assert result.exit_code == ExitCode.USAGE
+    assert "needs the network" in result.output
+
+
+def test_model_list_community_whitelisted_errors_when_the_whitelist_is_unavailable(
+    runner, monkeypatch, isolated_dirs
+):
+    """Asked for the reviewed subset and cannot read it: an error, not an empty list."""
+    _stub_bundles(monkeypatch, [{"name": "ns/alpha", "installed": False}])
+    _stub_whitelist_unavailable(monkeypatch)
+    result = runner.invoke(app, ["model", "list", "--community", "--whitelisted"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "Could not read Tenstorrent's whitelist" in result.output
+
+
+def test_model_list_community_cached_never_fetches_the_whitelist(
+    runner, monkeypatch, isolated_dirs
+):
+    """--cached drops every Hub row, so fetching the whitelist would be a round trip
+    whose result is discarded — and a failure would warn about a column that can only
+    read `?` for the rows printed."""
+    _stub_bundles(monkeypatch, [{"name": "ns/alpha", "installed": False}])
+    calls = _stub_whitelist_unavailable(monkeypatch)
+    result = runner.invoke(app, ["model", "list", "--community", "--cached"])
+    assert result.exit_code == 0, result.output
+    assert calls == []                                  # never asked
+    assert "could not read" not in result.output.lower()  # and never warned
+
+
+def test_model_list_community_degrades_to_unknown_when_the_whitelist_is_unavailable(
+    runner, monkeypatch, isolated_dirs
+):
+    """Asked for the whole catalog: show it, warn once, and mark the review column `?`
+    (null in --json) rather than claiming every bundle is unreviewed."""
+    _stub_bundles(monkeypatch, [{"name": "ns/alpha", "installed": False}])
+    _stub_whitelist_unavailable(monkeypatch)
+    result = runner.invoke(app, ["model", "list", "--community", "--json"])
+    assert result.exit_code == 0, result.output
+    assert "could not read Tenstorrent's whitelist" in result.output
+    payload = json.loads(result.output[result.output.index("{") :])
+    assert payload["bundles"][0]["whitelisted"] is None
 
 
 def test_model_list_community_does_not_read_the_support_list(

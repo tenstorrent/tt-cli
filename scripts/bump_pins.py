@@ -335,6 +335,14 @@ _REVIEW_ITEMS = {
     "tt-sw-manifest (golden)": [
         "Re-capture the tt-smi parser fixtures after a real `tt update` if the smi version moved.",
     ],
+    "tt-model (tt-model-manager)": [
+        "Diff upstream `src/tt_kernel/__init__.py` `TT_MODEL_WHITELIST_*` (repo id, repo type, "
+        "file name) against `WHITELIST_*` in modelhub/bundles.py, and upstream "
+        "`tests/fixtures/whitelist_v1.json` against ours — `tt model list --community` reads "
+        "the file `tt-model whitelist` writes, and nothing but this checklist keeps them in step. "
+        "`WHITELIST_SCHEMA` is our floor, not a mirror: it only needs raising if a new schema "
+        "re-shapes `entries` itself, since anything newer is read as-is.",
+    ],
 }
 
 

@@ -17,6 +17,7 @@ into the spec listing would blur which tool can serve what.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from dataclasses import dataclass, field
@@ -32,6 +33,19 @@ from . import hub
 # rather than an error.
 CATALOG_TAG = "tt-model-catalog"  # opted into the community catalog
 BUNDLE_TAG = "tt-model-cache"  # any published bundle
+
+# The Tenstorrent whitelist: the reviewed subset of the catalog. These four mirror
+# `TT_MODEL_WHITELIST_*` in tt-model-manager's `tt_kernel/__init__.py` BY HAND, as does
+# tests/fixtures/whitelist_v1.json — the weekly pin bump asks the reviewer to diff
+# them, and nothing else will catch drift.
+WHITELIST_REPO = "tenstorrent/tt-model-whitelist"
+WHITELIST_REPO_TYPE = "dataset"
+WHITELIST_FILE = "whitelist.json"
+# The OLDEST schema this reader understands, not the only one. A newer writer may add
+# fields, and a released `tt` must not start erroring the day that happens — so anything
+# >= this is read, and the shape checks below are what actually decide. The one thing
+# that cannot change compatibly is the part this reader uses: `entries` keyed by repo id.
+WHITELIST_SCHEMA = 1
 _KIND_TAGS = {
     "tt-model-container": "container",
     "self-contained": "self-contained",
@@ -46,6 +60,8 @@ def _is_engine_tag(tag: str) -> bool:
 _SKIP_TAG_PREFIXES = ("region:", "license:", "arxiv:", "dataset:", "base_model:")
 
 # Architecture families only. Recognised rather than inferred by elimination: a
+# published repo carries tags nobody here chose (licences, languages, library names),
+# so an unknown tag means "not ours", never "some new board".
 #
 # An unrecognised tag is dropped, so a new family belongs here — one line, and
 # until then its bundles show an empty arch rather than a wrong one.
@@ -69,6 +85,10 @@ class BundleInfo:
     # without a per-repo Hub fetch this listing deliberately avoids).
     weights_repo: str | None = None
     weights_bytes: int | None = None
+    # None, not False, whenever it cannot be known (a local row, or an unread
+    # whitelist): "cannot tell" must never render as "not reviewed". Appended last —
+    # field order is the --json contract.
+    whitelisted: bool | None = None
 
 
 def _cache_root() -> Path:
@@ -204,6 +224,57 @@ def _classify(tags: list[str]) -> tuple[str | None, str | None, list[str]]:
     return kind, engine, sorted(arch)
 
 
+class WhitelistUnavailable(Exception):
+    """The Tenstorrent whitelist could not be read; the message says why.
+
+    A distinct type so the listing can decide what "unavailable" means for the run it
+    is doing: a `?` in the reviewed column when the user just asked for the catalog,
+    an error when they asked for `--whitelisted` specifically.
+    """
+
+
+def fetch_whitelist(config: ConfigStore | None = None) -> set[str]:
+    """The lowercase repo ids Tenstorrent has reviewed, fresh from the Hub.
+
+    Always refetched (`force_download`): the file exists to be edited by a reviewer
+    minutes ago, so a cached copy is exactly the wrong answer, and `--offline` never
+    reaches this function. A few KB, one round trip. Anything that stops a correct
+    read — no network, the dataset or file missing, malformed JSON, a schema too old
+    to trust — raises :class:`WhitelistUnavailable` rather than returning a misleading
+    empty set, which would read as "nothing is reviewed".
+    """
+    from huggingface_hub import hf_hub_download
+
+    try:
+        path = hf_hub_download(
+            repo_id=WHITELIST_REPO,
+            repo_type=WHITELIST_REPO_TYPE,
+            filename=WHITELIST_FILE,
+            cache_dir=hub.hf_cache_dir(config) if config is not None else None,
+            force_download=True,
+            etag_timeout=5,
+        )
+        doc = json.loads(Path(path).read_text())
+    except Exception as exc:  # noqa: BLE001 — see is_bundle_repo: advisory call
+        # Broad on purpose: hf_hub raises bare `httpx` errors, and httpx.HTTPError is
+        # not an OSError, so catching by type let them through as a traceback.
+        raise WhitelistUnavailable(str(exc) or type(exc).__name__) from exc
+    schema = doc.get("schema") if isinstance(doc, dict) else None
+    if not isinstance(schema, int) or isinstance(schema, bool) or schema < WHITELIST_SCHEMA:
+        raise WhitelistUnavailable(
+            f"whitelist schema {schema!r} is older than {WHITELIST_SCHEMA}, or not a "
+            "number — this file is not the whitelist this tt knows how to read"
+        )
+    entries = doc.get("entries")
+    if not isinstance(entries, dict):
+        # Reached when a FUTURE schema re-shapes `entries`: better to say "cannot
+        # tell" than to read a structure we are guessing at.
+        raise WhitelistUnavailable(
+            f"whitelist 'entries' is not an object (schema {schema}) — upgrade tt"
+        )
+    return {str(k).lower() for k in entries}
+
+
 MANIFEST_NAME = "tt_kernel_manifest.json"  # tt-model's on-disk contract, unrenamed
 
 
@@ -298,7 +369,8 @@ def search_community(
         repo_id = str(getattr(repo, "id", "") or "")
         if not repo_id:
             continue
-        kind, engine, arch = _classify(list(getattr(repo, "tags", None) or []))
+        tags = list(getattr(repo, "tags", None) or [])
+        kind, engine, arch = _classify(tags)
         entry = installed.get(repo_id.lower())
         weights_repo = weights_bytes = None
         if entry is not None:
@@ -315,9 +387,25 @@ def search_community(
                 installed=entry is not None,
                 weights_repo=weights_repo,
                 weights_bytes=weights_bytes,
+                # Review state comes from the whitelist file, not from these tags;
+                # the caller annotates it once the whitelist has been fetched.
             )
         )
     return bundles
+
+
+def with_review_state(found: list[BundleInfo], allow: set[str] | None) -> list[BundleInfo]:
+    """Mark each HUB row reviewed or not against the whitelist; leave local rows alone.
+
+    ``allow is None`` means the whitelist was unavailable: every Hub row keeps
+    ``whitelisted=None`` ("cannot tell") rather than being marked False.
+    """
+    if allow is None:
+        return found
+    return [
+        dataclasses.replace(b, whitelisted=b.name.lower() in allow) if b.source == "HF" else b
+        for b in found
+    ]
 
 
 def _community_cache_file() -> Path:
