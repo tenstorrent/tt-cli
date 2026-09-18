@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 
 # Markers that mean "a machine, not a person, ran this command". CI invocations are kept
-# — they are real usage, and `tt.ci` on the span lets them be filtered downstream — but
+# — they are real usage, and `ci` on the event lets them be filtered downstream — but
 # they change how delivery has to work; see flush_mode() in session.py.
 CI_ENV_VARS = (
     "CI",

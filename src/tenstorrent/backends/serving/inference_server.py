@@ -261,6 +261,7 @@ class InferenceServerBackend:
                 next_step="Install one — e.g. https://docs.docker.com/engine/install/ — "
                 "then re-run. `tt update` can set this up on supported distros.",
                 exit_code=ExitCode.TOOL_MISSING,
+                reason="tool.missing.docker",
                 details={"tool": "docker"},
             )
         if not model.cached and uses_host_weight_cache(model):

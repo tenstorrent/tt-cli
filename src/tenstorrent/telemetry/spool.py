@@ -1,29 +1,34 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""The on-disk span spool: append always, hand off rarely.
+"""The on-disk event spool: append always, hand off rarely.
 
-`tt` must never block on a remote POST (measured: one span through OTLPSpanExporter
-costs ~300-400 ms against a live endpoint, of which only ~11-50 ms is real network).
-So the live path writes spans here — a JSONL append, measured at 0.01 ms — and a
-separate detached process uploads the accumulated batch later (see drain.py).
+`tt` must never block on a remote POST: tens of milliseconds on a good link, and up to
+the full timeout on a firewalled one. So the live path writes events here — a JSONL
+append, measured at 0.01 ms — and a separate detached process uploads the accumulated
+batch later (see drain.py).
 
-The file format is the spec'd `OTLP File Exporter <https://opentelemetry.io/docs/specs/
-otel/protocol/file-exporter/>`_ JSON Lines, produced by the official
-`opentelemetry-exporter-otlp-json-file` exporter rather than an invented schema, so the
-spool is readable by any OTLP tooling and drain.py can rebuild the exact protobuf
-payload the direct exporter would have sent.
+Each line is one PostHog event exactly as it will appear inside the `batch` array of
+the upload (see attributes.build_event), so the drain is a verbatim passthrough: what
+you read in the spool is what is sent.
 
 Layout under ``$TT_DATA_DIR/telemetry/``:
-    spool.jsonl          appended by every command; renamed aside by a drain
-    spool.sending.jsonl  a drain's in-flight batch; survives a crash and is retried
-    spool.started        empty marker whose mtime is the oldest entry's age
-    spool.lock           flock held by the running drainer
+    events.jsonl          appended by every command; renamed aside by a drain
+    events.sending.jsonl  a drain's in-flight batch; survives a crash and is retried
+    events.started        empty marker whose mtime is the oldest entry's age
+    spool.lock            flock held by the running drainer
+
+Releases before the switch to PostHog events (tt <= 1.0.1) spooled OpenTelemetry
+spans as `spool.jsonl` / `spool.sending.jsonl` / `spool.started`. Those files cannot
+be uploaded any more and are deleted, not migrated (`remove_legacy`). The lock keeps
+its old name on purpose, so a still-running drainer from the previous version and a
+new one stay mutually excluded.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import time
 from dataclasses import dataclass
@@ -32,79 +37,107 @@ from typing import Any, Iterator
 
 from ..config.paths import Paths
 
-# Hand off to a drainer once the spool holds this many spans...
-DRAIN_SPAN_THRESHOLD = 20
-# ...or once the oldest span has waited this long, so a light user still reports in.
+# Hand off to a drainer once the spool holds this many events...
+DRAIN_EVENT_THRESHOLD = 20
+# ...or once the oldest event has waited this long, so a light user still reports in.
 DRAIN_AGE_SECONDS = 30 * 60
 
-# Hard ceiling on spans carried in one upload; oldest are dropped. A permanently
+# Hard ceiling on events carried in one upload; oldest are dropped. A permanently
 # firewalled machine must not accumulate forever (dotnet bounds each drain at
 # MaxBlobsPerDrain = 200 for the same reason).
-MAX_SPANS = 512
+MAX_EVENTS = 512
 # Belt-and-braces byte ceiling checked on the *append* path, from the stat we already
-# do. Bounds disk use even if draining never succeeds and never gets to apply MAX_SPANS.
+# do. Bounds disk use even if draining never succeeds and never gets to apply MAX_EVENTS.
 MAX_SPOOL_BYTES = 4 * 1024 * 1024
+# One write() of a line below this size to an O_APPEND descriptor is a single atomic
+# syscall (POSIX guarantees it up to PIPE_BUF for pipes; Linux honours it for regular
+# files well beyond), which is what makes lock-free appends from concurrent `tt`
+# processes safe. A line that would exceed it is dropped rather than risk tearing.
+MAX_LINE_BYTES = 8 * 1024
+
+_LEGACY_FILES = ("spool.jsonl", "spool.sending.jsonl", "spool.started")
 
 
 @dataclass(frozen=True)
 class SpoolStats:
-    spans: int
+    events: int
     bytes: int
     oldest_age_seconds: float | None
 
     @property
     def ready_to_drain(self) -> bool:
-        if self.spans <= 0:
+        if self.events <= 0:
             return False
-        if self.spans >= DRAIN_SPAN_THRESHOLD:
+        if self.events >= DRAIN_EVENT_THRESHOLD:
             return True
         age = self.oldest_age_seconds
         return age is not None and age >= DRAIN_AGE_SECONDS
 
 
 class Spool:
-    """Append-only span spool plus the drain hand-off primitives."""
+    """Append-only event spool plus the drain hand-off primitives."""
 
     def __init__(self, paths: Paths) -> None:
         self.dir = paths.telemetry_dir
-        self.path = self.dir / "spool.jsonl"
-        self.sending_path = self.dir / "spool.sending.jsonl"
-        self.started_path = self.dir / "spool.started"
+        self.path = self.dir / "events.jsonl"
+        self.sending_path = self.dir / "events.sending.jsonl"
+        self.started_path = self.dir / "events.started"
         self.lock_path = self.dir / "spool.lock"
 
     # -- the live (append) path --------------------------------------------------
-    def exporter(self) -> Any:
-        return _AppendingFileSpanExporter(self)
+    def append(self, event: dict[str, Any]) -> bool:
+        """Append one event as a single line. False (never an exception) if it could
+        not be recorded — the command must not care."""
+        try:
+            data = (json.dumps(event, separators=(",", ":")) + "\n").encode("utf-8")
+            if len(data) > MAX_LINE_BYTES:
+                return False
+            handle = self._open_for_append()
+            if handle is None:
+                return False
+            with handle:
+                handle.write(data)
+            return True
+        except Exception:
+            return False
 
     def _open_for_append(self):
         """Open the spool for a single append, creating the age marker on first use.
 
-        The marker exists because we need the age of the *oldest* entry and no stat
-        field gives that: mtime is the newest append, and ctime moves with every write.
+        Unbuffered, so the whole line goes down in one write(). The marker exists
+        because we need the age of the *oldest* entry and no stat field gives that:
+        mtime is the newest append, and ctime moves with every write.
         """
         self.dir.mkdir(parents=True, exist_ok=True)
         try:
             if self.path.stat().st_size >= MAX_SPOOL_BYTES:
                 return None
         except OSError:
-            # No spool yet: this append starts one, so stamp the age marker.
+            # No spool yet: this append starts one, so stamp the age marker — and
+            # clear out anything a pre-events release left behind.
+            self.remove_legacy()
             self.started_path.touch(exist_ok=True)
-        return open(self.path, "a", encoding="utf-8")
+        return open(self.path, "ab", buffering=0)
+
+    def remove_legacy(self) -> None:
+        """Delete span spools from tt <= 1.0.1. They are in a format nothing can
+        upload any more; deleting is the honest outcome (see the module docstring)."""
+        for name in _LEGACY_FILES:
+            _unlink(self.dir / name)
 
     # -- inspection (cheap enough for every command) -----------------------------
     def stats(self) -> SpoolStats:
         try:
             data = self.path.read_bytes()
         except OSError:
-            return SpoolStats(spans=0, bytes=0, oldest_age_seconds=None)
+            return SpoolStats(events=0, bytes=0, oldest_age_seconds=None)
         age: float | None = None
         try:
             age = max(0.0, time.time() - self.started_path.stat().st_mtime)
         except OSError:
             pass
-        # One line == one span: the CLI writes exactly one span per command, and each
-        # export produces exactly one JSONL record.
-        return SpoolStats(spans=data.count(b"\n"), bytes=len(data), oldest_age_seconds=age)
+        # One line == one event: the CLI writes exactly one event per command.
+        return SpoolStats(events=data.count(b"\n"), bytes=len(data), oldest_age_seconds=age)
 
     # -- the drain path ----------------------------------------------------------
     @contextlib.contextmanager
@@ -114,8 +147,9 @@ class Spool:
         Two commands finishing together will both decide to hand off, so the *child*
         taking this lock is what actually prevents a double upload — the parent's
         `drain_in_progress()` probe is only an optimisation. Degrades to unlocked (yield
-        True) where fcntl is unavailable; the worst case is a duplicated batch, which is
-        survivable for analytics, whereas refusing to drain is not.
+        True) where fcntl is unavailable; the worst case is a duplicated batch, which
+        the per-event uuid lets the server deduplicate, whereas refusing to drain is not
+        survivable.
         """
         try:
             import fcntl
@@ -147,21 +181,22 @@ class Spool:
             return not acquired
 
     def take(self) -> list[str]:
-        """Claim the spooled spans for upload. Call while holding the lock.
+        """Claim the spooled events for upload. Call while holding the lock.
 
         Renames the spool aside rather than truncating it, so the claim is atomic
         against concurrent appenders and a crashed drain leaves its batch on disk to be
-        retried instead of losing it. A `spool.sending.jsonl` left by a previous failure
-        is picked back up here, oldest first.
+        retried instead of losing it. An `events.sending.jsonl` left by a previous
+        failure is picked back up here, oldest first — with the same event uuids, so a
+        batch the server already accepted is deduplicated rather than double-counted.
         """
         lines: list[str] = []
         for path in (self.sending_path, self.path):
             lines.extend(_read_lines(path))
         if not lines:
             return []
-        # Newest MAX_SPANS win: on a machine that has never reached the collector, the
+        # Newest MAX_EVENTS win: on a machine that has never reached the collector, the
         # recent history is the part still worth having.
-        dropped = max(0, len(lines) - MAX_SPANS)
+        dropped = max(0, len(lines) - MAX_EVENTS)
         lines = lines[dropped:]
         try:
             self.dir.mkdir(parents=True, exist_ok=True)
@@ -179,51 +214,15 @@ class Spool:
         _unlink(self.sending_path)
 
     def discard(self) -> None:
-        """Delete every spooled span without sending it (durable opt-out).
+        """Delete every spooled event without sending it (durable opt-out).
 
         Spooling opens a window where data sits unsent; if the user opts out inside it,
-        uploading anyway would be worse than the old in-process flush, where opt-out was
-        immediate and total. The lock file is left alone — it carries no span data.
+        that data must not be uploaded. The lock file is left alone — it carries no
+        event data.
         """
         for path in (self.path, self.sending_path, self.started_path):
             _unlink(path)
-
-
-class _AppendingFileSpanExporter:
-    """`FileSpanExporter`'s format, but opening the file per export.
-
-    The stock exporter opens its path in ``__init__`` and holds the descriptor for the
-    life of the process. That descriptor keeps pointing at the old inode once a drainer
-    renames the spool aside, so a long command (`tt update` runs for minutes) would
-    append its span into a file the drainer is about to delete. Opening at export time
-    narrows that window to the write itself, and means commands that export nothing
-    never create the file at all.
-    """
-
-    def __init__(self, spool: Spool) -> None:
-        self._spool = spool
-
-    def export(self, spans: Any) -> Any:
-        from opentelemetry.exporter.otlp.json.file.trace_exporter import FileSpanExporter
-        from opentelemetry.sdk.trace.export import SpanExportResult
-
-        try:
-            handle = self._spool._open_for_append()
-            if handle is None:
-                return SpanExportResult.FAILURE
-            with handle:
-                # One write of a <8KB line to an O_APPEND descriptor is a single atomic
-                # syscall, which is what makes lock-free appends from concurrent `tt`
-                # processes safe.
-                return FileSpanExporter(stream=handle).export(spans)
-        except Exception:
-            return SpanExportResult.FAILURE
-
-    def shutdown(self, timeout_millis: float = 30_000, **kwargs: Any) -> None:
-        pass
-
-    def force_flush(self, timeout_millis: int = 30_000) -> bool:
-        return True
+        self.remove_legacy()
 
 
 def _read_lines(path: Path) -> list[str]:
