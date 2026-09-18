@@ -68,6 +68,7 @@ tt-model-manager changes what a finished bring-up *is*: a self-contained bundle 
 
 ```bash
 tt model list --community            # bundles published via tt-model-manager
+tt model info you/mymodel            # manifest + compatibility verdict (via tt-model), or the catalog row
 tt model pull you/mymodel
 tt serve you/mymodel                 # served via tt-model-manager
 tt serve you/mymodel --port 8080  # unrecognized args pass through to the bundle's engine

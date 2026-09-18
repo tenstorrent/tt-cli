@@ -31,11 +31,7 @@ from ..errors import ExitCode, TTError
 from ..models.model import ModelInfo
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub import bundles, hub
-from ..modelhub.completions import (
-    complete_catalog_model,
-    complete_local_model,
-    complete_model,
-)
+from ..modelhub.completions import complete_local_model, complete_model
 
 model_app = typer.Typer(
     help="Model management: browse, pull, and compile models.", no_args_is_help=True
@@ -315,17 +311,167 @@ def _info_renderer(payload: dict) -> Table:
 def model_info(
     ctx: typer.Context,
     name: str = typer.Argument(
-        help="Model name, e.g. Llama-3.1-8B-Instruct.",
-        autocompletion=complete_catalog_model,
+        help="Model name (Llama-3.1-8B-Instruct) or a tt-model bundle id (namespace/name).",
+        autocompletion=complete_model,
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
 ) -> None:
-    """Show model metadata: engines, per-device support, requirements."""
+    """Show model metadata: engines, per-device support, requirements.
+
+    For a tt-model bundle id: the bundle's manifest and compatibility verdict via
+    `tt-model info` when tt-model is installed, otherwise its community-catalog row.
+    """
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
-    model = ModelCatalog().get(name)
+    model, bundle = _dispatch(appctx, name)
+    if bundle is not None:
+        _bundle_info(appctx, bundle, json_mode=json_mode)
+        return
     appctx.output.emit(dataclasses.asdict(model), renderer=_info_renderer)
+
+
+def _bundle_info(appctx, name: str, *, json_mode: bool) -> None:
+    """`tt model info` for a tt-model bundle id — the one model verb that used to
+    reject an id `tt model list --community`, `tt model pull` and `tt serve` all accept.
+
+    Two sources, by what is available. With tt-model installed and a human reading,
+    delegate to `tt-model info`: it prints the manifest and its compatibility verdict
+    against this machine, which tt has no business reimplementing. Otherwise render
+    the catalog row tt reads on its own — the same one the community listing shows,
+    plus the pulled manifest's launch settings. That covers: tt-model not installed
+    (info is inspection and must not clone-and-build a tool to describe a bundle,
+    the same rule as stop/rm); --json (tt-model prints a manifest followed by prose,
+    not one document); --offline (tt-model info fetches the manifest from the Hub).
+    """
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    installed_tool = backend.is_installed()
+    if installed_tool and not json_mode and not appctx.offline:
+        backend.info(name)
+        return
+    row = bundles.describe(name, config=appctx.config, offline=appctx.offline)
+    # None: not asked (--offline), so neither "listed" nor "unlisted" is honest.
+    in_catalog = None if appctx.offline else (row is not None and row.source == "HF")
+    if row is None:
+        row = _unlisted_bundle(appctx, name)
+    appctx.output.emit(
+        {
+            "source": "tt-model-catalog",
+            "bundle": dataclasses.asdict(row),
+            "in_catalog": in_catalog,
+            "serve": bundles.serve_details(name),
+            "tt_model_installed": installed_tool,
+            "offline": appctx.offline,
+        },
+        renderer=_bundle_info_renderer,
+    )
+
+
+def _unlisted_bundle(appctx, name: str) -> bundles.BundleInfo:
+    """A bundle-shaped id that is neither installed here nor in the community
+    catalog. Offline there is nothing more to ask; online, the Hub says whether the
+    repo carries a manifest at all — a plain weights repo is not a bundle, and
+    telling the two apart is the difference between "pull it" and "you can't"."""
+    if appctx.offline:
+        raise TTError(
+            f"{name} is not installed on this machine.",
+            why="--offline: the community catalog lives on the Hugging Face Hub, "
+            "so only an installed bundle can be described from disk.",
+            next_step=f"Drop --offline, or install it: `tt model pull {name}`.",
+            exit_code=ExitCode.OFFLINE,
+        )
+    is_bundle = bundles.is_bundle_repo(name)
+    if is_bundle is None:
+        raise TTError(
+            f"Could not check whether {name} is a tt-model bundle.",
+            why="It is not in the community catalog or installed here, and the Hub "
+            "could not be asked (unreachable, private, or rate-limited).",
+            next_step="Check the connection or HF_TOKEN; `tt model list --community` "
+            "lists the published bundles.",
+            exit_code=ExitCode.ERROR,
+        )
+    if not is_bundle:
+        raise TTError(
+            f"{name} is not a tt-model bundle.",
+            why="It is not in the model catalog, not in the community bundle catalog, "
+            "and its Hub repo carries no bundle manifest.",
+            next_step="Run `tt model list --community` for bundle ids; a plain "
+            f"HuggingFace repo's weights fetch with `tt model pull {name} --weights-only`.",
+            exit_code=ExitCode.USAGE,
+        )
+    appctx.output.warn(
+        f"{name} is a tt-model bundle but not in the community catalog (never "
+        "published with `tt-model publish`); only the id is known until it is pulled."
+    )
+    return bundles.BundleInfo(name=name)
+
+
+def _bundle_info_renderer(payload: dict) -> Table:
+    b, serve = payload["bundle"], payload["serve"]
+    name = b["name"]
+    table = Table(title=name, show_header=False)
+    table.add_column("field", style="bold")
+    table.add_column("value")
+    table.add_row("kind", "tt-model bundle" + (f" ({b['kind']})" if b["kind"] else ""))
+    if payload["in_catalog"] is None:
+        catalog = "not checked — --offline skips the Hub"
+    elif payload["in_catalog"]:
+        catalog = "community (`tt model list --community`)"
+    elif b["installed"]:
+        catalog = "not in the community catalog — installed here"
+    else:
+        catalog = "not in the community catalog — published on the Hub"
+    table.add_row("catalog", catalog)
+    table.add_row("arch", ", ".join(b["arch"]) or "—")
+    table.add_row("engine", b["engine"] or "—")
+    if b["downloads"] is not None:
+        table.add_row("downloads", str(b["downloads"]))
+    table.add_row(
+        "installed", "yes" if b["installed"] else f"no — `tt model pull {name}`"
+    )
+    if b["weights_repo"]:
+        cached = _weights_cell(b)
+        state = "not in the HF cache" if cached == "—" else f"cached {cached}"
+        table.add_row("weights", f"{b['weights_repo']} — {state}")
+    else:
+        table.add_row("weights", "? (known from the manifest once the bundle is pulled)")
+    if serve:  # pulled, and its manifest is on disk
+        chips = ""
+        if serve["arch"] and serve["device_count"]:
+            count = serve["device_count"]
+            chips = f"{serve['arch']}, {count} chip{'s' if count != 1 else ''}"
+        if serve["hardware"]:
+            device = serve["hardware"] + (f"  [dim]({chips})[/dim]" if chips else "")
+        else:
+            device = chips or "—"
+        table.add_row("hardware", device)
+        table.add_row("docker image", serve["image"] or "—")
+        if serve["port"]:
+            table.add_row("port", str(serve["port"]))
+        if serve["max_model_len"]:
+            table.add_row("max model len", str(serve["max_model_len"]))
+        if serve["tt_metal_version"]:
+            table.add_row("tt-metal", serve["tt_metal_version"])
+        if serve["profiles"]:
+            table.add_row("profiles", ", ".join(serve["profiles"]))
+    table.add_row(
+        "servable", f"yes — `tt serve {name}`; preview with `tt serve {name} --dry-run`"
+    )
+    if payload["offline"] and payload["tt_model_installed"]:
+        table.add_row(
+            "manifest",
+            "[dim]skipped under --offline: `tt-model info` fetches the manifest "
+            "from the Hub[/dim]",
+        )
+    elif not payload["tt_model_installed"]:
+        table.add_row(
+            "manifest",
+            "[dim]tt-model's manifest and compatibility verdict show here once "
+            "tt-model is installed (`tt serve` installs it on first use)[/dim]",
+        )
+    return table
 
 
 @model_app.command("pull", no_args_is_help=True)

@@ -970,3 +970,185 @@ def test_model_pull_bundle_flag_honours_offline(
     result = runner.invoke(app, ["--offline", "model", "pull", "ns/x", "--bundle"])
     assert result.exit_code == ExitCode.OFFLINE
     assert not fake_model_manager.exists()  # tt-model never invoked
+
+
+# -- info on a tt-model bundle id --------------------------------------------------
+# `tt model info` was the one model verb that rejected an id the community listing,
+# `tt model pull` and `tt serve` all accept ("Unknown model … run tt model list").
+def _pull_bundle_to_disk(tmp_path, repo_id, manifest):
+    """What tt-model leaves behind after `pull`: its index entry and the manifest."""
+    root = Path(tmp_path) / "xdg-cache" / "tt-model"  # isolated_dirs' XDG_CACHE_HOME
+    pulled = root / "pulled" / repo_id.replace("/", "__")
+    pulled.mkdir(parents=True, exist_ok=True)
+    (pulled / "tt_kernel_manifest.json").write_text(json.dumps(manifest))
+    (root / "installed.json").write_text(
+        json.dumps({repo_id: {"repo_id": repo_id, "container": True, "arch": "blackhole"}})
+    )
+
+
+@pytest.mark.fakes_only
+def test_model_info_bundle_delegates_to_tt_model_when_installed(
+    runner, fake_model_manager, isolated_dirs
+):
+    """tt-model prints the manifest and the compatibility verdict; tt does not
+    reimplement either."""
+    result = runner.invoke(app, ["model", "info", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["info", "ns/bundle"]
+    assert record["hf_home"]  # same cache everything else uses
+
+
+@pytest.mark.fakes_only
+def test_model_info_bundle_does_not_install_tt_model(
+    runner, uv_bin, monkeypatch, isolated_dirs
+):
+    """Inspection must not clone-and-build a tool: with tt-model absent the catalog
+    row is rendered instead, and uv (which *would* succeed here) never runs."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/bundle", "kind": "container", "engine": "vllm-plugin",
+         "arch": ["blackhole"], "downloads": 7, "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "info", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    assert not uv_bin.exists()
+    assert "tt-model bundle (container)" in result.output
+    assert "blackhole" in result.output and "vllm-plugin" in result.output
+    assert "tt model pull ns/bundle" in result.output  # not installed → how to get it
+    assert "tt serve ns/bundle --dry-run" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_info_bundle_json_is_the_catalog_row_even_with_tt_model_installed(
+    runner, fake_model_manager, monkeypatch, isolated_dirs
+):
+    """tt-model's info output is a manifest followed by prose, not one JSON document,
+    so --json always carries tt's own contract."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/bundle", "kind": "container", "engine": "vllm-plugin",
+         "arch": ["blackhole"], "downloads": 7, "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "info", "ns/bundle", "--json"])
+    assert result.exit_code == 0, result.output
+    assert not fake_model_manager.exists()  # tt-model never invoked
+    payload = json.loads(result.output)
+    assert payload["source"] == "tt-model-catalog"
+    assert payload["bundle"]["name"] == "ns/bundle"
+    assert payload["bundle"]["engine"] == "vllm-plugin"
+    assert payload["in_catalog"] is True
+    assert payload["serve"] is None  # not pulled: no manifest on disk
+    assert payload["tt_model_installed"] is True
+
+
+def test_model_info_bundle_matches_the_id_case_insensitively(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [{"name": "NS/Bundle", "arch": ["blackhole"]}])
+    result = runner.invoke(app, ["model", "info", "ns/bundle", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["bundle"]["name"] == "NS/Bundle"
+
+
+def test_model_info_pulled_bundle_shows_its_launch_settings(
+    runner, monkeypatch, tmp_path, isolated_dirs
+):
+    """Once pulled, the manifest on disk says what `tt serve` will run — the same
+    facts `tt serve --dry-run` reports — so info shows them without a Hub fetch."""
+    _pull_bundle_to_disk(tmp_path, "ns/dit", {
+        "arch": "blackhole", "device_count": 1,
+        "tt_metal_version": "0.65.2",
+        "container": {
+            "kind": "tt-dit-server",
+            "image": {"repository": "tt-model/dit", "tag": "tt-model/dit:abc"},
+            "serve": {"port": 8000},
+            "serve_profiles": [{"name": "p150"}, {"name": "p300"}],
+        },
+        "weights": {"repo_id": "org/w"},
+    })
+    _stub_bundles(monkeypatch, [])  # unpublished: the local index is the only source
+    result = runner.invoke(app, ["model", "info", "ns/dit"])
+    assert result.exit_code == 0, result.output
+    assert "installed here" in result.output
+    assert "tt-model/dit:abc" in result.output
+    assert "tt-dit-server" in result.output
+    assert "p150, p300" in result.output
+    assert "1 chip" in result.output and "1 chips" not in result.output
+    assert "org/w" in result.output
+
+
+def test_model_info_bundle_offline_reads_only_the_local_index(
+    runner, monkeypatch, tmp_path, isolated_dirs
+):
+    _pull_bundle_to_disk(tmp_path, "ns/dit", {"container": {"kind": "tt-dit-server"}})
+
+    def boom(**kw):  # pragma: no cover - must never run
+        raise AssertionError("the Hub was queried under --offline")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", boom)
+    result = runner.invoke(app, ["--offline", "model", "info", "ns/dit", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["bundle"]["source"] == "local"
+    assert payload["in_catalog"] is None  # not asked, so neither yes nor no
+    assert payload["offline"] is True
+
+
+def test_model_info_bundle_offline_and_not_installed_is_an_offline_error(
+    runner, monkeypatch, isolated_dirs
+):
+    monkeypatch.setattr(
+        "tenstorrent.modelhub.bundles.search_community",
+        lambda **kw: pytest.fail("the Hub was queried under --offline"),
+    )
+    result = runner.invoke(app, ["--offline", "model", "info", "ns/absent"])
+    assert result.exit_code == ExitCode.OFFLINE
+    assert "tt model pull ns/absent" in result.output
+
+
+def test_model_info_unlisted_published_bundle_warns_and_shows_the_id(
+    runner, monkeypatch, isolated_dirs
+):
+    """Pushed to the Hub but never `tt-model publish`ed: still a bundle, still
+    servable, so info says so rather than calling it unknown."""
+    _stub_bundles(monkeypatch, [])
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.is_bundle_repo", lambda name: True)
+    result = runner.invoke(app, ["model", "info", "someone/private", "--json"])
+    assert result.exit_code == 0, result.output
+    assert "not in the community catalog" in result.output  # the warning
+    payload = json.loads(result.output[result.output.index("{"):])
+    assert payload["bundle"]["name"] == "someone/private"
+    assert payload["in_catalog"] is False
+
+
+def test_model_info_plain_hf_repo_is_not_a_bundle(runner, no_hub_probe, monkeypatch, isolated_dirs):
+    _stub_bundles(monkeypatch, [])
+    result = runner.invoke(app, ["model", "info", "org/plain-weights"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "not a tt-model bundle" in result.output
+    assert "--weights-only" in result.output
+
+
+def test_model_info_unreachable_hub_is_not_a_usage_error(runner, monkeypatch, isolated_dirs):
+    _stub_bundles(monkeypatch, [])
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.is_bundle_repo", lambda name: None)
+    result = runner.invoke(app, ["model", "info", "org/maybe"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "Could not check" in result.output
+
+
+def test_model_info_catalog_typo_is_still_unknown_model(runner, isolated_dirs):
+    """Only a Hub-shaped name may fall through to the bundle path; a spec typo
+    keeps the catalog error it always had."""
+    result = runner.invoke(app, ["model", "info", "Llama-3.1-8B-Instrukt"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "Unknown model" in result.output and "tt model list" in result.output
+
+
+def test_model_info_spec_hf_repo_alias_still_wins_over_the_bundle_path(
+    runner, fake_model_manager, isolated_dirs
+):
+    """A spec entry's hf_repo is also namespace/name; the spec wins, as for serve."""
+    result = runner.invoke(app, ["model", "info", "meta-llama/Llama-3.1-8B-Instruct", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["name"] == "Llama-3.1-8B-Instruct"
+    assert not fake_model_manager.exists()

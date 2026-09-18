@@ -49,7 +49,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | Model serving | Functionality |
 |---|---|
 | `tt model list` | Models that run on this machine's detected hardware (`--all` for every device; `--cached`, `--type`, `--hw` filters; `--community` for tt-model-manager bundles) |
-| `tt model info NAME` | Model metadata: engines, per-device support/status, requirements, cache state |
+| `tt model info NAME` | Model metadata: engines, per-device support/status, requirements, cache state; for a tt-model bundle id, its manifest and compatibility verdict (or catalog row) |
 | `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`) |
 | `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id |
 | `tt model stop NAME` | Stop a running model server (`--profile` to stop only one profile of a bundle) |

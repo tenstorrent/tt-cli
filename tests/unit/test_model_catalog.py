@@ -424,3 +424,59 @@ def test_cached_sizes_is_empty_without_a_cache(tmp_path):
     config = ConfigStore(get_paths())
     config.set("paths.hf_model_cache_directory", str(tmp_path / "nope"))
     assert hub.cached_sizes(config) == {}
+
+
+# -- describe(): one bundle by id (`tt model info`) --------------------------------
+def _stub_sources(monkeypatch, *, local=(), listed=()):
+    from tenstorrent.modelhub import bundles
+
+    monkeypatch.setattr(
+        bundles, "local_bundles",
+        lambda **kw: [bundles.BundleInfo(source="local", installed=True, **e) for e in local],
+    )
+    calls = []
+
+    def fake_search(**kw):
+        calls.append(kw)
+        return [bundles.BundleInfo(**e) for e in listed]
+
+    monkeypatch.setattr(bundles, "search_community", fake_search)
+    return calls
+
+
+def test_describe_prefers_the_community_row_and_matches_case_insensitively(monkeypatch):
+    from tenstorrent.modelhub import bundles
+
+    calls = _stub_sources(
+        monkeypatch,
+        local=[{"name": "ns/alpha"}],
+        listed=[{"name": "NS/Alpha", "kind": "container", "installed": True}],
+    )
+    found = bundles.describe("ns/ALPHA")
+    assert (found.name, found.source, found.kind) == ("NS/Alpha", "HF", "container")
+    # narrowed by the name half; the exact match is decided locally
+    assert calls == [{"query": "ALPHA", "config": None}]
+
+
+def test_describe_falls_back_to_the_local_index_for_an_unpublished_bundle(monkeypatch):
+    from tenstorrent.modelhub import bundles
+
+    _stub_sources(monkeypatch, local=[{"name": "someone/private"}], listed=[{"name": "ns/other"}])
+    found = bundles.describe("someone/private")
+    assert (found.source, found.installed) == ("local", True)
+
+
+def test_describe_offline_never_asks_the_hub(monkeypatch):
+    from tenstorrent.modelhub import bundles
+
+    calls = _stub_sources(monkeypatch, local=[{"name": "ns/alpha"}], listed=[{"name": "ns/beta"}])
+    assert bundles.describe("ns/alpha", offline=True).source == "local"
+    assert bundles.describe("ns/beta", offline=True) is None
+    assert calls == []
+
+
+def test_describe_is_none_for_an_unknown_id(monkeypatch):
+    from tenstorrent.modelhub import bundles
+
+    _stub_sources(monkeypatch)
+    assert bundles.describe("ns/absent") is None
