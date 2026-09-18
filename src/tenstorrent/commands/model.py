@@ -78,15 +78,8 @@ def _detect_device(appctx) -> str | None:
 
 
 _MODEL_CAPTION = (
-    "source: `inf-server` is the released model catalog (tt-inference-server); "
-    "`HF` is tt-model's public community catalog on the Hub; `local` is a "
-    "community bundle installed on this machine — a bundle listed on the Hub "
-    "and installed shows up twice, once per source. profiles is the board/mesh "
-    "target(s) it supports (p150x4, p300x2). By default only entries that fit "
-    "this machine's detected hardware are shown; use --hw for a different "
-    "target or --all for every entry regardless of hardware. Every entry "
-    "serves with `tt serve <name>`; model weights are referenced rather "
-    "than shipped. "
+    "source: inf-server catalog vs. HF/local community. profiles: smallest "
+    "board/mesh tag per capability. `tt model list --help` for details."
 )
 
 
@@ -122,16 +115,25 @@ def _engines_cell(row: dict) -> str:
 
 def _catalog_row(m: dict) -> dict:
     """The table's common columns, plus every catalog-only field verbatim —
-    `--json` loses nothing a script already depends on, it just gains
-    `source`/`type` alongside the raw `model_type` for the community side to
-    share."""
+    `--json` gains `source`/`type` alongside the raw `model_type` for the
+    community side to share. `hardware` keeps only the smallest tag per
+    capability (see bundles.drop_superseded_hardware)"""
+    supported = {hw: d for hw, d in m["devices"].items() if d["supported"]}
+    profiles = {
+        hw: (
+            d["max_context"],
+            d["impl_id"],
+            tuple(sorted(d["engines"] or [])),
+            d["docker_image"],
+            d["override_tt_config"],
+        )
+        for hw, d in supported.items()
+    }
     return {
         **m,
         "source": "inf-server",
         "type": m["model_type"],
-        "hardware": sorted(
-            hw for hw, support in m["devices"].items() if support["supported"]
-        ),
+        "hardware": bundles.drop_superseded_hardware(profiles),
     }
 
 
@@ -163,7 +165,7 @@ def _model_table(payload: dict, *, hardware: str | None, detected: bool) -> Tabl
         title += f" for {hardware}"
         if detected:
             title += " (detected — `tt model list --all` for every device/bundle)"
-    table = Table(title=title, caption=_MODEL_CAPTION)
+    table = Table(title=title, caption=_MODEL_CAPTION, caption_justify="left")
     # fold rather than ellipsize: the name is what you paste into `tt serve`
     table.add_column("name", overflow="fold")
     for column in ("source", "engines", "profiles", "cached"):
@@ -216,7 +218,14 @@ def list_models(
     quiet: QuietFlag = False,
 ) -> None:
     """Browse models that run on this machine: the released catalog plus
-    community tt-model bundles from the Hub (default: detected hardware only)."""
+    community tt-model bundles from the Hub (default: detected hardware only).
+
+    source: `inf-server` is the released catalog; `HF` is the community
+    catalog on the Hub; `local` is installed here — a bundle on both shows up
+    twice, once per source. profiles: the board/mesh target(s) a model
+    supports, collapsed to the smallest tag per capability (a bigger board
+    that adds nothing over a smaller one is left out). Every entry serves
+    with `tt serve <name>`; weights are referenced rather than shipped."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
     if community and catalog_only:

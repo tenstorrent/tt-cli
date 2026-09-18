@@ -18,6 +18,7 @@ from tenstorrent.modelhub.bundles import (
     _classify,
     _hardware_chips,
     _is_hardware_tag,
+    drop_superseded_hardware,
     hardware_for,
     hardware_from_hub_manifest,
     hardware_satisfies,
@@ -112,6 +113,37 @@ def test_hardware_satisfies_falls_back_to_an_exact_match_for_unknown_tags():
     assert hardware_satisfies("galaxy", "galaxy")
     assert not hardware_satisfies("galaxy", "p150")
     assert not hardware_satisfies("p150", "galaxy")
+
+
+def test_drop_superseded_hardware_keeps_only_the_smallest_matching_tag():
+    # speecht5_tts: same capability on p150 and p300x2, so p300x2 adds nothing.
+    kept = drop_superseded_hardware({"p150": ("media",), "p300x2": ("media",)})
+    assert kept == ["p150"]
+
+
+def test_drop_superseded_hardware_keeps_a_bigger_tag_with_a_real_difference():
+    # Llama: p300 unlocks a longer context than p150, so both stay.
+    kept = drop_superseded_hardware({"p150": (65536,), "p300": (131072,)})
+    assert kept == ["p150", "p300"]
+
+
+def test_drop_superseded_hardware_keeps_a_bigger_tag_with_its_own_tuning():
+    # Same max_context, but p300x2 ships its own trace_region_size — a real
+    # integration, not a copy of p300's listing.
+    kept = drop_superseded_hardware({"p150": (65536, 56000000), "p300x2": (65536, 155000000)})
+    assert kept == ["p150", "p300x2"]
+
+
+def test_drop_superseded_hardware_keeps_equal_sized_siblings():
+    # p150x4 and p300x2 are both a 4-chip blackhole mesh, so neither supersedes
+    # the other — mesh-equivalent alternates, not a smaller/bigger pair.
+    kept = drop_superseded_hardware({"p150x4": ("x",), "p300x2": ("x",)})
+    assert kept == ["p150x4", "p300x2"]
+
+
+def test_drop_superseded_hardware_leaves_tags_outside_the_board_grammar_alone():
+    kept = drop_superseded_hardware({"p150": ("a",), "galaxy": ("a",)})
+    assert kept == ["galaxy", "p150"]
 
 
 def test_hardware_from_hub_manifest_reads_the_fetched_file(tmp_path, monkeypatch):

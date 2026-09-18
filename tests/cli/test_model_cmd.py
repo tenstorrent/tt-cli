@@ -142,6 +142,51 @@ def test_model_list_json_and_cache_merge(runner, monkeypatch):
     assert models["Llama-3.1-8B-Instruct"]["cached"] is False
 
 
+def test_model_list_drops_a_catalog_profile_superseded_by_a_smaller_one(
+    runner, monkeypatch, tmp_path
+):
+    """A spec that lists the exact same container for a bigger board as for a
+    smaller one really only uses part of it — redundant once the smaller tag
+    is shown (see bundles.drop_superseded_hardware). A bespoke spec, not the
+    shared fixture, so this stays isolated from the other list/serve tests."""
+    support = tmp_path / "model_support.json"
+    support.write_text(json.dumps({
+        "schema_version": 1,
+        "release_version": "0.0.0",
+        "models": [{
+            "name": "tts-demo",
+            "hf_repo": "example/tts-demo",
+            "model_type": "text_to_speech",
+            "engines": ["media"],
+            "devices": {
+                "p150": {
+                    "engines": ["media"], "status": "EXPERIMENTAL", "supported": True,
+                    "docker_image": "ghcr.io/example/media:1.0", "impl_id": "tts-demo",
+                },
+                "p300x2": {
+                    "engines": ["media"], "status": "EXPERIMENTAL", "supported": True,
+                    "docker_image": "ghcr.io/example/media:1.0", "impl_id": "tts-demo",
+                },
+            },
+        }],
+    }))
+    monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(support))
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    payload = json.loads(result.output)
+    row = next(m for m in payload["models"] if m["name"] == "tts-demo")
+    assert row["hardware"] == ["p150"]
+
+
+def test_model_list_keeps_catalog_profiles_with_their_own_tuning(runner):
+    """Llama's p300 and p300x2 share a max_context but ship their own
+    trace_region_size — real, distinct integrations, not a duplicate listing,
+    so neither is dropped just because a smaller board exists."""
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    payload = json.loads(result.output)
+    llama = next(m for m in payload["models"] if m["name"] == "Llama-3.1-8B-Instruct")
+    assert llama["hardware"] == ["n150", "p150x4", "p300", "p300x2"]
+
+
 def test_model_list_cached_filter(runner, monkeypatch):
     _set_cache(monkeypatch, {"openai/whisper-large-v3": 1})
     result = runner.invoke(app, ["model", "list", "--all", "--cached", "--json"])

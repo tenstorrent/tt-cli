@@ -110,6 +110,32 @@ def hardware_satisfies(bundle_tag: str, target_tag: str) -> bool:
     return bundle_arch == target_arch and bundle_chips <= target_chips
 
 
+def drop_superseded_hardware(profiles: dict[str, object]) -> list[str]:
+    """Tags to keep from `profiles` (tag -> whatever actually differs about
+    running there, e.g. (max_context, impl_id)) — the model-manager
+    convention: a profile already runs on any bigger board of the same chip
+    arch, using only part of it, so a bigger tag is redundant once a smaller
+    one already gives the identical result. Tags outside the board/mesh
+    grammar (t3k, galaxy, ...) have no chip count to compare and always stay."""
+    chips = {tag: _hardware_chips(tag) for tag in profiles}
+
+    def superseded(tag: str) -> bool:
+        hw = chips[tag]
+        if hw is None:
+            return False
+        arch, count = hw
+        return any(
+            chips[other] is not None
+            and chips[other][0] == arch
+            and chips[other][1] < count
+            and profiles[other] == profiles[tag]
+            for other in profiles
+            if other != tag
+        )
+
+    return sorted(tag for tag in profiles if not superseded(tag))
+
+
 @dataclass(frozen=True)
 class BundleInfo:
     """One published tt-model bundle. Field order IS the --json contract."""
