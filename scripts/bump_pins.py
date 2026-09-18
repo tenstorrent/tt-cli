@@ -335,6 +335,14 @@ _REVIEW_ITEMS = {
     "tt-sw-manifest (golden)": [
         "Re-capture the tt-smi parser fixtures after a real `tt update` if the smi version moved.",
     ],
+    "tt-model (tt-model-manager)": [
+        "Diff the whitelist coupling against upstream: `TT_ORG` in `src/tt_kernel/__init__.py` "
+        "vs `WHITELIST_NAMESPACE` in modelhub/bundles.py, and upstream's `REVIEW_SOURCE_KEY` "
+        "(hub.py) vs ours. Also check the copy is still named "
+        "`<org>/<basename of weights.repo_id>`. This drift is SILENT: a renamed card key stops "
+        "the listing collapsing superseded bundles with no error anywhere, so this checklist is "
+        "the only thing that catches it.",
+    ],
 }
 
 

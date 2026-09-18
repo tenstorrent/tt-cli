@@ -17,6 +17,7 @@ into the spec listing would blur which tool can serve what.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from dataclasses import dataclass, field
@@ -32,6 +33,36 @@ from . import hub
 # rather than an error.
 CATALOG_TAG = "tt-model-catalog"  # opted into the community catalog
 BUNDLE_TAG = "tt-model-cache"  # any published bundle
+
+# The Tenstorrent whitelist is not an index — it is an HF organisation. `tt-model
+# whitelist` copies a reviewed bundle into this namespace, and only the DX team can write
+# there, so "has Tenstorrent reviewed this" reduces to "is this repo theirs" and is
+# answerable from the repo id alone: no extra request, works offline, works for a bundle
+# already on disk. An author cannot put anything here, which is what a tag on their own
+# repo could never guarantee.
+#
+# This name and the card keys below mirror tt-model-manager BY HAND (`TT_ORG` and the
+# `REVIEW_*_KEY` constants in its `tt_kernel/__init__.py` and `hub.py`). The weekly pin
+# bump asks the reviewer to diff them: a renamed key would silently stop the collapse
+# below with no error anywhere.
+WHITELIST_NAMESPACE = "Tenstorrent"
+
+# Frontmatter key the copy carries, naming the community bundle it was made from. Read
+# off the listing response, never fetched per repo.
+REVIEW_SOURCE_KEY = "tt_whitelist_source"
+
+
+def is_whitelisted(repo_id: str) -> bool:
+    """Whether a repo id sits in the Tenstorrent org, and so has been reviewed.
+
+    Compares the namespace rather than using a prefix test, so `tenstorrent-labs/foo` is
+    correctly not a match. Case-insensitive because tt-model's install index lowercases
+    its keys, so a locally-installed `Tenstorrent/foo` can legitimately reach us as
+    `tenstorrent/foo`.
+    """
+    return repo_id.split("/", 1)[0].lower() == WHITELIST_NAMESPACE.lower()
+
+
 _KIND_TAGS = {
     "tt-model-container": "container",
     "self-contained": "self-contained",
@@ -46,6 +77,8 @@ def _is_engine_tag(tag: str) -> bool:
 _SKIP_TAG_PREFIXES = ("region:", "license:", "arxiv:", "dataset:", "base_model:")
 
 # Architecture families only. Recognised rather than inferred by elimination: a
+# published repo carries tags nobody here chose (licences, languages, library names),
+# so an unknown tag means "not ours", never "some new board".
 #
 # An unrecognised tag is dropped, so a new family belongs here — one line, and
 # until then its bundles show an empty arch rather than a wrong one.
@@ -69,6 +102,16 @@ class BundleInfo:
     # without a per-repo Hub fetch this listing deliberately avoids).
     weights_repo: str | None = None
     weights_bytes: int | None = None
+    # Derived from `name`, never passed in: the whitelist is a namespace, so the repo id
+    # already answers this and the table can never disagree with --json. There is no
+    # "cannot tell" case left — a local row's id is as readable as a Hub row's.
+    whitelisted: bool = field(init=False, default=False)
+    # The community bundle a Tenstorrent copy was made from, off the copy's card. None on
+    # every other row. Appended last — field order is the --json contract.
+    whitelist_source: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "whitelisted", is_whitelisted(self.name))
 
 
 def _cache_root() -> Path:
@@ -202,8 +245,6 @@ def _classify(tags: list[str]) -> tuple[str | None, str | None, list[str]]:
         elif tag in _ARCH_TAGS:
             arch.append(tag)
     return kind, engine, sorted(arch)
-
-
 MANIFEST_NAME = "tt_kernel_manifest.json"  # tt-model's on-disk contract, unrenamed
 
 
@@ -275,13 +316,19 @@ def search_community(
 
     Network-only by nature: the catalog is a Hub index, so there is nothing local
     to fall back on. `config` enables the weights-cache lookup for installed
-    bundles (it resolves the HF cache root)."""
+    bundles (it resolves the HF cache root).
+
+    `cardData=True` rides the SAME request — it is a query parameter, not a per-repo
+    fetch — and is what carries a Tenstorrent copy's source claim. Still exactly one
+    round trip for the whole listing, which is the property this module protects."""
     from huggingface_hub import HfApi
     from huggingface_hub.errors import HfHubHTTPError
 
     try:
         found = list(
-            HfApi().list_models(filter=CATALOG_TAG, search=query or None, limit=limit)
+            HfApi().list_models(
+                filter=CATALOG_TAG, search=query or None, limit=limit, cardData=True
+            )
         )
     except (HfHubHTTPError, OSError) as exc:
         raise TTError(
@@ -298,7 +345,8 @@ def search_community(
         repo_id = str(getattr(repo, "id", "") or "")
         if not repo_id:
             continue
-        kind, engine, arch = _classify(list(getattr(repo, "tags", None) or []))
+        tags = list(getattr(repo, "tags", None) or [])
+        kind, engine, arch = _classify(tags)
         entry = installed.get(repo_id.lower())
         weights_repo = weights_bytes = None
         if entry is not None:
@@ -315,9 +363,65 @@ def search_community(
                 installed=entry is not None,
                 weights_repo=weights_repo,
                 weights_bytes=weights_bytes,
+                whitelist_source=_review_source(repo_id, getattr(repo, "card_data", None)),
             )
         )
     return bundles
+
+
+def _review_source(repo_id: str, card_data) -> str | None:
+    """The community bundle a Tenstorrent copy names as its source, or None.
+
+    Nulled for any repo outside the Tenstorrent org, because a card is author-written:
+    without this, anyone could put `tt_whitelist_source: someone/popular-model` in their
+    own frontmatter and hide that model from every listing. Only a repo in a namespace
+    authors cannot write may make this claim.
+
+    Defensive about the value because frontmatter is arbitrary YAML — it can hold a list,
+    a mapping, or a URL where a repo id was meant. Anything that is not a plain
+    `namespace/name` is ignored rather than guessed at; a malformed one means the writer
+    is broken and quietly repairing it would hide that.
+    """
+    if not is_whitelisted(repo_id) or not hasattr(card_data, "get"):
+        return None
+    raw = card_data.get(REVIEW_SOURCE_KEY)
+    if not isinstance(raw, str):
+        return None
+    source = raw.strip()
+    parts = source.split("/")
+    return source if len(parts) == 2 and all(parts) else None
+
+
+def collapse_whitelisted(rows: list[BundleInfo]) -> list[BundleInfo]:
+    """Drop a community row that a Tenstorrent copy in this same list supersedes.
+
+    A reviewed copy is the one a reader should pick -- it is the bundle that passed our
+    checks -- so showing both it and the original is just two names for one model.
+
+    Scoped to Hub rows on both sides, and both `whitelisted` tests are load-bearing:
+
+    * Only a Tenstorrent row may CLAIM. Anyone can write `tt_whitelist_source` into
+      their own card, so honouring a community row's claim would let them hide any model
+      from every listing -- the mirror of the forged review this whole design prevents.
+    * Only a non-Tenstorrent row may be DROPPED. A copy that names itself, or a chain of
+      copies, would otherwise collapse a reviewed model out of existence.
+    * Only Hub rows either way. A local row is a fact about this machine: the bundle is
+      on disk and `tt serve` works on it right now, so hiding it would be a lie. The
+      listing shows "the one you have" next to "the one we recommend".
+
+    Listing-relative by design: a claim naming a repo that is not in these rows drops
+    nothing. Resolving the other half would need the per-repo fetch this listing avoids.
+    """
+    claimed = {
+        b.whitelist_source.lower()
+        for b in rows
+        if b.whitelist_source and b.whitelisted and b.source == "HF"
+    }
+    return [
+        b
+        for b in rows
+        if not (b.source == "HF" and not b.whitelisted and b.name.lower() in claimed)
+    ]
 
 
 def _community_cache_file() -> Path:

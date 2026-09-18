@@ -356,71 +356,255 @@ def test_an_unknown_future_engine_kind_is_still_recognized():
         assert (engine, arch) == (tag, ["blackhole"]), tag
 
 
-def test_the_manifest_wins_when_a_tag_disagrees(tmp_path, monkeypatch):
-    """Tags live in the model card and can be edited after packaging; the manifest
-    is the artifact, so a pulled bundle trusts it."""
+# -- the whitelist: a namespace, not an index -----------------------------------------
+# `tt-model whitelist` copies a reviewed bundle into the Tenstorrent org, so "reviewed"
+# is answerable from the repo id alone — no extra request, works offline, works for an
+# installed bundle. The copy's card names what it was made from, which is how the
+# listing knows to show the copy instead of both.
+
+
+@pytest.mark.parametrize(("repo_id", "expected"), [
+    ("Tenstorrent/Qwen3-32B", True),
+    ("tenstorrent/qwen3-32b", True),      # tt-model's index lowercases its keys
+    ("TENSTORRENT/Qwen3-32B", True),
+    ("someauthor/qwen3-32b", False),
+    ("tenstorrent-labs/qwen3-32b", False),  # a prefix test would get this wrong
+    ("no-namespace", False),
+    ("", False),
+])
+def test_whitelisted_is_decided_by_the_namespace(repo_id, expected):
+    from tenstorrent.modelhub.bundles import is_whitelisted
+
+    assert is_whitelisted(repo_id) is expected
+
+
+def test_a_bundle_info_derives_its_review_state_from_its_name():
+    """Derived, not passed: the table can never disagree with --json, and there is no
+    'cannot tell' state to render."""
+    from tenstorrent.modelhub.bundles import BundleInfo
+
+    assert BundleInfo(name="Tenstorrent/Foo").whitelisted is True
+    assert BundleInfo(name="ns/foo").whitelisted is False
+    assert BundleInfo(name="tenstorrent/foo", source="local").whitelisted is True
+
+
+def test_the_json_field_order_is_the_contract():
+    """`whitelisted` and `whitelist_source` are appended last, in that order — the
+    module says field order IS the --json contract, so pin it rather than trust it."""
+    import dataclasses
+
+    from tenstorrent.modelhub.bundles import BundleInfo
+
+    keys = list(dataclasses.asdict(BundleInfo(name="ns/x")).keys())
+    assert keys[-2:] == ["whitelisted", "whitelist_source"]
+    assert keys[0] == "name"
+
+
+class _Card(dict):
+    """Stands in for ModelCardData, which is dict-like via .get()."""
+
+
+def _repo(repo_id, *, tags=("blackhole",), card=None, downloads=0):
+    return type("R", (), {"id": repo_id, "tags": list(tags),
+                          "downloads": downloads, "card_data": card})()
+
+
+def _search(monkeypatch, repos):
+    from tenstorrent.modelhub import bundles
+
+    seen = {}
+
+    def fake(self, **kw):
+        seen.update(kw)
+        seen["calls"] = seen.get("calls", 0) + 1
+        return iter(repos)
+
+    monkeypatch.setattr("huggingface_hub.HfApi.list_models", fake)
+    return bundles.search_community(), seen
+
+
+def test_the_listing_asks_for_card_data_on_its_single_request(monkeypatch, tmp_path):
+    """cardData rides the same request. One round trip for the whole listing is the
+    property this module protects — a per-repo fetch would be O(catalog)."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    rows, seen = _search(monkeypatch, [_repo("ns/a"), _repo("ns/b"), _repo("ns/c")])
+    assert seen["cardData"] is True
+    assert seen["calls"] == 1
+    assert len(rows) == 3
+
+
+def test_a_tenstorrent_copy_reports_the_bundle_it_was_made_from(monkeypatch, tmp_path):
+    from tenstorrent.modelhub.bundles import REVIEW_SOURCE_KEY
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    rows, _ = _search(monkeypatch, [
+        _repo("Tenstorrent/Qwen3-32B", card=_Card({REVIEW_SOURCE_KEY: "ns/qwen-v51"})),
+    ])
+    assert rows[0].whitelist_source == "ns/qwen-v51"
+    assert rows[0].whitelisted is True
+
+
+def test_a_community_repo_cannot_claim_to_supersede_anything(monkeypatch, tmp_path):
+    """A card is author-written. Without this, anyone could put a popular model's id in
+    their own frontmatter and hide it from every listing — the mirror of a forged review,
+    and the reason only a namespace nobody else can write may make this claim."""
+    from tenstorrent.modelhub.bundles import REVIEW_SOURCE_KEY
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    rows, _ = _search(monkeypatch, [
+        _repo("randomguy/evil", card=_Card({REVIEW_SOURCE_KEY: "microsoft/phi-4"})),
+    ])
+    assert rows[0].whitelist_source is None
+
+
+@pytest.mark.parametrize("value", [
+    None, 123, ["ns/a"], {"repo": "ns/a"},          # frontmatter is arbitrary YAML
+    "not-a-repo-id", "too/many/parts", "/leading", "trailing/", "",
+])
+def test_an_unusable_source_claim_is_ignored_rather_than_guessed_at(
+    monkeypatch, tmp_path, value
+):
+    from tenstorrent.modelhub.bundles import REVIEW_SOURCE_KEY
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    rows, _ = _search(monkeypatch, [
+        _repo("Tenstorrent/X", card=_Card({REVIEW_SOURCE_KEY: value})),
+    ])
+    assert rows[0].whitelist_source is None
+
+
+@pytest.mark.parametrize("card", [None, _Card({}), "not-card-like"])
+def test_a_repo_with_no_usable_card_is_still_listed(monkeypatch, tmp_path, card):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    rows, _ = _search(monkeypatch, [_repo("Tenstorrent/X", card=card)])
+    assert rows[0].whitelist_source is None
+    assert rows[0].whitelisted is True          # the namespace still decides
+
+
+def test_a_padded_source_claim_is_trimmed(monkeypatch, tmp_path):
+    from tenstorrent.modelhub.bundles import REVIEW_SOURCE_KEY
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    rows, _ = _search(monkeypatch, [
+        _repo("Tenstorrent/X", card=_Card({REVIEW_SOURCE_KEY: "  ns/a\n"})),
+    ])
+    assert rows[0].whitelist_source == "ns/a"
+
+
+# -- the collapse ---------------------------------------------------------------------
+
+
+def _rows(*specs):
+    from tenstorrent.modelhub.bundles import BundleInfo
+
+    return [BundleInfo(name=n, source=s, whitelist_source=src) for n, s, src in specs]
+
+
+def _names(rows):
+    return [(r.name, r.source) for r in rows]
+
+
+def test_a_reviewed_copy_replaces_the_bundle_it_was_made_from():
+    from tenstorrent.modelhub.bundles import collapse_whitelisted
+
+    rows = _rows(("Tenstorrent/Foo", "HF", "ns/foo"), ("ns/foo", "HF", None))
+    assert _names(collapse_whitelisted(rows)) == [("Tenstorrent/Foo", "HF")]
+
+
+def test_a_claim_naming_a_bundle_outside_the_listing_hides_nothing():
+    """Listing-relative by design: resolving the other half would need the per-repo
+    fetch this listing avoids."""
+    from tenstorrent.modelhub.bundles import collapse_whitelisted
+
+    rows = _rows(("Tenstorrent/Foo", "HF", "ns/delisted"), ("ns/other", "HF", None))
+    assert len(collapse_whitelisted(rows)) == 2
+
+
+def test_a_bundle_on_this_machine_is_never_hidden():
+    """A local row is a fact about this machine — `tt serve` works on it right now, so
+    hiding it would be a lie. The listing shows what you have next to what we recommend."""
+    from tenstorrent.modelhub.bundles import collapse_whitelisted
+
+    rows = _rows(("Tenstorrent/Foo", "HF", "ns/foo"), ("ns/foo", "HF", None),
+                 ("ns/foo", "local", None))
+    assert _names(collapse_whitelisted(rows)) == [
+        ("Tenstorrent/Foo", "HF"), ("ns/foo", "local")
+    ]
+
+
+def test_both_copies_installed_keeps_both_local_rows():
+    from tenstorrent.modelhub.bundles import collapse_whitelisted
+
+    rows = _rows(("Tenstorrent/Foo", "HF", "ns/foo"), ("Tenstorrent/Foo", "local", None),
+                 ("ns/foo", "HF", None), ("ns/foo", "local", None))
+    assert _names(collapse_whitelisted(rows)) == [
+        ("Tenstorrent/Foo", "HF"), ("Tenstorrent/Foo", "local"), ("ns/foo", "local")
+    ]
+
+
+def test_a_copy_that_records_no_source_hides_nothing():
+    """A hand-made repo in the org is reviewed by the namespace rule, but it must not
+    silently hide someone's bundle on the strength of no evidence."""
+    from tenstorrent.modelhub.bundles import collapse_whitelisted
+
+    rows = _rows(("Tenstorrent/Foo", "HF", None), ("ns/foo", "HF", None))
+    assert len(collapse_whitelisted(rows)) == 2
+
+
+def test_a_copy_never_collapses_itself_or_another_copy():
+    """A self-referential claim — from a re-whitelist or a writer bug — would otherwise
+    make a reviewed model vanish, the worst failure this feature could have."""
+    from tenstorrent.modelhub.bundles import collapse_whitelisted
+
+    itself = _rows(("Tenstorrent/Foo", "HF", "Tenstorrent/Foo"))
+    assert len(collapse_whitelisted(itself)) == 1
+
+    chain = _rows(("Tenstorrent/B", "HF", "Tenstorrent/A"), ("Tenstorrent/A", "HF", "ns/a"))
+    assert len(collapse_whitelisted(chain)) == 2
+
+
+def test_a_forged_claim_from_a_community_repo_hides_nothing():
+    """Belt and braces with the parse-time guard: a caller building rows by hand cannot
+    reintroduce the hiding attack."""
+    from tenstorrent.modelhub.bundles import collapse_whitelisted
+
+    rows = _rows(("randomguy/evil", "HF", "microsoft/phi-4"), ("microsoft/phi-4", "HF", None))
+    assert len(collapse_whitelisted(rows)) == 2
+
+
+def test_two_copies_naming_one_bundle_collapse_it_once():
+    from tenstorrent.modelhub.bundles import collapse_whitelisted
+
+    rows = _rows(("Tenstorrent/A", "HF", "ns/foo"), ("Tenstorrent/B", "HF", "ns/foo"),
+                 ("ns/foo", "HF", None))
+    assert _names(collapse_whitelisted(rows)) == [("Tenstorrent/A", "HF"), ("Tenstorrent/B", "HF")]
+
+
+def test_the_claim_is_matched_case_insensitively():
+    from tenstorrent.modelhub.bundles import collapse_whitelisted
+
+    rows = _rows(("Tenstorrent/Foo", "HF", "SomeAuthor/Foo"), ("someauthor/foo", "HF", None))
+    assert _names(collapse_whitelisted(rows)) == [("Tenstorrent/Foo", "HF")]
+
+
+def test_the_collapse_is_idempotent_and_handles_an_empty_listing():
+    from tenstorrent.modelhub.bundles import collapse_whitelisted
+
+    assert collapse_whitelisted([]) == []
+    rows = _rows(("Tenstorrent/Foo", "HF", "ns/foo"), ("ns/foo", "HF", None))
+    once = collapse_whitelisted(rows)
+    assert _names(collapse_whitelisted(once)) == _names(once)
+
+
+def test_a_local_install_is_whitelisted_by_its_namespace_with_no_network(tmp_path, monkeypatch):
+    """The index lowercases its keys and an older entry has no `repo_id`, so the row
+    arrives as `tenstorrent/foo` — which must still read as reviewed."""
     from tenstorrent.modelhub import bundles
 
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    root = tmp_path / "tt-model"
-    pulled = root / "pulled" / "ns__dit"
-    pulled.mkdir(parents=True)
-    (pulled / "tt_kernel_manifest.json").write_text(
-        json.dumps({"container": {"kind": "tt-dit-server"}})
+    (tmp_path / "tt-model").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tt-model" / "installed.json").write_text(
+        json.dumps({"Tenstorrent/Foo": {}, "ns/bar": {}})
     )
-    (root / "installed.json").write_text(json.dumps({"ns/dit": {"repo_id": "ns/dit"}}))
-
-    class _Repo:
-        id = "ns/dit"
-        tags = ["blackhole", "vllm-plugin"]  # stale card says vLLM
-        downloads = 0
-
-    monkeypatch.setattr(
-        "huggingface_hub.HfApi.list_models", lambda self, **kw: iter([_Repo()])
-    )
-    (found,) = bundles.search_community()
-    assert found.engine == "tt-dit-server"
-
-
-def test_a_bundle_listing_scans_the_hf_cache_once(tmp_path, monkeypatch):
-    """One scan for the whole listing, not one per bundle: scan_cache_dir walks the
-    entire cache (~18 ms on a 500 GB one), so per-bundle calls would be O(N)."""
-    from tenstorrent.config.paths import get_paths
-    from tenstorrent.config.store import ConfigStore
-    from tenstorrent.modelhub import bundles
-
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    root = tmp_path / "tt-model"
-    (root / "pulled").mkdir(parents=True)
-    index = {}
-    for name in ("alpha", "beta", "gamma"):
-        pulled = root / "pulled" / f"ns__{name}"
-        pulled.mkdir()
-        (pulled / "tt_kernel_manifest.json").write_text(
-            json.dumps({"weights": {"repo_id": f"org/{name}"}})
-        )
-        index[f"ns/{name}"] = {"repo_id": f"ns/{name}"}
-    (root / "installed.json").write_text(json.dumps(index))
-
-    calls = []
-    monkeypatch.setattr(
-        "tenstorrent.modelhub.hub.cached_sizes",
-        lambda config: calls.append(1) or {"org/beta": 42},
-    )
-    found = {b.name: b.weights_bytes for b in bundles.local_bundles(ConfigStore(get_paths()))}
-    assert len(calls) == 1
-    assert found == {"ns/alpha": None, "ns/beta": 42, "ns/gamma": None}
-
-
-def test_cached_sizes_is_empty_without_a_cache(tmp_path):
-    """A missing cache reports "nothing cached" rather than raising.
-
-    The root is set through config, not HF_HOME: huggingface_hub resolves its
-    default cache at import time, so an env var set mid-session would not move it."""
-    from tenstorrent.config.paths import get_paths
-    from tenstorrent.config.store import ConfigStore
-    from tenstorrent.modelhub import hub
-
-    config = ConfigStore(get_paths())
-    config.set("paths.hf_model_cache_directory", str(tmp_path / "nope"))
-    assert hub.cached_sizes(config) == {}
+    rows = {b.name: b.whitelisted for b in bundles.local_bundles()}
+    assert rows == {"tenstorrent/foo": True, "ns/bar": False}

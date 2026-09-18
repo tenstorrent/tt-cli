@@ -116,6 +116,10 @@ _COMMUNITY_CAPTION = (
     "installed on this machine — a bundle in both is listed twice, once per source. "
     "arch is the architecture family the bundle declares (blackhole, wormhole_b0); "
     "board and mesh tags are left out, as is any tag tt does not recognise. "
+    "reviewed: ✓ means the bundle lives in the Tenstorrent organisation — we published "
+    "this copy after reviewing it (--whitelisted lists only those); — means a community "
+    "repo. Where a reviewed copy exists the bundle it came from is not listed, though it "
+    "still serves by id; --json records which repo the copy was made from. "
     "Every bundle serves with `tt serve <name>`; weights are referenced rather "
     "than shipped. `--json` carries the engine and packaging kind as well."
 )
@@ -131,7 +135,9 @@ def _community_table(rows: list[dict]) -> Table:
     # `kind`/`engine` are how a bundle is built rather than something you pick one
     # on — all four stay in --json, and `tt serve <id> --dry-run` reports the
     # engine of a bundle that has been pulled.
-    for column in ("source", "arch", "weights"):
+    # `reviewed` earns a column where kind/engine/installed did not: it is the one
+    # thing here a reader picks ON — "which of these does Tenstorrent stand behind".
+    for column in ("source", "arch", "reviewed", "weights"):
         table.add_column(column)
     for row in rows:
         # Render the value itself rather than a literal, so the table can never
@@ -140,9 +146,19 @@ def _community_table(rows: list[dict]) -> Table:
             row["name"],
             row.get("source") or "—",
             ", ".join(row.get("arch") or []) or "—",
+            _reviewed_cell(row),
             _weights_cell(row),
         )
     return table
+
+
+def _reviewed_cell(row: dict) -> str:
+    """✓ the repo is in the Tenstorrent org, — it is a community repo.
+
+    No unknown state: the reviewed set is a namespace, so the repo id always answers
+    this — including for a local install and with no network.
+    """
+    return "✓" if row.get("whitelisted") else "—"
 
 
 def _weights_cell(row: dict) -> str:
@@ -179,6 +195,11 @@ def list_models(
         help="List community tt-model bundles from the Hub instead of the released "
         "model catalog.",
     ),
+    whitelisted: bool = typer.Option(
+        False,
+        "--whitelisted",
+        help="With --community: only bundles Tenstorrent has reviewed.",
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
 ) -> None:
@@ -190,6 +211,7 @@ def list_models(
             appctx,
             cached=cached,
             model_type=model_type,
+            whitelisted=whitelisted,
             device_flags=[
                 flag
                 for flag, given in (("--hw", hardware), ("--all", all_devices))
@@ -197,6 +219,15 @@ def list_models(
             ],
         )
         return
+    if whitelisted:
+        raise TTError(
+            "--whitelisted only applies to community bundles.",
+            why="The released catalog is curated by definition — every model in it is "
+            "one Tenstorrent supports.",
+            next_step="Add --community to browse community bundles, or drop "
+            "--whitelisted.",
+            exit_code=ExitCode.USAGE,
+        )
     detected = not hardware and not all_devices
     device = hardware.lower() if hardware else (None if all_devices else _detect_device(appctx))
     models = ModelCatalog().list()
@@ -218,7 +249,12 @@ def list_models(
 
 
 def _list_community(
-    appctx, *, cached: bool, model_type: str | None, device_flags: list[str]
+    appctx,
+    *,
+    cached: bool,
+    model_type: str | None,
+    device_flags: list[str],
+    whitelisted: bool = False,
 ) -> None:
     """`tt model list --community`: the Hub-published bundle catalog.
 
@@ -242,9 +278,13 @@ def _list_community(
             next_step="Run `tt model info` on a bundle id, or drop --type.",
             exit_code=ExitCode.USAGE,
         )
+    # `--whitelisted` combines freely with `--cached` and `--offline`: the reviewed set
+    # is a namespace, so a repo id answers it with no network and an installed bundle
+    # answers it as readily as a listed one. Both used to be usage errors on the grounds
+    # that the local index "cannot say", which stopped being true.
+    #
     # Local installs first: they need no network, and they are the only source for a
-    # bundle nobody published — someone shares an id, you pull it, the Hub shows
-    # nothing. Catalog rows win on name, since a listed bundle is the richer record.
+    # bundle nobody published — someone shares an id, you pull it, the Hub shows nothing.
     local = bundles.local_bundles(config=appctx.config)
     if appctx.offline:
         # The catalog is a Hub index with no bundled copy, but local installs are
@@ -258,12 +298,20 @@ def _list_community(
         listed = bundles.search_community(config=appctx.config)
         # Refresh the shell-completion cache: tab-time must never touch the Hub,
         # so this listing is where `tt serve <TAB>` learns community bundle ids.
+        # Completion is fed the FULL listing, before the collapse below: a superseded
+        # bundle is still servable by id, so `tt serve <TAB>` must still offer it.
         bundles.save_community_cache([b.name for b in listed])
     # Not merged by name: a bundle that is both published and installed gets one
     # row per source, so the listing shows both facts instead of picking one.
     found = sorted(local + listed, key=lambda b: (b.name.lower(), b.source))
+    # One model, one recommendation: where a Tenstorrent copy names the bundle it was
+    # reviewed from, show the copy instead of both. Hub rows only — a local row is a
+    # fact about this machine and is never hidden.
+    found = bundles.collapse_whitelisted(found)
     if cached:  # --cached reads as "what do I have locally" on this listing too
         found = [b for b in found if b.source == "local"]
+    if whitelisted:
+        found = [b for b in found if b.whitelisted]
     appctx.output.emit(
         {"source": "tt-model-catalog", "bundles": [dataclasses.asdict(b) for b in found]},
         renderer=lambda payload: _community_table(payload["bundles"]),

@@ -115,6 +115,22 @@ tt-model unpublish you/my-model                    # delist (repo untouched)
 
 This is not a submission queue. You push to *your* HF account under *your* governance; the catalog is a static index that stores nothing — every entry points back at your repo. Publishing a model for TT hardware needs no one's permission, including Tenstorrent's. Once published, it appears in `tt model list --community` for everyone, and is servable with `tt serve you/my-model`.
 
+### The reviewed subset
+
+Because the catalog needs no permission, a listing says a bundle exists — not that it works. Tenstorrent marks the subset it has reviewed, and `tt` can show you only those:
+
+```bash
+tt model list --community --whitelisted    # only bundles Tenstorrent has reviewed
+```
+
+In the full listing the `reviewed` column says which is which: `✓` means the bundle lives in the `Tenstorrent` organisation, `—` means a community repo. Reviewing copies your bundle into that organisation, which only Tenstorrent can write to — deliberately not a tag on your own repo, which you could set yourself. It is never required to publish, list or serve; unreviewed is simply the normal state of a new bundle.
+
+Three things worth knowing if your bundle is reviewed:
+
+- **Your repo is not touched.** The copy is made on the Hub itself and reads your repo without writing to it. You keep it, and it stays under your governance.
+- **The copy credits you**, naming your repo and linking back to it, and records the exact revision it was made from.
+- **It is a snapshot, not a mirror.** The copy stays at the revision that was reviewed, so your later commits are not covered by it and it does not follow your repo. Where a reviewed copy exists, `tt model list --community` shows it instead of the original — but your id still works with `tt serve` and `tt model pull`, and anything you have installed locally still appears.
+
 ### What the consumer sees
 
 On any box with Docker and a card, a container bundle serves with one command (via `tt serve you/my-model`, or `tt-model serve you/my-model` directly). Auto-pull fetches the image and weights, then `serve` watches the boot as a checklist of landmarks parsed from the container log — host ready, image loaded, engine initialised, device opened, weights loaded, KV cache configured, warm-up — never the raw log itself. A boot that fails marks the step it died in and renders a diagnosis (cause, one line of evidence, what to try) instead of dumping the log. A cold first boot JIT-compiles kernels (~10 min); the kernel cache is bind-mounted to the host so that cost is paid once.

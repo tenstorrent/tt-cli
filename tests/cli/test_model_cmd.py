@@ -604,7 +604,11 @@ def test_model_stop_without_a_container_runtime_is_tool_missing(
 
 # -- community bundle listing ------------------------------------------------------
 def _stub_bundles(monkeypatch, entries):
-    """Replace the Hub query; the suite must stay network-free."""
+    """Replace the Hub query; the suite must stay network-free.
+
+    Review state is derived from each entry's `name`, so a reviewed row is spelled
+    `Tenstorrent/...` rather than asserted about a community id — which is also more
+    honest test data."""
     from tenstorrent.modelhub.bundles import BundleInfo
 
     made = [BundleInfo(**e) for e in entries]
@@ -639,6 +643,7 @@ def test_model_list_community_shows_bundles(runner, monkeypatch, isolated_dirs):
         "name",
         "source",
         "arch",
+        "reviewed",
         "weights",
     ]
 
@@ -685,6 +690,179 @@ def test_model_list_community_cached_filters_to_installed(
     result = runner.invoke(app, ["model", "list", "--community", "--cached", "--json"])
     rows = json.loads(result.output)["bundles"]
     assert [(b["name"], b["source"]) for b in rows] == [("ns/alpha", "local")]
+
+
+def test_model_list_community_whitelisted_keeps_only_reviewed_bundles(
+    runner, monkeypatch, isolated_dirs
+):
+    """The filter keeps exactly the Tenstorrent-org rows — including rejecting a
+    namespace that merely starts with the org name."""
+    _stub_bundles(monkeypatch, [
+        {"name": "Tenstorrent/Reviewed", "installed": False},
+        {"name": "ns/plain", "installed": False},
+        {"name": "tenstorrent-labs/not-ours", "installed": False},
+    ])
+    result = runner.invoke(
+        app, ["model", "list", "--community", "--whitelisted", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.output)["bundles"]
+    assert [b["name"] for b in rows] == ["Tenstorrent/Reviewed"]
+
+
+def test_model_list_community_reports_review_state_in_json_and_table(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [
+        {"name": "Tenstorrent/Reviewed", "arch": ["blackhole"], "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community", "--json"])
+    assert json.loads(result.output)["bundles"][0]["whitelisted"] is True
+    shown = runner.invoke(app, ["model", "list", "--community"])
+    assert "reviewed" in shown.output
+
+
+def test_model_list_community_derives_review_state_for_a_local_row(
+    runner, monkeypatch, isolated_dirs
+):
+    """The reviewed set is a namespace, so an installed bundle answers it as readily as
+    a listed one — with no network and no tags to read."""
+    _stub_bundles(monkeypatch, [])
+    _stub_local(monkeypatch, [{"name": "Tenstorrent/Foo"}, {"name": "ns/local-only"}])
+    result = runner.invoke(app, ["model", "list", "--community", "--json"])
+    rows = json.loads(result.output)["bundles"]
+    assert [(b["name"], b["whitelisted"]) for b in rows] == [
+        ("ns/local-only", False), ("Tenstorrent/Foo", True),
+    ]
+
+
+def test_model_list_community_shows_the_reviewed_copy_instead_of_both(
+    runner, monkeypatch, isolated_dirs
+):
+    """One model, one recommendation: the copy is the bundle that passed our checks."""
+    _stub_bundles(monkeypatch, [
+        {"name": "Tenstorrent/Qwen3-32B", "installed": False,
+         "whitelist_source": "ns/qwen-v51"},
+        {"name": "ns/qwen-v51", "installed": False},
+        {"name": "ns/unrelated", "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community", "--json"])
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.output)["bundles"]
+    # sorted on name.lower(), so ns/* precedes tenstorrent/*
+    assert [b["name"] for b in rows] == ["ns/unrelated", "Tenstorrent/Qwen3-32B"]
+    # the table agrees with --json; they are one payload with two renderers
+    shown = runner.invoke(app, ["model", "list", "--community"])
+    assert "ns/qwen-v51" not in shown.output
+    assert "Tenstorrent/Qwen3-32B" in shown.output
+
+
+def test_model_list_community_records_what_a_copy_was_made_from(
+    runner, monkeypatch, isolated_dirs
+):
+    """The only machine-readable link between the two names, since the copy is named
+    after the weights repo rather than the bundle."""
+    _stub_bundles(monkeypatch, [
+        {"name": "Tenstorrent/Qwen3-32B", "installed": False,
+         "whitelist_source": "ns/qwen-v51"},
+        {"name": "ns/other", "installed": False},
+    ])
+    rows = json.loads(
+        runner.invoke(app, ["model", "list", "--community", "--json"]).output
+    )["bundles"]
+    by_name = {b["name"]: b["whitelist_source"] for b in rows}
+    assert by_name == {"Tenstorrent/Qwen3-32B": "ns/qwen-v51", "ns/other": None}
+
+
+def test_model_list_community_never_hides_a_bundle_on_this_machine(
+    runner, monkeypatch, isolated_dirs
+):
+    """`tt serve ns/qwen-v51` works right now, so a listing that hides it would lie.
+    The reader sees what they have next to what we recommend."""
+    _stub_bundles(monkeypatch, [
+        {"name": "Tenstorrent/Qwen3-32B", "installed": False,
+         "whitelist_source": "ns/qwen-v51"},
+        {"name": "ns/qwen-v51", "installed": True},
+    ])
+    _stub_local(monkeypatch, [{"name": "ns/qwen-v51"}])
+    rows = json.loads(
+        runner.invoke(app, ["model", "list", "--community", "--json"]).output
+    )["bundles"]
+    assert [(b["name"], b["source"]) for b in rows] == [
+        ("ns/qwen-v51", "local"), ("Tenstorrent/Qwen3-32B", "HF"),
+    ]
+
+
+def test_model_list_community_still_offers_a_superseded_id_for_completion(
+    runner, monkeypatch, isolated_dirs
+):
+    """Completion is fed the full listing before the collapse: a superseded bundle is
+    still servable by id, so `tt serve <TAB>` must still know it."""
+    from tenstorrent.modelhub import bundles
+
+    _stub_bundles(monkeypatch, [
+        {"name": "Tenstorrent/Qwen3-32B", "installed": False,
+         "whitelist_source": "ns/qwen-v51"},
+        {"name": "ns/qwen-v51", "installed": False},
+    ])
+    assert runner.invoke(app, ["model", "list", "--community"]).exit_code == 0
+    assert "ns/qwen-v51" in bundles.cached_community_names()
+
+
+def test_model_list_community_reviewed_column_has_no_unknown_state(
+    runner, monkeypatch, isolated_dirs
+):
+    """Every row's namespace is readable, so the column is ✓ or — and never `?`.
+    Asserted on the extracted cell: `_weights_cell` still emits `?` legitimately."""
+    _stub_bundles(monkeypatch, [
+        {"name": "Tenstorrent/Foo", "installed": False},
+        {"name": "ns/bar", "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "list", "--community"])
+    assert result.exit_code == 0, result.output
+    header = _table_header(result.output)
+    col = [c.strip() for c in header.split("┃")].index("reviewed")
+    seen = {}
+    for line in result.output.splitlines():
+        for name in ("Tenstorrent/Foo", "ns/bar"):
+            if name in line and "│" in line:
+                seen[name] = [c.strip() for c in line.split("│")][col]
+    assert seen == {"Tenstorrent/Foo": "✓", "ns/bar": "—"}
+
+
+def test_model_list_whitelisted_needs_community(runner, monkeypatch, isolated_dirs):
+    result = runner.invoke(app, ["model", "list", "--whitelisted"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "only applies to community bundles" in result.output
+
+
+def test_model_list_community_whitelisted_works_with_cached(
+    runner, monkeypatch, isolated_dirs
+):
+    """Was a usage error on the grounds that the local index "cannot say" which bundles
+    are reviewed. It can: the namespace is in the repo id."""
+    _stub_bundles(monkeypatch, [])
+    _stub_local(monkeypatch, [{"name": "Tenstorrent/Foo"}, {"name": "ns/bar"}])
+    result = runner.invoke(
+        app, ["model", "list", "--community", "--whitelisted", "--cached", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.output)["bundles"]
+    assert [b["name"] for b in rows] == ["Tenstorrent/Foo"]
+
+
+def test_model_list_community_whitelisted_works_offline(
+    runner, monkeypatch, isolated_dirs
+):
+    """Same reason: no Hub read is needed to answer it."""
+    _stub_bundles(monkeypatch, [])
+    _stub_local(monkeypatch, [{"name": "Tenstorrent/Foo"}, {"name": "ns/bar"}])
+    result = runner.invoke(
+        app, ["--offline", "model", "list", "--community", "--whitelisted", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output[result.output.index("{"):])
+    assert [b["name"] for b in payload["bundles"]] == ["Tenstorrent/Foo"]
 
 
 def test_model_list_community_does_not_read_the_support_list(

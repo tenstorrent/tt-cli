@@ -106,6 +106,29 @@ published as HuggingFace repos. These are served by engines included in the repo
 passing through anything `tt serve` does not recognize (`tt serve repo/model --
 --port 8080 --follow`).
 
+Anyone can list a bundle in that catalog, so the listing carries no promise that a
+bundle works. `--whitelisted` narrows it to the subset Tenstorrent has reviewed, and the
+`reviewed` column shows the same fact for every row.
+
+The reviewed set is a **namespace**, not an index: `tt-model whitelist` copies a reviewed
+bundle into the `Tenstorrent` org (`WHITELIST_NAMESPACE` in `modelhub/bundles.py`), so
+"reviewed" is decided by the repo id alone. No extra request, works offline, and works for
+a bundle already installed. Deliberately not a tag on the author's own repo, which they
+could set themselves.
+
+The copy's card names the bundle it was made from (`REVIEW_SOURCE_KEY`), which arrives via
+`cardData=True` on the listing's single `list_models` call — still one round trip for the
+whole listing, which is a property worth keeping. Where a copy names a bundle that is also
+listed, the original row is dropped so one model yields one recommendation; the original is
+still servable by id, and shell completion is deliberately fed the listing *before* that
+collapse.
+
+Two consequences to know. The collapse is **listing-relative**: if a `--search` or the
+`limit` ever splits a pair, the original shows un-collapsed rather than triggering a
+per-repo lookup this listing avoids. And only a repo in the Tenstorrent org may claim a
+source — honouring the claim from any repo would let an author hide someone else's model
+by writing its id into their own card.
+
 `tt model pull` also accepts an ordinary HuggingFace repo id, fetching its weights
 into the same cache — useful to pre-warm before serving — with a warning that
 weights alone do not make a model servable.
