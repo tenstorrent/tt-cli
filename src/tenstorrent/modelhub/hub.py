@@ -213,6 +213,7 @@ def download_weights(
             else "Download failed and no cached copy exists.",
             next_step=f"Run `tt model pull {model.name}` on a connected machine first.",
             exit_code=ExitCode.OFFLINE,
+            reason="model.pull.not_cached",
         ) from exc
     except GatedRepoError as exc:
         raise TTError(
@@ -221,6 +222,7 @@ def download_weights(
             next_step=f"Accept the license at https://huggingface.co/{model.hf_repo} "
             "and log in with `hf auth login`.",
             exit_code=ExitCode.ERROR,
+            reason="model.pull.gated",
         ) from exc
     except Exception as exc:  # huggingface_hub raises a zoo of network errors
         raise TTError(
@@ -228,5 +230,6 @@ def download_weights(
             why=str(exc).splitlines()[0] if str(exc) else None,
             next_step="Check connectivity and `hf auth whoami`, then retry.",
             exit_code=ExitCode.ERROR,
+            reason="model.pull.download_failed",
         ) from exc
     return Path(path)

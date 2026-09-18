@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""Anonymous, opt-in usage telemetry via OpenTelemetry (see session.py)."""
+"""Anonymous, opt-in usage telemetry: one PostHog event per command (see session.py)."""
 
 from __future__ import annotations
 

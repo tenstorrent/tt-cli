@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""TelemetrySession: one OpenTelemetry span per command.
+"""TelemetrySession: one PostHog event per command.
 
 Design invariants:
-- **Never break the CLI.** Every operation here is guarded; any failure (missing SDK,
-  bad config, unreachable collector) degrades to a silent no-op. `create()` returns the
-  shared NULL_SESSION sentinel whenever telemetry is off or setup fails.
-- **Never block on the network.** By default (`telemetry.flush_mode = "async"`) a span
-  is appended to an on-disk spool and a detached process uploads batches later; the
-  command itself makes no HTTP request. `"sync"` restores the in-process export for
-  development, where seeing a span land in a collector immediately is the point.
+- **Never break the CLI.** Every operation here is guarded; any failure (bad config,
+  unwritable spool, unreachable endpoint) degrades to a silent no-op. `create()` returns
+  the shared NULL_SESSION sentinel whenever telemetry is off or setup fails.
+- **Never block on the network.** By default (`telemetry.flush_mode = "async"`) an
+  event is appended to an on-disk spool and a detached process uploads batches later;
+  the command itself makes no HTTP request. `"sync"` posts in-process (bounded by a
+  hard ceiling) for development, where seeing an event land immediately is the point.
 - **Never touch stdout.** The only user-visible side effect is the one-time opt-in
   prompt, emitted on stderr via OutputManager.
 - **Opt-in only.** Nothing is collected or sent unless the user consented: either by
@@ -21,19 +21,20 @@ Design invariants:
   local-only (uploads nothing) and exists so a user can inspect exactly what would
   be sent before deciding.
 
-The default backend is PostHog, a generic OTLP/HTTP trace receiver: we point at
-`.../i/v1/traces` with an `Authorization: Bearer <project token>` header. No PostHog
-SDK, so the endpoint can be repointed at any OTLP collector later.
+The backend is PostHog's batch capture API (`.../batch/`, the project key travels in
+the body). What an event contains is decided entirely in attributes.py; this module
+decides only whether and how it leaves.
 """
 
 from __future__ import annotations
 
 import contextlib
-import logging
+import json
 import os
 import subprocess
 import sys
 import threading
+import time
 from typing import Any, Callable, Iterator
 
 from .._compat import Abort, confirm, style
@@ -51,34 +52,37 @@ _DISABLE_ENV = "TT_TELEMETRY_DISABLED"
 _ENDPOINT_ENV = "TT_TELEMETRY_ENDPOINT"
 _KEY_ENV = "TT_TELEMETRY_POSTHOG_KEY"
 _FLUSH_MODE_ENV = "TT_TELEMETRY_FLUSH_MODE"
-# Write every span here as well, in the spec'd OTLP/JSON Lines format. A second test
-# seam alongside the in-memory exporter, and a far more convincing disclosure than
-# documentation: the user can read exactly what would be sent (cf. Flutter's
+# Write every event here as well, one JSON object per line — byte-for-byte what would
+# go into the upload's `batch` array. A test seam, and a far more convincing disclosure
+# than documentation: the user can read exactly what would be sent (cf. Flutter's
 # FLUTTER_ANALYTICS_LOG_FILE). Local-only, so it works with no endpoint configured.
 _LOG_FILE_ENV = "TT_TELEMETRY_LOG_FILE"
 
 ASYNC_MODE = "async"
 SYNC_MODE = "sync"
 
-# Only used in sync mode. Async mode never calls force_flush on the live path.
+# Only used in sync mode: the most a command may wait for its in-process POST. Async
+# mode never opens a socket on the live path.
 _FLUSH_TIMEOUT_MS = 1500
-# Per-HTTP-attempt budget. Only bounds the abandoned flush thread (see flush()); the
-# user-visible ceiling is _FLUSH_TIMEOUT_MS regardless of what this is set to.
-_EXPORT_TIMEOUT_S = 2
 
-# OTel logs export failures at ERROR, which Python's lastResort handler prints to
-# stderr — four lines of connection-pool detail on every command for anyone behind a
-# firewall that blocks the collector. Telemetry is best-effort and must stay invisible,
-# so these are silenced unless --verbose asked for diagnostics.
-_NOISY_LOGGERS = (
-    "opentelemetry.exporter.otlp.proto.http.trace_exporter",
-    "opentelemetry.exporter.otlp.json.file.trace_exporter",
-    "opentelemetry.sdk.trace.export",
-)
+# tt <= 1.0.1 sent OpenTelemetry spans to PostHog's OTLP traces endpoint, and a
+# config.toml materialized by those releases pins that URL as `telemetry.endpoint`.
+# Events posted there would be accepted and discarded, so the old default is mapped to
+# the new one. Any *other* endpoint is the user's (self-hosted PostHog, a local sink)
+# and passes through untouched.
+_LEGACY_ENDPOINTS = {
+    "https://us.i.posthog.com/i/v1/traces": "https://us.i.posthog.com/batch/",
+    "https://eu.i.posthog.com/i/v1/traces": "https://eu.i.posthog.com/batch/",
+}
 
 _TELEMETRY_DOC_URL = "https://github.com/tenstorrent/tt-cli/blob/main/TELEMETRY.md"
 _DISCORD_URL = "https://discord.gg/tenstorrent"
 _VISION_URL = "https://openfuture.tenstorrent.com"
+
+# What the session hands events to. A sink records locally and must be cheap (spool
+# append, log-file append); the transport is the in-process POST used only in sync mode.
+Sink = Callable[[dict[str, Any]], Any]
+Transport = Callable[[list[dict[str, Any]]], Any]
 
 
 def _link(url: str) -> str:
@@ -125,7 +129,7 @@ def opted_out(config: ConfigStore) -> bool:
     land here) — and true regardless whenever the cross-tool DO_NOT_TRACK convention is
     set. Deliberately narrower than "telemetry is inactive right now": the per-run
     switches (TT_TELEMETRY_DISABLED, `--offline`) don't count, because this gate also
-    triggers deleting already-spooled spans (see Spool.discard) and "skip this run" must
+    triggers deleting already-spooled events (see Spool.discard) and "skip this run" must
     not destroy data an opted-in run legitimately collected.
     """
     if not _config_bool(config, "telemetry.enabled", False):
@@ -137,11 +141,13 @@ def resolve_endpoint(config: ConfigStore) -> tuple[str, str]:
     """(endpoint, token), env overriding config. Either being empty means inert."""
     endpoint = os.environ.get(_ENDPOINT_ENV) or _config_str(config, "telemetry.endpoint")
     token = os.environ.get(_KEY_ENV) or _config_str(config, "telemetry.posthog_project_key")
+    endpoint = endpoint.strip()
+    endpoint = _LEGACY_ENDPOINTS.get(endpoint.rstrip("/"), endpoint)
     return endpoint, token
 
 
 def flush_mode(config: ConfigStore, output: OutputManager | None = None) -> str:
-    """"async" (spool + detached upload) or "sync" (export in-process).
+    """"async" (spool + detached upload) or "sync" (post in-process).
 
     Precedence: TT_TELEMETRY_FLUSH_MODE, then CI, then config, then async.
 
@@ -149,8 +155,8 @@ def flush_mode(config: ConfigStore, output: OutputManager | None = None) -> str:
     reaped along with the build's process group, and even if it survived, the container
     is destroyed with the spool still on disk — so spooling on CI means silently
     collecting data that is guaranteed never to arrive. A build can afford to wait for
-    the (externally bounded) in-process export; a developer's shell cannot. The env var
-    still overrides, so this stays testable and overridable.
+    the (bounded) in-process post; a developer's shell cannot. The env var still
+    overrides, so this stays testable and overridable.
 
     Anything unrecognised falls back to async: the failure mode of async is delayed
     data, while the failure mode of sync is a slow CLI for every user.
@@ -169,8 +175,8 @@ def flush_mode(config: ConfigStore, output: OutputManager | None = None) -> str:
     return ASYNC_MODE
 
 
-class _NullSpanHandle:
-    """No-op span handle: same surface as _SpanHandle, does nothing."""
+class _NullEventHandle:
+    """No-op handle: same surface as _EventHandle, does nothing."""
 
     def set_exit_code(self, code: Any) -> None:
         pass
@@ -178,44 +184,49 @@ class _NullSpanHandle:
     def record_error(self, err: Any) -> None:
         pass
 
+    def record_exception(self, exc: Any) -> None:
+        pass
 
-class _SpanHandle:
-    """Wraps a live OTel span. The decorator stamps the exit code before the span ends;
-    `_finalize` writes it (plus an ERROR status for non-zero codes) at span close."""
 
-    def __init__(self, span: Any) -> None:
-        self._span = span
-        self._code = ExitCode.OK
+class _EventHandle:
+    """The in-flight command. @handle_tt_errors stamps the outcome on it; the session
+    turns it into an event when the command's context closes."""
+
+    def __init__(self, click_ctx: Any) -> None:
+        self.click_ctx = click_ctx
+        self.code = ExitCode.OK
+        # The TTError or the crash, for attributes.error_properties — which reads a
+        # `reason` slug or a class name off it and nothing else.
+        self.error: Any = None
+        self.finished = False
+        self._started = time.perf_counter()
 
     def set_exit_code(self, code: Any) -> None:
         try:
-            self._code = ExitCode(int(code))
+            self.code = ExitCode(int(code))
         except Exception:
-            self._code = ExitCode.ERROR
+            self.code = ExitCode.ERROR
 
     def record_error(self, err: Any) -> None:
+        """A TTError: the documented failure path."""
+        self.error = err
         self.set_exit_code(getattr(err, "exit_code", ExitCode.ERROR))
 
-    def _finalize(self) -> None:
-        try:
-            for key, value in attributes.error_attributes(self._code).items():
-                self._span.set_attribute(key, value)
-            if self._code != ExitCode.OK:
-                from opentelemetry.trace import Status, StatusCode
+    def record_exception(self, exc: Any) -> None:
+        """Anything else that escaped the command: a crash."""
+        self.error = exc
+        self.set_exit_code(ExitCode.ERROR)
 
-                # Status without a description: the code category is enough, and the
-                # message text could leak paths/argv.
-                self._span.set_status(Status(StatusCode.ERROR))
-        except Exception:
-            pass
+    def duration_ms(self) -> int:
+        return int(round((time.perf_counter() - self._started) * 1000))
 
 
 class _NullSession:
     """The disabled session: every hook is a no-op."""
 
     @contextlib.contextmanager
-    def command_span(self, click_ctx: Any) -> Iterator[Any]:
-        yield _NullSpanHandle()
+    def command_event(self, click_ctx: Any) -> Iterator[Any]:
+        yield _NullEventHandle()
 
     def flush(self) -> None:
         pass
@@ -224,17 +235,20 @@ class _NullSession:
 class TelemetrySession(_NullSession):
     def __init__(
         self,
-        provider: Any,
-        tracer: Any,
         *,
+        instance_id: str,
+        sinks: list[Sink] | None = None,
+        transport: Transport | None = None,
         spool: Spool | None = None,
-        needs_flush: bool = False,
         output: OutputManager | None = None,
     ) -> None:
-        self._provider = provider
-        self._tracer = tracer
+        self._instance_id = instance_id
+        self._sinks = list(sinks or [])
+        self._transport = transport
         self._spool = spool
-        self._needs_flush = needs_flush
+        # Events recorded this process and not yet posted. Only ever non-empty in sync
+        # mode; async mode's sinks have already written them to disk.
+        self._pending: list[dict[str, Any]] = []
         # Only ever written to via _debug(), i.e. only under --verbose. Telemetry has no
         # business on a normal command's output.
         self._output = output
@@ -263,9 +277,12 @@ class TelemetrySession(_NullSession):
         *,
         offline: bool,
         output: OutputManager | None,
-        exporter: Any = None,
+        transport: Transport | None = None,
     ) -> "_NullSession":
-        """Build a session, or return NULL_SESSION if telemetry is off / setup fails."""
+        """Build a session, or return NULL_SESSION if telemetry is off / setup fails.
+
+        `transport` injects the in-process sender (tests); it implies sync delivery.
+        """
         try:
             # opted_out() is checked before the kill switch on purpose: it is the first
             # config read on many commands, and that read is what surfaces the stray-key
@@ -282,13 +299,13 @@ class TelemetrySession(_NullSession):
                     return NULL_SESSION
                 if not cls._maybe_prompt_opt_in(paths, config, output, offline=offline):
                     # Still no consent. export=False: only the local, upload-nothing
-                    # TT_TELEMETRY_LOG_FILE seam may record spans (usually NULL_SESSION).
-                    return cls._build(paths, config, output, exporter=None, export=False)
+                    # TT_TELEMETRY_LOG_FILE seam may record events (usually NULL_SESSION).
+                    return cls._build(paths, config, output, transport=None, export=False)
                 # The user just opted in; the prompt already excluded offline.
-                return cls._build(paths, config, output, exporter)
+                return cls._build(paths, config, output, transport)
             if os.environ.get(_DISABLE_ENV) or offline:
                 return NULL_SESSION
-            return cls._build(paths, config, output, exporter)
+            return cls._build(paths, config, output, transport)
         except Exception:
             # Telemetry must never break the CLI.
             return NULL_SESSION
@@ -299,85 +316,59 @@ class TelemetrySession(_NullSession):
         paths: Paths,
         config: ConfigStore,
         output: OutputManager | None,
-        exporter: Any,
+        transport: Transport | None,
         *,
         export: bool = True,
     ) -> "_NullSession":
         mode = flush_mode(config, output)
         spool: Spool | None = None
-        direct: Any = None
+        send: Transport | None = None
 
         # export=False is the no-consent path: nothing may leave the machine (or even
-        # accumulate on disk waiting to), so neither an exporter nor the spool is wired
+        # accumulate on disk waiting to), so neither a transport nor the spool is wired
         # up — only the local TT_TELEMETRY_LOG_FILE below can record anything.
         if not export:
             pass
-        elif exporter is not None:
-            direct = exporter
+        elif transport is not None:
+            send = transport
         elif mode == SYNC_MODE:
-            direct = cls._otlp_exporter(config)
+            send = cls._transport(config)
         else:
             endpoint, token = resolve_endpoint(config)
             if endpoint and token:
                 # Spool only when there is somewhere for the batch to go; otherwise we
-                # would accumulate spans on disk that can never be delivered.
+                # would accumulate events on disk that can never be delivered.
                 spool = Spool(paths)
 
         log_path = os.environ.get(_LOG_FILE_ENV)
-        if direct is None and spool is None and not log_path:
-            # Nothing to export to, nothing to disclose. Returning before the SDK
-            # imports also keeps ~12 ms off every command while telemetry ships dark.
+        if send is None and spool is None and not log_path:
+            # Nothing to export to, nothing to disclose.
             return NULL_SESSION
 
-        _quiet_exporter_logs(output)
-
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
-
-        state = TelemetryState(paths)
-        # Resource(), NOT Resource.create(): create() merges OpenTelemetry's environment
-        # detectors, so anything in the user's OTEL_RESOURCE_ATTRIBUTES (a deployment
-        # name, a user.name) would ride along and defeat attributes.py as the single
-        # anonymization chokepoint. The plain constructor sends only what we hand it.
-        resource = Resource(attributes.resource_attributes(state.instance_id()))
-        # shutdown_on_exit=False: the SDK's atexit hook would block process exit draining
-        # the queue against an unreachable collector, outside any budget of ours. The
-        # worker is a daemon thread, so dropping the hook just abandons pending spans.
-        provider = TracerProvider(resource=resource, shutdown_on_exit=False)
-
-        if direct is not None:
-            # Batched + externally bounded: this is the only processor that can block on
-            # a socket, so it is the only one that needs flush()'s escape hatch.
-            provider.add_span_processor(BatchSpanProcessor(direct))
-        for local in (spool.exporter() if spool else None, _log_file_exporter(log_path)):
-            if local is not None:
-                # Local file appends cost ~0.01 ms, so they run inline on span end:
-                # no worker thread to start and no force_flush to bound.
-                provider.add_span_processor(SimpleSpanProcessor(local))
+        sinks: list[Sink] = []
+        if spool is not None:
+            sinks.append(spool.append)
+        if log_path:
+            sinks.append(_log_file_sink(log_path))
 
         return cls(
-            provider,
-            provider.get_tracer("tenstorrent.cli"),
+            instance_id=TelemetryState(paths).instance_id(),
+            sinks=sinks,
+            transport=send,
             spool=spool,
-            needs_flush=direct is not None,
             output=output,
         )
 
     @staticmethod
-    def _otlp_exporter(config: ConfigStore) -> Any:
+    def _transport(config: ConfigStore) -> Transport | None:
+        """The in-process sender for sync mode, or None when nothing is configured.
+        One seam: tests replace this to capture events instead of posting them."""
         endpoint, token = resolve_endpoint(config)
         if not endpoint or not token:
             return None
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from .drain import post_batch
 
-        # Pass the full traces path as `endpoint` so the exporter does not append
-        # /v1/traces (PostHog serves traces at /i/v1/traces).
-        return OTLPSpanExporter(
-            endpoint=endpoint,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=_EXPORT_TIMEOUT_S,
-        )
+        return lambda events: post_batch(endpoint, token, events)
 
     @classmethod
     def _maybe_prompt_opt_in(
@@ -431,73 +422,86 @@ class TelemetrySession(_NullSession):
             # Telemetry must never break the CLI; an unanswerable prompt means "off".
             return False
 
-    # -- per-command span -------------------------------------------------------
+    # -- per-command event ------------------------------------------------------
     @contextlib.contextmanager
-    def command_span(self, click_ctx: Any) -> Iterator[Any]:
+    def command_event(self, click_ctx: Any) -> Iterator[Any]:
         # A group callback runs on the way through to its subcommand (`tt config` before
-        # `tt config get`) and is decorated too, so it would open a second span for the
-        # same invocation and over-count the group as a command in its own right. The
-        # leaf's span is the one that represents what the user ran. When the group is
-        # invoked bare (invoke_without_command, no subcommand) it *is* the leaf and keeps
-        # its span.
+        # `tt config get`) and is decorated too, so it would record a second event for
+        # the same invocation and over-count the group as a command in its own right.
+        # The leaf's event is the one that represents what the user ran. When the group
+        # is invoked bare (invoke_without_command, no subcommand) it *is* the leaf and
+        # keeps its event.
         if getattr(click_ctx, "invoked_subcommand", None) is not None:
-            yield _NullSpanHandle()
+            yield _NullEventHandle()
             return
-        span_cm = None
-        handle: Any = _NullSpanHandle()
+        handle: Any
         try:
-            command = getattr(click_ctx, "command_path", None) if click_ctx else None
-            span_cm = self._tracer.start_as_current_span(command or "tt")
-            span = span_cm.__enter__()
-            try:
-                for key, value in attributes.command_attributes(click_ctx).items():
-                    span.set_attribute(key, value)
-            except Exception:
-                pass
-            handle = _SpanHandle(span)
+            handle = _EventHandle(click_ctx)
         except Exception:
-            span_cm = None
-            handle = _NullSpanHandle()
+            handle = _NullEventHandle()
         try:
             yield handle
         finally:
-            if isinstance(handle, _SpanHandle):
-                handle._finalize()
-            if span_cm is not None:
-                # Pass no exception info: we record the outcome via the exit code,
-                # never a stack/message that could carry PII.
-                try:
-                    span_cm.__exit__(None, None, None)
-                except Exception:
-                    pass
+            if isinstance(handle, _EventHandle):
+                self._record(handle)
+
+    def _record(self, handle: _EventHandle) -> None:
+        """Turn the finished command into an event and hand it to every sink.
+
+        Idempotent: a command that hands the terminal over (exec_tty) closes its
+        context early via AppContext.before_exec, and nothing may record twice if the
+        normal exit path then runs after all (as it does under CliRunner).
+        """
+        try:
+            if handle.finished:
+                return
+            handle.finished = True
+            event = attributes.build_event(
+                handle.click_ctx,
+                instance_id=self._instance_id,
+                exit_code=handle.code,
+                error=handle.error,
+                duration_ms=handle.duration_ms(),
+            )
+        except Exception:
+            return
+        for sink in self._sinks:
+            try:
+                sink(event)
+            except Exception:
+                pass
+        if self._transport is not None:
+            self._pending.append(event)
 
     def flush(self) -> None:
         """End-of-command hook. Called from @handle_tt_errors' `finally`, so it runs on
         all four exit paths (OK / TTError / typer.Exit / unexpected) and must be cheap
         and silent on every one of them."""
         try:
-            if self._needs_flush:
+            if self._transport is not None:
                 self._flush_direct()
             if self._spool is not None:
                 self._hand_off()
         except Exception:
-            # A slow/unreachable collector must never delay or fail process exit.
+            # A slow/unreachable endpoint must never delay or fail process exit.
             pass
 
     def _flush_direct(self) -> None:
-        """Sync mode: export pending spans, giving up after _FLUSH_TIMEOUT_MS.
+        """Sync mode: post pending events, giving up after _FLUSH_TIMEOUT_MS.
 
-        `force_flush(timeout_millis=...)` does NOT honour its own timeout and always
-        returns True: against a collector that drops or rejects packets it blocks for
-        the exporter's full retry sequence (measured at 20s on SDK 1.44). So the flush
-        runs on a daemon thread we simply stop waiting on — the ceiling is ours, and an
-        abandoned thread dies with the process without delaying exit.
+        The POST runs on a daemon thread we simply stop waiting on — the ceiling is
+        ours, not the HTTP client's, and an abandoned thread dies with the process
+        without delaying exit.
         """
+        pending, self._pending = self._pending, []
+        if not pending or self._transport is None:
+            return
         done = threading.Event()
+        send = self._transport
 
         def _run() -> None:
             try:
-                self._provider.force_flush(timeout_millis=_FLUSH_TIMEOUT_MS)
+                send(pending)
             except Exception:
                 pass
             finally:
@@ -509,29 +513,33 @@ class TelemetrySession(_NullSession):
     def _hand_off(self) -> None:
         """Async mode: spawn a detached uploader, but only when it is worth it.
 
-        The span is already on disk by now (SimpleSpanProcessor wrote it on span end),
-        so doing nothing here is always a valid outcome — the next command that crosses
-        a threshold hands off instead. At ~50 commands/day that is ~2 spawns.
+        The event is already on disk by now (the spool sink wrote it as the command's
+        context closed), so doing nothing here is always a valid outcome — the next
+        command that crosses a threshold hands off instead. At ~50 commands/day that is
+        ~2 spawns.
         """
         assert self._spool is not None
         stats = self._spool.stats()
-        if self._output is not None and self._output.verbose:
-            # A batch left under the in-flight name means a previous upload failed and is
-            # waiting to be retried — the one symptom that says "delivery is broken"
-            # rather than "delivery hasn't happened yet", and otherwise invisible.
+        # The probe is an optimisation only: two commands finishing together can both
+        # see "not in progress" and spawn, and the drainer's own flock is what makes
+        # that safe.
+        in_progress = self._spool.drain_in_progress()
+        if self._output is not None and self._output.verbose and not in_progress:
+            # A batch left under the in-flight name with no drainer holding the lock
+            # means a previous upload failed and is waiting to be retried — the one
+            # symptom that says "delivery is broken" rather than "delivery hasn't
+            # happened yet", and otherwise invisible.
             self._report_pending_retry()
         if not stats.ready_to_drain:
             self._debug(
-                f"telemetry: {stats.spans} span(s) spooled, below the hand-off "
-                f"threshold of {spool_module.DRAIN_SPAN_THRESHOLD}; nothing to do"
+                f"telemetry: {stats.events} event(s) spooled, below the hand-off "
+                f"threshold of {spool_module.DRAIN_EVENT_THRESHOLD}; nothing to do"
             )
             return
-        # Optimisation only: two commands finishing together can both get past this and
-        # spawn, and the drainer's own flock is what makes that safe.
-        if self._spool.drain_in_progress():
+        if in_progress:
             self._debug("telemetry: an uploader is already running; leaving it to finish")
             return
-        self._debug(f"telemetry: handing {stats.spans} span(s) to a background uploader")
+        self._debug(f"telemetry: handing {stats.events} event(s) to a background uploader")
         spawn_drainer(self._spool, on_debug=self._debug)
 
     def _report_pending_retry(self) -> None:
@@ -543,7 +551,7 @@ class TelemetrySession(_NullSession):
         except OSError:
             return
         self._debug(
-            f"telemetry: {waiting} span(s) from an earlier batch are awaiting retry "
+            f"telemetry: {waiting} event(s) from an earlier batch are awaiting retry "
             f"({self._spool.sending_path}) — the last upload did not succeed. "
             "Run `tt self send-telemetry` to see why."
         )
@@ -592,27 +600,15 @@ def spawn_drainer(spool: Spool, *, on_debug: Callable[[str], None] | None = None
         return False
 
 
-def _log_file_exporter(path: str | None) -> Any:
-    """OTLP/JSON-Lines exporter for TT_TELEMETRY_LOG_FILE, or None."""
-    if not path:
-        return None
-    try:
-        from opentelemetry.exporter.otlp.json.file.trace_exporter import FileSpanExporter
+def _log_file_sink(path: str) -> Sink:
+    """Append each event to TT_TELEMETRY_LOG_FILE as one JSON line, opening the file
+    per event so a long command never holds a descriptor on it."""
 
-        return FileSpanExporter(path)
-    except Exception:
-        return None
+    def append(event: dict[str, Any]) -> None:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, separators=(",", ":")) + "\n")
 
-
-def _quiet_exporter_logs(output: OutputManager | None) -> None:
-    """Keep OTel's export failures off stderr unless the user asked for diagnostics."""
-    try:
-        if output is not None and output.verbose:
-            return
-        for name in _NOISY_LOGGERS:
-            logging.getLogger(name).setLevel(logging.CRITICAL)
-    except Exception:
-        pass
+    return append
 
 
 def _config_bool(config: ConfigStore, key: str, default: bool) -> bool:

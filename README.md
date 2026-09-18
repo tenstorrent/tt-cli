@@ -31,7 +31,7 @@ You can also install the CLI with any pip-compatible tool, such as pipx. We *hig
 
 Telemetry is **opt-in**: nothing is collected or sent unless you say so. `tt` asks once, on first interactive run, and doesn't bother you about it on later runs.
 
-If you opt in, `tt` records command names, exit codes, coarse OS facts, and argument values only when they match a known list (e.g. catalog model names). We never send free-form arguments, paths, or static IDs. Exactly what is collected, every switch that controls it, and how delivery works: [TELEMETRY.md](/TELEMETRY.md).
+If you opt in, `tt` records one event per command: the command name, exit code, duration, coarse OS facts, and argument values only when they match a known list (e.g. catalog model names). We never send free-form arguments, paths, error messages, or anything that identifies you or your machine. Exactly what is collected, every switch that controls it, and how delivery works: [TELEMETRY.md](/TELEMETRY.md).
 
 If you change your mind about telemetry, use `tt config set telemetry.enabled true` or `false`. If you previously enabled telemetry, setting it to `false` opts you out and deletes anything not yet uploaded.
 

@@ -204,6 +204,7 @@ class ModelManagerBackend:
                 next_step="`tt update` installs it; `tt model pull <namespace>/<name>` "
                 "or `tt serve <namespace>/<name>` install it and fetch a bundle.",
                 exit_code=ExitCode.TOOL_MISSING,
+                reason="tool.missing.tt_model",
                 details={"tool": TOOL},
             )
         return Path(found[0])

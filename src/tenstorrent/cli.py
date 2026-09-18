@@ -73,37 +73,51 @@ def handle_tt_errors(fn: F) -> F:
     def wrapper(*args, **kwargs):
         ctx = _find_context(args, kwargs)
         appctx = ctx.obj if ctx is not None else None
-        # One usage span per command invocation, keyed on the same AppContext the
+        # One usage event per command invocation, keyed on the same AppContext the
         # error handling uses. NULL_SESSION when telemetry is off/unavailable.
         session = appctx.telemetry if appctx is not None else NULL_SESSION
         try:
             with contextlib.ExitStack() as stack:
-                span = stack.enter_context(session.command_span(ctx))
+                event = stack.enter_context(session.command_event(ctx))
                 if appctx is not None:
                     # A command that hands the terminal over (exec_tty) never returns,
-                    # so neither the span nor the flush below would ever run. Close
+                    # so neither the event nor the flush below would ever run. Close
                     # them out first; both are idempotent, so the normal path is
                     # unaffected.
                     def _finish_before_exec() -> None:
-                        span.set_exit_code(ExitCode.OK)
+                        event.set_exit_code(ExitCode.OK)
                         stack.close()
                         session.flush()
 
                     appctx.before_exec.append(_finish_before_exec)
                 try:
                     result = fn(*args, **kwargs)
-                    span.set_exit_code(ExitCode.OK)
+                    event.set_exit_code(ExitCode.OK)
                     return result
                 except TTError as err:
-                    span.record_error(err)
+                    event.record_error(err)
                     output = appctx.output if appctx is not None else OutputManager()
                     render_error(err, output)
                     raise typer.Exit(int(err.exit_code)) from err
                 except typer.Exit as exit_exc:
-                    span.set_exit_code(getattr(exit_exc, "exit_code", 0) or 0)
+                    event.set_exit_code(getattr(exit_exc, "exit_code", 0) or 0)
                     raise
-                except Exception:
-                    span.set_exit_code(ExitCode.ERROR)
+                except Exception as exc:
+                    # A crash. Only the exception's class name is recorded, never its
+                    # message (see telemetry/attributes.py).
+                    event.record_exception(exc)
+                    raise
+                except KeyboardInterrupt:
+                    # Ctrl-C is how `tt serve` normally ends. Not an Exception, so it
+                    # would otherwise reach the finally with the outcome still at its
+                    # default of OK and every serve session would read as a success.
+                    event.set_exit_code(ExitCode.INTERRUPTED)
+                    raise
+                except SystemExit as exit_exc:
+                    # A command that ends the process itself reports its real code.
+                    # A bare sys.exit() carries None, which means success.
+                    code = 0 if exit_exc.code is None else exit_exc.code
+                    event.set_exit_code(code if isinstance(code, int) else ExitCode.ERROR)
                     raise
         finally:
             session.flush()
