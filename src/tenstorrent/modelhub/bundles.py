@@ -105,13 +105,10 @@ def hardware_satisfies(bundle_tag: str, target_tag: str) -> bool:
     Same chip arch, and fewer chips than the target provides — a model
     authored for one p150 (1 blackhole chip) also runs on a p300x2 (4 blackhole
     chips): the board packaging differs but the chip budget is a strict
-    superset, so it only ever uses part of the bigger target.
-    tt_kernel.manifest.compare() gates launch on arch + exact device_count; this
-    generalises "fewer" to "at least as many" because discovery asks "can this
-    run here", not "is this the exact mesh it was validated on".
+    superset, so it only uses part of the bigger target.
 
     An equal chip count needs the identical tag, with one exception: two
-    *meshes* of more than one board (p150x4, p300x2) are fungible whenever
+    meshes of more than one board (p150x4, p300x2) are fungible whenever
     their chip budget matches, since the fabric doesn't care which board
     contributed each chip — unlike a single card, which is a specific
     product (a p150 is not a p100 just because both are one chip).
@@ -163,7 +160,7 @@ class BundleInfo:
     """One published tt-model bundle. Field order IS the --json contract."""
 
     name: str  # HF repo id, namespace/name — exactly what `tt serve` takes
-    source: str = "HF"
+    source: str = "HuggingFace"
     kind: str | None = None  # container | self-contained | thin
     engine: str | None = None  # vLLM today
     arch: list[str] = field(default_factory=list)  # blackhole, wormhole_b0, 1x4, …

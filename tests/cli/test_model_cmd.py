@@ -682,7 +682,7 @@ def _json_payload(output: str) -> dict:
 
 
 def _community_names(payload: dict) -> set[str]:
-    return {m["name"] for m in payload["models"] if m["source"] != "inf-server"}
+    return {m["name"] for m in payload["models"] if m["source"] != "tt-inference-server"}
 
 
 def test_model_list_shows_catalog_and_community_together(
@@ -734,7 +734,7 @@ def test_model_list_json_contract_includes_community_rows(
     result = runner.invoke(app, ["model", "list", "--all", "--json"])
     payload = _json_payload(result.output)
     row = next(m for m in payload["models"] if m["name"] == "ns/alpha")
-    assert row["source"] == "HF"
+    assert row["source"] == "HuggingFace"
     assert row["type"] is None
     assert row["engines"] == ["vLLM"]
 
@@ -783,7 +783,9 @@ def test_model_list_cached_filters_community_to_installed(
     _stub_local(monkeypatch, [{"name": "ns/alpha"}])
     result = runner.invoke(app, ["model", "list", "--all", "--cached", "--json"])
     payload = _json_payload(result.output)
-    community = [(m["name"], m["source"]) for m in payload["models"] if m["source"] != "inf-server"]
+    community = [
+        (m["name"], m["source"]) for m in payload["models"] if m["source"] != "tt-inference-server"
+    ]
     assert community == [("ns/alpha", "local")]
 
 
@@ -1048,8 +1050,10 @@ def test_model_list_includes_unpublished_local_bundles(
     result = runner.invoke(app, ["model", "list", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json_payload(result.output)
-    rows = {m["name"]: m["source"] for m in payload["models"] if m["source"] != "inf-server"}
-    assert rows == {"ns/published": "HF", "someone/private": "local"}
+    rows = {
+        m["name"]: m["source"] for m in payload["models"] if m["source"] != "tt-inference-server"
+    }
+    assert rows == {"ns/published": "HuggingFace", "someone/private": "local"}
 
 
 def test_model_list_lists_a_bundle_once_per_source(
@@ -1061,7 +1065,7 @@ def test_model_list_lists_a_bundle_once_per_source(
     _stub_local(monkeypatch, [{"name": "ns/both"}])
     result = runner.invoke(app, ["model", "list", "--json"])
     payload = [m for m in _json_payload(result.output)["models"] if m["name"] == "ns/both"]
-    assert [m["source"] for m in payload] == ["HF", "local"]
+    assert [m["source"] for m in payload] == ["HuggingFace", "local"]
     assert payload[0]["downloads"] == 7  # only the Hub publishes this
 
 

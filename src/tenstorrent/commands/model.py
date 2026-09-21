@@ -103,8 +103,9 @@ def _validate_hardware(hardware: str) -> str:
 
 
 _MODEL_CAPTION = (
-    "source: inf-server catalog vs. HF/local community. profiles: smallest "
-    "board/mesh tag per capability. `tt model list --help` for details."
+    "source: tt-inference-server catalog vs. HuggingFace/local community. "
+    "profiles: smallest board/mesh tag per capability. "
+    "`tt model list --help` for details."
 )
 
 
@@ -156,7 +157,7 @@ def _catalog_row(m: dict) -> dict:
     }
     return {
         **m,
-        "source": "inf-server",
+        "source": "tt-inference-server",
         "type": m["model_type"],
         "hardware": bundles.drop_superseded_hardware(profiles),
     }
@@ -245,12 +246,13 @@ def list_models(
     """Browse models that run on this machine: the released catalog plus
     community tt-model bundles from the Hub (default: detected hardware only).
 
-    source: `inf-server` is the released catalog; `HF` is the community
-    catalog on the Hub; `local` is installed here — a bundle on both shows up
-    twice, once per source. profiles: the board/mesh target(s) a model
-    supports, collapsed to the smallest tag per capability (a bigger board
-    that adds nothing over a smaller one is left out). Every entry serves
-    with `tt serve <name>`; weights are referenced rather than shipped."""
+    source: `tt-inference-server` is the released catalog; `HuggingFace` is
+    the community catalog on the Hub; `local` is installed here — a bundle
+    on both shows up twice, once per source. profiles: the board/mesh
+    target(s) a model supports, collapsed to the smallest tag per capability
+    (a bigger board that adds nothing over a smaller one is left out). Every
+    entry serves with `tt serve <name>`; weights are referenced rather than
+    shipped."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
     if community and catalog_only:
