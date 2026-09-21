@@ -17,23 +17,23 @@ from tenstorrent.modelhub.bundles import (
     MANIFEST_NAME,
     _classify,
     _hardware_chips,
-    _is_hardware_tag,
     drop_superseded_hardware,
     hardware_for,
     hardware_from_hub_manifest,
     hardware_satisfies,
+    is_hardware_tag,
     search_community,
 )
 
 
 def test_is_hardware_tag_accepts_known_boards_with_or_without_a_count():
     for tag in ("p150", "p150x4", "p300x2", "n300", "n300x4", "e150"):
-        assert _is_hardware_tag(tag), tag
+        assert is_hardware_tag(tag), tag
 
 
 def test_is_hardware_tag_rejects_arch_and_unrelated_tags():
-    for tag in ("blackhole", "wormhole_b0", "vllm", "region:us", "q200x4"):
-        assert not _is_hardware_tag(tag), tag
+    for tag in ("blackhole", "wormhole_b0", "vllm", "region:us", "q200x4", "p250"):
+        assert not is_hardware_tag(tag), tag
 
 
 def test_classify_splits_arch_from_hardware_tags():
@@ -107,6 +107,13 @@ def test_hardware_satisfies_allows_a_bundle_needing_fewer_chips_of_the_same_arch
 def test_hardware_satisfies_rejects_too_few_chips_or_a_different_arch():
     assert not hardware_satisfies("p150x4", "p150")  # needs more chips than offered
     assert not hardware_satisfies("n150", "p150")  # wormhole_b0 vs blackhole
+
+
+def test_hardware_satisfies_rejects_a_different_single_card_of_equal_chip_count():
+    # p100 and p150 are both one blackhole chip, but different products —
+    # neither substitutes for the other just because the chip count matches.
+    assert not hardware_satisfies("p150", "p100")
+    assert not hardware_satisfies("p100", "p150")
 
 
 def test_hardware_satisfies_falls_back_to_an_exact_match_for_unknown_tags():

@@ -77,6 +77,31 @@ def _detect_device(appctx) -> str | None:
     return device
 
 
+def _known_devices() -> set[str]:
+    """Every device name a catalog model declares — the release spec's device
+    vocabulary (galaxy, t3k, gpu, ...) is not a board/mesh tag, so it has no
+    fixed enum to check against other than what the catalog actually uses."""
+    return {
+        device for model in ModelCatalog().list(cached_sizes={}) for device in model.hardware
+    }
+
+
+def _validate_hardware(hardware: str) -> str:
+    """`hardware`, lowercased, once it is confirmed real — a catalog device or
+    a recognised board/mesh tag — so a typo like p250 is refused up front
+    instead of quietly returning zero rows."""
+    device = hardware.lower()
+    if device in _known_devices() or bundles.is_hardware_tag(device):
+        return device
+    raise TTError(
+        f"{hardware!r} is not a recognized hardware target.",
+        why="It matches no catalog device and no known board/mesh tag.",
+        next_step="Run `tt model list --all` to see catalog devices, or drop "
+        "--hw to auto-detect.",
+        exit_code=ExitCode.USAGE,
+    )
+
+
 _MODEL_CAPTION = (
     "source: inf-server catalog vs. HF/local community. profiles: smallest "
     "board/mesh tag per capability. `tt model list --help` for details."
@@ -237,7 +262,9 @@ def list_models(
             exit_code=ExitCode.USAGE,
         )
     detected = not hardware and not all_devices
-    device = hardware.lower() if hardware else (None if all_devices else _detect_device(appctx))
+    device = _validate_hardware(hardware) if hardware else (
+        None if all_devices else _detect_device(appctx)
+    )
     show_catalog = not community
     show_community = not catalog_only
     models = ModelCatalog().list() if show_catalog else []

@@ -71,7 +71,9 @@ _BOARD_ARCH = {
 }
 
 
-def _is_hardware_tag(tag: str) -> bool:
+def is_hardware_tag(tag: str) -> bool:
+    """Whether `tag` names a board/mesh we recognise (p150, p300x2, ...) —
+    e.g. rejects a plausible-looking but nonexistent card like p250."""
     match = _HARDWARE_TAG_RE.match(tag)
     return bool(match and match.group("base") in _BOARD_CHIPS)
 
@@ -90,24 +92,44 @@ def _hardware_chips(tag: str) -> tuple[str, int] | None:
     return _BOARD_ARCH[base], _BOARD_CHIPS[base] * mult
 
 
+def _is_multi_board(tag: str) -> bool:
+    """Whether `tag` names a mesh of more than one board (the "xN" suffix),
+    as opposed to a single card."""
+    match = _HARDWARE_TAG_RE.match(tag)
+    return bool(match and match.group("mult"))
+
+
 def hardware_satisfies(bundle_tag: str, target_tag: str) -> bool:
     """Whether a bundle validated for `bundle_tag` can run on `target_tag`.
 
-    Same chip arch, and no more chips than the target provides — a model
+    Same chip arch, and fewer chips than the target provides — a model
     authored for one p150 (1 blackhole chip) also runs on a p300x2 (4 blackhole
-    chips): the board packaging differs but the chip budget is a superset.
+    chips): the board packaging differs but the chip budget is a strict
+    superset, so it only ever uses part of the bigger target.
     tt_kernel.manifest.compare() gates launch on arch + exact device_count; this
-    generalises equality to "at least as many" because discovery asks "can this
+    generalises "fewer" to "at least as many" because discovery asks "can this
     run here", not "is this the exact mesh it was validated on".
+
+    An equal chip count needs the identical tag, with one exception: two
+    *meshes* of more than one board (p150x4, p300x2) are fungible whenever
+    their chip budget matches, since the fabric doesn't care which board
+    contributed each chip — unlike a single card, which is a specific
+    product (a p150 is not a p100 just because both are one chip).
 
     Falls back to an exact string match when either tag is not in our board
     grammar, so an unrecognised tag is still filterable, just not comparable."""
+    if bundle_tag == target_tag:
+        return True
     bundle = _hardware_chips(bundle_tag)
     target = _hardware_chips(target_tag)
     if bundle is None or target is None:
-        return bundle_tag == target_tag
+        return False
     (bundle_arch, bundle_chips), (target_arch, target_chips) = bundle, target
-    return bundle_arch == target_arch and bundle_chips <= target_chips
+    if bundle_arch != target_arch or bundle_chips > target_chips:
+        return False
+    if bundle_chips < target_chips:
+        return True
+    return _is_multi_board(bundle_tag) and _is_multi_board(target_tag)
 
 
 def drop_superseded_hardware(profiles: dict[str, object]) -> list[str]:
@@ -329,7 +351,7 @@ def _classify(tags: list[str]) -> tuple[str | None, str | None, list[str], list[
             continue
         elif tag in _ARCH_TAGS:
             arch.append(tag)
-        elif _is_hardware_tag(tag):
+        elif is_hardware_tag(tag):
             hardware.append(tag)
     return kind, engine, sorted(arch), sorted(hardware)
 
