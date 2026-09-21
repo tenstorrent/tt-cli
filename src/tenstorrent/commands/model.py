@@ -194,7 +194,7 @@ def _model_table(payload: dict, *, hardware: str | None, detected: bool) -> Tabl
     table = Table(title=title, caption=_MODEL_CAPTION, caption_justify="left")
     # fold rather than ellipsize: the name is what you paste into `tt serve`
     table.add_column("name", overflow="fold")
-    for column in ("source", "engines", "profiles", "cached"):
+    for column in ("source", "engine", "serving profiles", "weights"):
         table.add_column(column)
     for row in payload["models"]:
         table.add_row(

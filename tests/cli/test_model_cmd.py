@@ -703,9 +703,9 @@ def test_model_list_shows_catalog_and_community_together(
     assert [c.strip() for c in header.strip("┃").split("┃")] == [
         "name",
         "source",
-        "engines",
-        "profiles",
-        "cached",
+        "engine",
+        "serving profiles",
+        "weights",
     ]
 
 
