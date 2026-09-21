@@ -152,7 +152,7 @@ class StudioBackend:
             raise TTError(
                 "TT-Studio is not installed, so there is nothing for tt to stop.",
                 why="tt installs it on the first `tt serve` through studio, not for teardown.",
-                next_step="`tt serve <model> --backend studio` installs it and deploys.",
+                next_step="`tt serve <model> --studio` installs it and deploys.",
                 exit_code=ExitCode.TOOL_MISSING,
                 details={"tool": TOOL},
             )

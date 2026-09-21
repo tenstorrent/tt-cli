@@ -823,7 +823,7 @@ def test_serve_rejects_a_device_the_model_has_no_entry_for(runner, docker_presen
     assert not fake_server.exists()
 
 
-# -- --backend routing: inference-server | studio | model-manager | auto ---------------
+# -- path flags: --inference-server | --studio | --model | none (auto) -----------------
 
 
 @pytest.fixture
@@ -878,38 +878,45 @@ def test_auto_prefers_the_inference_server_when_both_know_the_model(
 def test_studio_is_refused_for_a_model_the_inference_server_serves(
     runner, studio_docker, fake_studio, fake_server
 ):
-    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--backend", "studio"])
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--studio"])
     assert result.exit_code == ExitCode.UNSUPPORTED, result.output
     assert "not offered through studio" in result.output
-    assert "--backend inference-server" in result.output
+    assert "--inference-server" in result.output
     assert not fake_studio.exists() and not fake_server.exists()
 
 
 def test_inference_server_refuses_a_studio_only_model(runner, docker_present, fake_server):
-    result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--backend", "inference-server"])
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--inference-server"])
     assert result.exit_code == ExitCode.UNSUPPORTED, result.output
-    assert "--backend studio" in result.output
+    assert "--studio" in result.output
     assert not fake_server.exists()
 
 
 def test_model_manager_refuses_a_catalog_model(runner, fake_model_manager):
     result = runner.invoke(
-        app, ["serve", "Llama-3.1-8B-Instruct", "--backend", "model-manager"]
+        app, ["serve", "Llama-3.1-8B-Instruct", "--model"]
     )
     assert result.exit_code == ExitCode.USAGE, result.output
     assert "bundle" in result.output
     assert not fake_model_manager.exists()
 
 
+def test_path_flags_are_exclusive(runner, fake_studio, fake_server):
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--studio", "--inference-server"])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--inference-server and --studio" in result.output
+    assert not fake_studio.exists() and not fake_server.exists()
+
+
 def test_studio_refuses_a_bundle_id(runner, fake_studio):
-    result = runner.invoke(app, ["serve", "acme/demo", "--backend", "studio"])
+    result = runner.invoke(app, ["serve", "acme/demo", "--studio"])
     assert result.exit_code == ExitCode.UNSUPPORTED, result.output
     assert not fake_studio.exists()
 
 
 @pytest.mark.fakes_only
 def test_explicit_model_manager_still_serves_a_bundle(runner, fake_model_manager):
-    result = runner.invoke(app, ["serve", "acme/demo", "--backend", "model-manager"])
+    result = runner.invoke(app, ["serve", "acme/demo", "--model"])
     assert result.exit_code == 0, result.output
     assert json.loads(fake_model_manager.read_text().splitlines()[-1])["argv"] == [
         "serve", "acme/demo",
@@ -964,14 +971,14 @@ def test_studio_dry_run_needs_neither_docker_nor_a_checkout(runner, isolated_dir
 
 @pytest.mark.fakes_only
 def test_studio_dry_run_reports_the_installed_checkout(runner, fake_studio, fakes_dir):
-    result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--backend", "studio", "--dry-run"])
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--studio", "--dry-run"])
     assert result.exit_code == 0, result.output
     assert "TT-Studio" in result.output
     assert str(fakes_dir / "studio-repo") in result.output
     assert not fake_studio.exists()  # a dry run never launches
 
 
-# -- the picker: `tt serve --backend X` with no model ---------------------------------
+# -- the picker: `tt serve --studio` (or another path flag) with no model -------------
 
 
 @pytest.mark.fakes_only
@@ -980,7 +987,7 @@ def test_picker_lists_the_backends_models_and_serves_the_choice(
 ):
     # no tt-smi wired → no device filter → only the studio-only models are
     # offered (the shared ones belong to inference-server); "2" is Qwen3.8-27B
-    result = runner.invoke(app, ["serve", "--backend", "studio"], input="2\n")
+    result = runner.invoke(app, ["serve", "--studio"], input="2\n")
     assert result.exit_code == 0, result.output
     assert "1. Qwen3.5-9B" in result.output
     assert "2. Qwen3.8-27B" in result.output
@@ -994,7 +1001,7 @@ def test_picker_filters_to_the_detected_device(
 ):
     monkeypatch.setenv("TT_TOOL_BIN_TT_SMI", str(fake_bin / "tt-smi"))
     monkeypatch.setenv("FAKE_SMI_SCENARIO", "multi")  # p300x2
-    result = runner.invoke(app, ["serve", "--backend", "studio"], input="1\n")
+    result = runner.invoke(app, ["serve", "--studio"], input="1\n")
     assert result.exit_code == 0, result.output
     assert "Models for p300x2" in result.output
     assert "Qwen3.8-27B" in result.output
@@ -1005,7 +1012,9 @@ def test_picker_filters_to_the_detected_device(
 def test_picker_for_auto_shows_which_backend_serves_each(
     runner, serve_tty, docker_present, fake_server
 ):
-    result = runner.invoke(app, ["serve", "--backend", "auto"], input="1\n")
+    # no path flag = every path; bare `tt serve` is help, so any other option
+    # (here the default workflow) reaches the picker
+    result = runner.invoke(app, ["serve", "--workflow", "server"], input="1\n")
     assert result.exit_code == 0, result.output
     assert "Llama-3.1-8B-Instruct  inference-server" in result.output
     assert "Qwen3.5-9B" in result.output and "studio" in result.output
@@ -1013,13 +1022,13 @@ def test_picker_for_auto_shows_which_backend_serves_each(
 
 
 def test_picker_is_a_usage_error_without_a_terminal(runner):
-    result = runner.invoke(app, ["serve", "--backend", "studio"])
+    result = runner.invoke(app, ["serve", "--studio"])
     assert result.exit_code == ExitCode.USAGE, result.output
     assert "needs a terminal" in result.output
 
 
 def test_picker_is_a_usage_error_under_json(runner, serve_tty):
-    result = runner.invoke(app, ["serve", "--backend", "studio", "--json"])
+    result = runner.invoke(app, ["serve", "--studio", "--json"])
     assert result.exit_code == ExitCode.USAGE, result.output
 
 
@@ -1030,7 +1039,7 @@ def test_bare_serve_still_shows_help(runner):
 
 
 def test_model_manager_picker_needs_a_pulled_bundle(runner, serve_tty, fake_model_manager):
-    result = runner.invoke(app, ["serve", "--backend", "model-manager"])
+    result = runner.invoke(app, ["serve", "--model"])
     assert result.exit_code == ExitCode.ERROR, result.output
     assert "tt model list --community" in result.output
 
@@ -1039,7 +1048,7 @@ def test_model_manager_picker_needs_a_pulled_bundle(runner, serve_tty, fake_mode
 def test_model_manager_picker_offers_pulled_bundles(
     runner, serve_tty, fake_model_manager, pulled_bundle
 ):
-    result = runner.invoke(app, ["serve", "--backend", "model-manager"], input="1\n")
+    result = runner.invoke(app, ["serve", "--model"], input="1\n")
     assert result.exit_code == 0, result.output
     assert "1. acme/demo" in result.output
     assert json.loads(fake_model_manager.read_text().splitlines()[-1])["argv"] == [

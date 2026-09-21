@@ -3,11 +3,12 @@
 
 """`tt serve` — run inference (or benchmarks/evals) on a model. [beta]
 
-Three serving paths. `--backend auto` (the default) picks by the model name: a
+Three serving paths. With no flag, the path is picked by the model name: a
 name in tt-inference-server's released spec goes to tt-inference-server; a name
 only TT-Studio's catalog knows goes to studio; a Hugging Face bundle id
-(`namespace/name`) neither knows falls back to tt-model. An explicit --backend
-forces one, and with no model at all opens a picker of what that backend serves."""
+(`namespace/name`) neither knows falls back to tt-model. `--inference-server`,
+`--studio` or `--model` forces one, and with no model at all opens a picker of
+what that backend serves."""
 
 from __future__ import annotations
 
@@ -91,15 +92,24 @@ def serve(
     model: str = typer.Argument(
         None,
         help="Catalog model name (Llama-3.1-8B-Instruct) or a tt-model bundle id "
-        "(namespace/name). Omit it with --backend to pick from a list.",
+        "(namespace/name). Omit it with --inference-server/--studio/--model to "
+        "pick from a list.",
         autocompletion=complete_model,
     ),
-    backend: Backend = typer.Option(
-        Backend.auto,
-        "--backend",
-        help="inference-server, studio, model-manager, or auto: inference-server "
-        "when its spec has the model, studio for the models only studio carries, "
-        "model-manager for a bundle id.",
+    inference_server: bool = typer.Option(
+        False,
+        "--inference-server",
+        help="Serve through tt-inference-server (default when its spec has the model).",
+    ),
+    studio: bool = typer.Option(
+        False,
+        "--studio",
+        help="Serve through TT-Studio (default for the models only studio carries).",
+    ),
+    model_manager: bool = typer.Option(
+        False,
+        "--model",
+        help="Serve through tt-model (default for a bundle id, namespace/name).",
     ),
     workflow: Workflow = typer.Option(
         Workflow.server, "--workflow", help="server, benchmarks, or evals."
@@ -145,6 +155,9 @@ def serve(
     # context_settings) so tt-model's own flags — --port, --follow, --profile — and
     # its vLLM passthrough reach it unchanged.
     extra_args = list(ctx.args)
+    backend = _requested_backend(
+        inference_server=inference_server, studio=studio, model_manager=model_manager
+    )
     catalog = ModelCatalog()
     if model is None:
         model = _pick_model(appctx, catalog, backend)
@@ -198,6 +211,36 @@ def serve(
     )
 
 
+_BACKEND_FLAGS = {
+    Backend.inference_server: "--inference-server",
+    Backend.studio: "--studio",
+    Backend.model_manager: "--model",
+}
+
+
+def _requested_backend(
+    *, inference_server: bool, studio: bool, model_manager: bool
+) -> Backend:
+    """The one path the flags ask for; none means auto. The flags are exclusive."""
+    chosen = [
+        b
+        for b, on in (
+            (Backend.inference_server, inference_server),
+            (Backend.studio, studio),
+            (Backend.model_manager, model_manager),
+        )
+        if on
+    ]
+    if len(chosen) > 1:
+        raise TTError(
+            "Pick one serving path.",
+            why=" and ".join(_BACKEND_FLAGS[b] for b in chosen) + " were both given.",
+            next_step="Pass at most one of --inference-server, --studio, --model.",
+            exit_code=ExitCode.USAGE,
+        )
+    return chosen[0] if chosen else Backend.auto
+
+
 def _resolve_backend(
     entry: ModelInfo | None, model: str, backend: Backend, *, catalog_origin: str
 ) -> Backend:
@@ -213,7 +256,7 @@ def _resolve_backend(
             why=f"It is not in the model catalog ({catalog_origin}); only tt-model "
             "bundle ids (namespace/name) serve outside it.",
             next_step=f"Run `tt model list` to see what {backend.value} serves, or drop "
-            "--backend.",
+            f"{_BACKEND_FLAGS[backend]}.",
             exit_code=ExitCode.UNSUPPORTED,
         )
     if backend is Backend.auto:
@@ -226,13 +269,13 @@ def _resolve_backend(
         raise TTError(
             f"{entry.name} is a catalog model, not a tt-model bundle.",
             why="model-manager serves bundle ids (namespace/name) only.",
-            next_step=f"Drop --backend, or use `tt serve {entry.name} --backend "
-            f"{entry.backends[0]}`.",
+            next_step=f"Drop --model, or use `tt serve {entry.name} "
+            f"{_BACKEND_FLAGS[Backend(entry.backends[0])]}`.",
             exit_code=ExitCode.USAGE,
         )
     if backend.value not in entry.backends:
         alternatives = " or ".join(
-            f"`tt serve {entry.name} --backend {b}`" for b in entry.backends
+            f"`tt serve {entry.name} {_BACKEND_FLAGS[Backend(b)]}`" for b in entry.backends
         )
         raise TTError(
             f"{entry.name} is not served through {backend.value}.",
@@ -242,15 +285,16 @@ def _resolve_backend(
                 if backend is Backend.studio
                 else "."
             ),
-            next_step=f"Use {alternatives}, or drop --backend.",
+            next_step=f"Use {alternatives}, or drop {_BACKEND_FLAGS[backend]}.",
             exit_code=ExitCode.UNSUPPORTED,
         )
     return backend
 
 
 def _pick_model(appctx, catalog: ModelCatalog, backend: Backend) -> str:
-    """Interactive fallback for `tt serve --backend X` with no model: a numbered
-    list of what that backend serves here, on stderr, answered with a number."""
+    """Interactive fallback for `tt serve --studio` (or another path flag) with no
+    model: a numbered list of what that backend serves here, on stderr, answered
+    with a number."""
     if appctx.output.json_mode or appctx.output.quiet or not _stdin_isatty():
         raise TTError(
             "No model given.",
