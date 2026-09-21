@@ -370,7 +370,7 @@ def after_command(appctx: Any, click_ctx: Any) -> None:
     break, slow, or noisy-up a command."""
     try:
         # A decorated group callback (`tt config` on the way to `tt config get`) would
-        # run this twice per invocation; only the leaf counts — same rule as the span.
+        # run this twice per invocation; only the leaf counts — same rule as telemetry.
         if getattr(click_ctx, "invoked_subcommand", None) is not None:
             return
         if getattr(click_ctx, "command_path", None) in _EXEMPT_COMMANDS:
