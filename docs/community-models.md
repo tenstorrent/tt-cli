@@ -33,7 +33,7 @@ To see what your machine can run:
 tt model list
 ```
 
-The CLI knows your hardware: the list is backed by a generated support list (built from tt-inference-server's `release_model_spec.json` at the pinned server version, plus tt's own record of known-not-working board combinations) and filtered by your detected device configuration. A model known to fail on your board is hidden, and `tt model info` says why. Use `--all` to see every model on every device, `--hw <device>` to filter for a specific configuration without touching the hardware, and `--cached` and `--type` to narrow further. This is the released catalog: models Tenstorrent ships and tests through tt-inference-server. It is the place to start when you want known per-device support. `tt model list --community` shows a different set — bundles anyone has published with tt-model-manager, which Tenstorrent does not test or maintain (covered below). Model names are the spec's short ids (`Llama-3.1-8B-Instruct`); a HuggingFace repo id works as an alias anywhere a name is accepted.
+The CLI knows your hardware: the list is backed by a generated support list (built from tt-inference-server's `release_model_spec.json` at the pinned server version, plus tt's own record of known-not-working board combinations) and filtered by your detected device configuration. A model known to fail on your board is hidden, and `tt model info` says why. Use `--all` to see every model on every device, `--hw <device>` to filter for a specific configuration without touching the hardware, and `--cached` and `--type` to narrow further. The list mixes two sources, marked in the `source` column: the released catalog (`tt-inference-server`) is models Tenstorrent ships and tests, the place to start when you want known per-device support; community bundles (`HuggingFace`, or `local` once installed) are bundles anyone has published with tt-model-manager, which Tenstorrent does not test or maintain (covered below). `--catalog` and `--community` show just one source. Model names are the spec's short ids (`Llama-3.1-8B-Instruct`); a HuggingFace repo id works as an alias anywhere a name is accepted.
 
 Before committing to a large download, inspect the model:
 
@@ -67,7 +67,7 @@ Model bring-up on new silicon has always had an awkward afterlife. Someone does 
 tt-model-manager changes what a finished bring-up *is*: a self-contained bundle published as a HuggingFace repo, and tt-cli surfaces it in the same commands you already use:
 
 ```bash
-tt model list --community            # community bundles on the Hub, not the released catalog
+tt model list --community            # only community bundles, not the released catalog
 tt model pull you/mymodel
 tt serve you/mymodel                 # served via tt-model-manager
 tt serve you/mymodel --port 8080  # unrecognized args pass through to the bundle's engine
