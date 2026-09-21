@@ -340,6 +340,10 @@ def serve_details(repo_id: str) -> dict | None:
         "tt_metal_version": manifest.get("tt_metal_version"),
         "weights_repo": weights_repo_for(repo_id, entry),
         "profiles": profiles,
+        # The author names the default when there is more than one; otherwise the
+        # only profile is it (container_manifest.resolved_default, mirrored).
+        "default_profile": container.get("default_profile")
+        or (profiles[0] if profiles else None),
     }
 
 
@@ -505,6 +509,13 @@ def save_community_cache(names: list[str]) -> None:
         path.write_text(json.dumps({"names": sorted(names)}, indent=2))
     except OSError:
         pass
+
+
+def add_to_community_cache(names: list[str]) -> None:
+    """Union `names` into the completion cache — for `tt model search`, whose
+    results are a slice of the Hub rather than the whole catalog, so they must not
+    replace what a full listing recorded."""
+    save_community_cache(sorted({*cached_community_names(), *names}))
 
 
 def cached_community_names() -> list[str]:

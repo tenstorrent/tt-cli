@@ -34,6 +34,9 @@ from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub.completions import complete_model
 
 
+PANEL_BUNDLE = "tt-model bundles"
+
+
 class Workflow(str, Enum):
     server = "server"
     benchmarks = "benchmarks"
@@ -102,6 +105,45 @@ def serve(
         "--dry-run",
         help="Show the resolved configuration and the command, without running it.",
     ),
+    profile: str = typer.Option(
+        None,
+        "--profile",
+        help="Bundles: serve this profile instead of the bundle's default "
+        "(`tt model profiles NAME` lists them).",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
+    detach: bool = typer.Option(
+        False,
+        "--detach",
+        help="Bundles: return once the container is up instead of following the boot.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
+    print_only: bool = typer.Option(
+        False,
+        "--print",
+        help="Bundles: print the exact launch command and environment instead of "
+        "running it.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Bundles: update to the Hub's newest revision before serving.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
+    no_update_check: bool = typer.Option(
+        False,
+        "--no-update-check",
+        help="Bundles: skip the advisory about a newer revision on the Hub.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
+    no_weights: bool = typer.Option(
+        False,
+        "--no-weights",
+        help="Bundles: do not pre-fetch the weights on the host; the engine loads "
+        "them itself.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
 ) -> None:
@@ -109,24 +151,49 @@ def serve(
     when the name is a bundle id the released spec does not cover.
 
     For a bundle id, anything tt serve does not recognize is passed to tt-model —
-    its own flags and its vLLM passthrough: `tt serve ns/model -- --port 8080 --follow`.
+    its own flags and its vLLM passthrough: `tt serve ns/model -- --max-model-len 4096`.
     """
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
     offline = offline or appctx.offline
     # Unrecognized options are collected rather than rejected (see the command's
-    # context_settings) so tt-model's own flags — --port, --follow, --profile — and
-    # its vLLM passthrough reach it unchanged.
+    # context_settings) so tt-model's vLLM passthrough reaches it unchanged.
     extra_args = list(ctx.args)
+    # tt-model's own serve options, spelled the way it takes them. Declared here
+    # so they show up in --help and in the dry-run plan, rather than only working
+    # by accident of the passthrough.
+    serve_flags = ["--profile", profile] if profile else []
+    serve_flags += [
+        flag
+        for flag, on in (
+            ("--detach", detach),
+            ("--print", print_only),
+            ("--refresh", refresh),
+            ("--no-update-check", no_update_check),
+            ("--no-weights", no_weights),
+        )
+        if on
+    ]
     catalog = ModelCatalog()
     entry = catalog.find(model)
     if entry is None:
         _serve_with_tt_model_manager(
             appctx, model, catalog_origin=catalog.origin,
             workflow=workflow, device=device, offline=offline,
-            port=port, extra_args=extra_args, dry_run=dry_run,
+            port=port, serve_flags=serve_flags, extra_args=extra_args, dry_run=dry_run,
         )
         return
+    if serve_flags:
+        given = [f for f in serve_flags if f.startswith("--")]
+        verb = "only applies" if len(given) == 1 else "only apply"
+        raise TTError(
+            f"{' and '.join(given)} {verb} to a tt-model bundle; {entry.name} is "
+            "a catalog model.",
+            why="They configure `tt-model serve`; tt-inference-server has no profiles "
+            "or Hub revisions to refresh, and prints its plan with --dry-run.",
+            next_step="Drop the flag, or use `tt serve --dry-run`.",
+            exit_code=ExitCode.USAGE,
+        )
     if extra_args:
         raise TTError(
             f"Unrecognized arguments for a catalog model: {' '.join(extra_args)}",
@@ -210,7 +277,9 @@ def _plan_renderer(plan: dict) -> Group:
                 "installed, but no readable manifest — tt-model resolves it at launch",
             )
         if not plan["installed"]:
-            table.add_row("tt-model", "not installed — the first serve installs it")
+            table.add_row("tt-model", "not installed — `tt update` or this serve installs it")
+        if plan.get("serve_flags"):
+            table.add_row("tt-model options", " ".join(plan["serve_flags"]))
         if plan["extra_args"]:
             table.add_row("passthrough", " ".join(plan["extra_args"]))
     else:
@@ -278,6 +347,7 @@ def _serve_with_tt_model_manager(
     offline: bool,
     port: int | None,
     extra_args: list[str],
+    serve_flags: list[str] | None = None,
     dry_run: bool = False,
 ) -> None:
     """Fallback path: a name the released spec does not know. Only Hub-style bundle
@@ -295,11 +365,15 @@ def _serve_with_tt_model_manager(
             "itself (override with its own --arch)."
         )
     if dry_run:
-        plan = backend.plan(model, offline=offline, port=port, extra_args=extra_args)
+        plan = backend.plan(
+            model, offline=offline, port=port, serve_flags=serve_flags, extra_args=extra_args
+        )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
     appctx.output.status(
         f"{model} is not in the model catalog ({catalog_origin}) — "
         "serving it as a tt-model bundle."
     )
-    backend.serve(model, offline=offline, port=port, extra_args=extra_args)
+    backend.serve(
+        model, offline=offline, port=port, serve_flags=serve_flags, extra_args=extra_args
+    )
