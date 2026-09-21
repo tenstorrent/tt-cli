@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "release_version": "0.21.0",
+ "release_version": "0.22.0",
  "models": [
   {
    "name": "AFM-4.5B",
@@ -1574,7 +1574,8 @@
    "hf_repo": "meta-llama/Llama-3.1-8B-Instruct",
    "model_type": "llm",
    "engines": [
-    "vLLM"
+    "vLLM",
+    "forge"
    ],
    "tt_model_id": "Llama-3.1-8B-Instruct",
    "param_count": 8,
@@ -1680,7 +1681,8 @@
     },
     "p150": {
      "engines": [
-      "vLLM"
+      "vLLM",
+      "forge"
      ],
      "status": "EXPERIMENTAL",
      "max_context": 65536,
