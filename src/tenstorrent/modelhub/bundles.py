@@ -11,14 +11,17 @@ packaging, which is what a listing wants), and `tt model list` must not have to
 install tt-model just to show what exists.
 
 Bundles deliberately do NOT go through ModelCatalog: they share no schema with
-the released compat spec (no per-device status, no max_context), and merging them
-into the spec listing would blur which tool can serve what.
+the released compat spec (no per-device status, no max_context). `tt model
+list` still shows both together, but only by normalizing each into a display
+row at render time — see commands/model.py:_catalog_row/_bundle_row — never by
+folding a BundleInfo into a ModelInfo.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,16 +54,125 @@ _SKIP_TAG_PREFIXES = ("region:", "license:", "arxiv:", "dataset:", "base_model:"
 # until then its bundles show an empty arch rather than a wrong one.
 _ARCH_TAGS = frozenset({"blackhole", "wormhole_b0", "grayskull"})
 
+# Board/mesh tags: both packaging paths in tt-model-manager write these (cli.py's
+# `mesh_topology.lower()`, build.py's `_card_tags`) as a board label optionally
+# suffixed with the device count, e.g. "p150x4", "p300x2", "n300".
+_HARDWARE_TAG_RE = re.compile(r"^(?P<base>[a-z]\d+)(?:x(?P<mult>[1-9]\d*))?$")
+
+# Chips per board, and the board's chip family — the vocabulary of boards a tag can name.
+_BOARD_CHIPS = {"p100": 1, "p150": 1, "n150": 1, "e150": 1, "p300": 2, "n300": 2}
+_BOARD_ARCH = {
+    "p100": "blackhole",
+    "p150": "blackhole",
+    "p300": "blackhole",
+    "n150": "wormhole_b0",
+    "n300": "wormhole_b0",
+    "e150": "grayskull",
+}
+
+# Catalog device ids that name a board/mesh already covered by the grammar
+# above under a different spelling (t3k is run.py's id for 4 n300 boards, see
+# inference_server._BOARDS_TO_DEVICE) — resolved before comparing tags so a
+# community bundle tagged "n300x4" still matches a detected/explicit --hw t3k.
+_DEVICE_ALIASES = {"t3k": "n300x4"}
+
+
+def is_hardware_tag(tag: str) -> bool:
+    """Whether `tag` names a board/mesh we recognise (p150, p300x2, ...) —
+    e.g. rejects a plausible-looking but nonexistent card like p250."""
+    match = _HARDWARE_TAG_RE.match(tag)
+    return bool(match and match.group("base") in _BOARD_CHIPS)
+
+
+def _hardware_chips(tag: str) -> tuple[str, int] | None:
+    """(chip arch, total chip count) for a board/mesh tag, or None if the tag is
+    not one of ours — a bare board is one board's worth of chips, "x4" etc. is
+    that many boards."""
+    match = _HARDWARE_TAG_RE.match(tag)
+    if not match:
+        return None
+    base = match.group("base")
+    if base not in _BOARD_CHIPS:
+        return None
+    mult = int(match.group("mult") or 1)
+    return _BOARD_ARCH[base], _BOARD_CHIPS[base] * mult
+
+
+def _is_multi_board(tag: str) -> bool:
+    """Whether `tag` names a mesh of more than one board (the "xN" suffix),
+    as opposed to a single card."""
+    match = _HARDWARE_TAG_RE.match(tag)
+    return bool(match and match.group("mult"))
+
+
+def hardware_satisfies(bundle_tag: str, target_tag: str) -> bool:
+    """Whether a bundle validated for `bundle_tag` can run on `target_tag`.
+
+    Same chip arch, and fewer chips than the target provides — a model
+    authored for one p150 (1 blackhole chip) also runs on a p300x2 (4 blackhole
+    chips): the board packaging differs but the chip budget is a strict
+    superset, so it only uses part of the bigger target.
+
+    An equal chip count needs the identical tag, with one exception: two
+    meshes of more than one board (p150x4, p300x2) are fungible whenever
+    their chip budget matches, since the fabric doesn't care which board
+    contributed each chip — unlike a single card, which is a specific
+    product (a p150 is not a p100 just because both are one chip).
+
+    Falls back to an exact string match when either tag is not in our board
+    grammar, so an unrecognised tag is still filterable, just not comparable."""
+    if bundle_tag == target_tag:
+        return True
+    bundle_tag = _DEVICE_ALIASES.get(bundle_tag, bundle_tag)
+    target_tag = _DEVICE_ALIASES.get(target_tag, target_tag)
+    bundle = _hardware_chips(bundle_tag)
+    target = _hardware_chips(target_tag)
+    if bundle is None or target is None:
+        return False
+    (bundle_arch, bundle_chips), (target_arch, target_chips) = bundle, target
+    if bundle_arch != target_arch or bundle_chips > target_chips:
+        return False
+    if bundle_chips < target_chips:
+        return True
+    return _is_multi_board(bundle_tag) and _is_multi_board(target_tag)
+
+
+def drop_superseded_hardware(profiles: dict[str, object]) -> list[str]:
+    """Tags to keep from `profiles` (tag -> whatever actually differs about
+    running there, e.g. (max_context, impl_id)) — the model-manager
+    convention: a profile already runs on any bigger board of the same chip
+    arch, using only part of it, so a bigger tag is redundant once a smaller
+    one already gives the identical result. Tags outside the board/mesh
+    grammar (t3k, galaxy, ...) have no chip count to compare and always stay."""
+    chips = {tag: _hardware_chips(tag) for tag in profiles}
+
+    def superseded(tag: str) -> bool:
+        hw = chips[tag]
+        if hw is None:
+            return False
+        arch, count = hw
+        return any(
+            chips[other] is not None
+            and chips[other][0] == arch
+            and chips[other][1] < count
+            and profiles[other] == profiles[tag]
+            for other in profiles
+            if other != tag
+        )
+
+    return sorted(tag for tag in profiles if not superseded(tag))
+
 
 @dataclass(frozen=True)
 class BundleInfo:
     """One published tt-model bundle. Field order IS the --json contract."""
 
     name: str  # HF repo id, namespace/name — exactly what `tt serve` takes
-    source: str = "HF"
+    source: str = "HuggingFace"
     kind: str | None = None  # container | self-contained | thin
     engine: str | None = None  # vLLM today
     arch: list[str] = field(default_factory=list)  # blackhole, wormhole_b0, 1x4, …
+    hardware: list[str] = field(default_factory=list)  # board/mesh targets, e.g. p150x4
     downloads: int | None = None
     installed: bool = False  # a local install recorded by tt-model
     # Weights live in the shared HF cache, but which repo they come from is only
@@ -145,6 +257,48 @@ def weights_repo_for(repo_id: str, entry: dict) -> str | None:
     return None
 
 
+def _hardware_from_manifest(manifest: dict) -> list[str]:
+    """Board/mesh targets a manifest dict declares, from every serve profile — a
+    container image can validate more than one board (see tt_kernel.build's
+    _card_tags upstream, which tags each one the same way)."""
+    serve = (manifest.get("container") or {}).get("serve") or {}
+    default_hw = serve.get("hardware") or serve.get("mesh_device")
+    found = {str(default_hw).strip().lower()} if default_hw else set()
+    for profile in (manifest.get("container") or {}).get("serve_profiles") or []:
+        if not isinstance(profile, dict):
+            continue
+        hw = profile.get("hardware") or profile.get("mesh_device") or default_hw
+        if hw:
+            found.add(str(hw).strip().lower())
+    return sorted(found)
+
+
+def hardware_for(repo_id: str, entry: dict) -> list[str]:
+    """Board/mesh targets a *pulled* bundle's manifest declares. [] when there is
+    no manifest to read, same as engine_for/weights_repo_for."""
+    return _hardware_from_manifest(_manifest_for(repo_id, entry) or {})
+
+
+def hardware_from_hub_manifest(repo_id: str) -> list[str]:
+    """Board/mesh targets read straight from a bundle's manifest on the Hub — the
+    fallback for a bundle whose repo tags carry none (tag_repo writes are
+    best-effort in tt-model-manager's cli.py, and a container package predating
+    build.py's _card_tags fix was never tagged with one at all).
+
+    One Hub fetch, paid only by a bundle that reaches here still untagged after
+    both the repo tags and (if pulled) the local manifest came up empty — not
+    by the listing as a whole. [] on any failure (network, 404, private,
+    malformed manifest): the tag gap this covers is rare enough that a silent
+    miss is the right default, same as is_bundle_repo's None-means-unknown."""
+    try:
+        from huggingface_hub import hf_hub_download
+
+        manifest = json.loads(Path(hf_hub_download(repo_id, MANIFEST_NAME)).read_text())
+    except Exception:  # noqa: BLE001 — network/404/auth/malformed all mean "no data"
+        return []
+    return _hardware_from_manifest(manifest)
+
+
 def serve_details(repo_id: str) -> dict | None:
     """Launch settings a *pulled* bundle records in its own manifest, or None.
 
@@ -193,9 +347,10 @@ def serve_details(repo_id: str) -> dict | None:
     }
 
 
-def _classify(tags: list[str]) -> tuple[str | None, str | None, list[str]]:
+def _classify(tags: list[str]) -> tuple[str | None, str | None, list[str], list[str]]:
     kind = engine = None
     arch: list[str] = []
+    hardware: list[str] = []
     for tag in tags:
         if tag in _KIND_TAGS:
             kind = kind or _KIND_TAGS[tag]
@@ -205,7 +360,9 @@ def _classify(tags: list[str]) -> tuple[str | None, str | None, list[str]]:
             continue
         elif tag in _ARCH_TAGS:
             arch.append(tag)
-    return kind, engine, sorted(arch)
+        elif is_hardware_tag(tag):
+            hardware.append(tag)
+    return kind, engine, sorted(arch), sorted(hardware)
 
 
 MANIFEST_NAME = "tt_kernel_manifest.json"  # tt-model's on-disk contract, unrenamed
@@ -260,6 +417,7 @@ def local_bundles(config: ConfigStore | None = None) -> list[BundleInfo]:
                 kind="container" if entry.get("container") else None,
                 engine=engine_for(repo_id, entry),
                 arch=[arch] if arch else [],
+                hardware=hardware_for(repo_id, entry),
                 installed=True,
                 weights_repo=weights_repo,
                 weights_bytes=weights_bytes,
@@ -279,7 +437,11 @@ def search_community(
 
     Network-only by nature: the catalog is a Hub index, so there is nothing local
     to fall back on. `config` enables the weights-cache lookup for installed
-    bundles (it resolves the HF cache root)."""
+    bundles (it resolves the HF cache root).
+
+    An untagged, never-pulled bundle costs one extra Hub fetch each (see
+    hardware_from_hub_manifest) -- bounded by how many bundles actually lack the
+    tag, not by the catalog size; 2 of 46 published bundles need it today."""
     from huggingface_hub import HfApi
     from huggingface_hub.errors import HfHubHTTPError
 
@@ -291,8 +453,8 @@ def search_community(
         raise TTError(
             "Could not reach the Hugging Face Hub.",
             why=str(exc),
-            next_step="Check your connection, or drop --community to list the "
-            "released model catalog (which is bundled).",
+            next_step="Check your connection, or pass --catalog to list the "
+            "released model catalog without contacting the Hub.",
             exit_code=ExitCode.ERROR,
         ) from exc
     installed = installed_bundles()
@@ -302,19 +464,26 @@ def search_community(
         repo_id = str(getattr(repo, "id", "") or "")
         if not repo_id:
             continue
-        kind, engine, arch = _classify(list(getattr(repo, "tags", None) or []))
+        kind, engine, arch, hardware = _classify(list(getattr(repo, "tags", None) or []))
         entry = installed.get(repo_id.lower())
         weights_repo = weights_bytes = None
         if entry is not None:
             weights_repo, weights_bytes = _weights_state(repo_id, entry, sizes)
             # The manifest is authoritative; the tag is only a hint.
             engine = engine_for(repo_id, entry) or engine
+            hardware = hardware_for(repo_id, entry) or hardware
+        elif not hardware:
+            # Untagged and never pulled here: the only source left is the
+            # bundle's own manifest on the Hub, fetched only because the tag
+            # came up empty (see hardware_from_hub_manifest).
+            hardware = hardware_from_hub_manifest(repo_id)
         bundles.append(
             BundleInfo(
                 name=repo_id,
                 kind=kind,
                 engine=engine,
                 arch=arch,
+                hardware=hardware,
                 downloads=getattr(repo, "downloads", None),
                 installed=entry is not None,
                 weights_repo=weights_repo,

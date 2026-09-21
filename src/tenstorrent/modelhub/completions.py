@@ -6,10 +6,10 @@
 These run inside the tab-completion subprocess (`_TT_COMPLETE=...`), where there
 is no AppContext and no budget for slow work. Every source is a local file: the
 bundled release spec (what `tt model list` shows), tt-model's install index, and
-the community-catalog cache written by the last `tt model list --community` —
-never the network. Before the first `--community` run the cache simply doesn't
-exist and bundle ids aren't offered. A broken source means fewer suggestions,
-never a broken tab key, so everything is swallowed.
+the community-catalog cache written by the last `tt model list` run — never the
+network. Before the first `tt model list` run the cache simply doesn't exist and
+bundle ids aren't offered. A broken source means fewer suggestions, never a
+broken tab key, so everything is swallowed.
 """
 
 from __future__ import annotations

@@ -59,6 +59,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt model rm NAME` | Remove a model's local artifacts, keeping its weights unless `--include-weights` (`--dry-run`, `--yes`) |
 | `tt model login` | Log in to the Hugging Face Hub for gated or private bundles and weights (`--token`) |
 | `tt model publish` / `unpublish` | List or delist your pushed bundle in the community catalog; `tt model package` / `package-thin` / `push` forward to tt-model's authoring commands unchanged |
+| `tt model ps` | Model servers running on this machine: name, backend, port, health, uptime (`--all` includes stopped containers; `--no-probe` skips the HTTP health check) |
 
 | Other | Functionality |
 |---|---|
@@ -71,7 +72,7 @@ For a comprehensive view on packaging, publishing and pulling down community mod
 
 ## Interactive clients with `tt launch`
 
-`tt serve` gives you an OpenAI-compatible endpoint; `tt launch` points a client at it. tt discovers what is running by asking the server itself (`GET /v1/models`) and configures the client's endpoint for you.
+`tt serve` gives you an OpenAI-compatible endpoint; `tt launch` points a client at it. tt discovers what is running by asking the server itself (`GET /v1/models`) and configures the client's endpoint for you. `tt model ps` lists what is being served and on which port, using the same probe.
 
 ```bash
 tt launch list                         # what can I connect, and is it usable now?

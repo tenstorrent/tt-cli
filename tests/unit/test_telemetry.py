@@ -483,12 +483,23 @@ def test_bounded_filters_and_enums_are_recorded(runner, collected):
     assert props["hardware"] == "p300"
 
 
-def test_unknown_filter_values_are_dropped(runner, collected):
-    result = runner.invoke(app, ["model", "list", "--hw", "definitely-not-a-board"])
+def test_unknown_filter_values_are_dropped(runner, collected, monkeypatch):
+    # --hw is validated by the command itself now (an unrecognized board is a
+    # usage error, not a silent no-op), so --type — still unchecked, since any
+    # string can be a model_type — is what exercises telemetry's own allowlist.
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", lambda **kw: [])
+    result = runner.invoke(app, ["model", "list", "--type", "definitely-not-a-type"])
     assert result.exit_code == 0
     props = _props(collected)
-    assert "hardware" not in props
-    assert "definitely-not-a-board" not in json.dumps(collected)
+    assert "model_type" not in props
+    assert "definitely-not-a-type" not in json.dumps(collected)
+
+
+def test_unrecognized_hardware_is_a_usage_error(runner, collected, monkeypatch):
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", lambda **kw: [])
+    result = runner.invoke(app, ["model", "list", "--hw", "p250"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "p250" not in json.dumps(collected)
 
 
 def test_installer_version_must_look_like_semver(runner, collected):

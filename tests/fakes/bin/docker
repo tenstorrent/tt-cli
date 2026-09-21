@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Fake `docker` for tests: serves canned `ps`/`inspect` data and records `stop`s.
 
-FAKE_DOCKER_CONTAINERS is a JSON list of inspect records (the shape tt reads:
-Id/Name/Config.Image/Mounts/NetworkSettings.Ports/Labels/Ports — the last a raw
-`docker ps --format {{.Ports}}` string, e.g. "0.0.0.0:20000->20000/tcp").
+FAKE_DOCKER_CONTAINERS is a JSON list of inspect records in the shape tt reads:
+Id/Name/Config.Image/Config.Labels/Mounts/State/HostConfig.PortBindings/
+NetworkSettings.Ports/Labels/Ports — the last a raw `docker ps --format {{.Ports}}`
+string, e.g. "0.0.0.0:20000->20000/tcp". `ps` lists running records only — one with
+no State at all counts as running — unless --all/-a is passed, like the real thing;
+--filter label=… narrows by top-level Labels, `--format {{.Ports}}` prints the Ports
+string, everything else prints one 12-char id per line (what tt asks for).
 FAKE_DOCKER_STOP_LOG collects stopped ids.
 """
 
@@ -27,9 +31,15 @@ def main() -> int:
     args = sys.argv[1:]
     if args[:1] == ["ps"]:
         label = _label_filter(args)
+        show_all = bool({"--all", "-a"} & set(args[1:]))
         entries = _containers()
         if label is not None:
             entries = [e for e in entries if label in (e.get("Labels") or {})]
+        if not show_all:
+            entries = [
+                e for e in entries
+                if e.get("State") is None or e["State"].get("Running")
+            ]
         if "{{.Ports}}" in args:
             for entry in entries:
                 print(entry.get("Ports", ""))
