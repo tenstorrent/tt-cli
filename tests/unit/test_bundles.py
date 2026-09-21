@@ -32,7 +32,7 @@ def test_is_hardware_tag_accepts_known_boards_with_or_without_a_count():
 
 
 def test_is_hardware_tag_rejects_arch_and_unrelated_tags():
-    for tag in ("blackhole", "wormhole_b0", "vllm", "region:us", "q200x4", "p250"):
+    for tag in ("blackhole", "wormhole_b0", "vllm", "region:us", "q200x4", "p250", "p150x0"):
         assert not is_hardware_tag(tag), tag
 
 
@@ -120,6 +120,20 @@ def test_hardware_satisfies_falls_back_to_an_exact_match_for_unknown_tags():
     assert hardware_satisfies("galaxy", "galaxy")
     assert not hardware_satisfies("galaxy", "p150")
     assert not hardware_satisfies("p150", "galaxy")
+
+
+def test_hardware_satisfies_resolves_t3k_to_its_n300x4_equivalent():
+    # t3k is run.py's catalog id for 4 n300 boards; a bundle tagged the board
+    # form directly must still match a detected/explicit --hw t3k, and vice versa.
+    assert hardware_satisfies("n300x4", "t3k")
+    assert hardware_satisfies("t3k", "n300x4")
+    assert hardware_satisfies("n300", "t3k")  # fewer chips than the target
+    assert not hardware_satisfies("p150", "t3k")  # different arch
+
+
+def test_hardware_tag_rejects_a_zero_mesh_multiplier():
+    assert _hardware_chips("p150x0") is None
+    assert not hardware_satisfies("p150", "p150x0")
 
 
 def test_drop_superseded_hardware_keeps_only_the_smallest_matching_tag():

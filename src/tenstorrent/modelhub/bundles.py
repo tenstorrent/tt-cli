@@ -57,7 +57,7 @@ _ARCH_TAGS = frozenset({"blackhole", "wormhole_b0", "grayskull"})
 # Board/mesh tags: both packaging paths in tt-model-manager write these (cli.py's
 # `mesh_topology.lower()`, build.py's `_card_tags`) as a board label optionally
 # suffixed with the device count, e.g. "p150x4", "p300x2", "n300".
-_HARDWARE_TAG_RE = re.compile(r"^(?P<base>[a-z]\d+)(?:x(?P<mult>\d+))?$")
+_HARDWARE_TAG_RE = re.compile(r"^(?P<base>[a-z]\d+)(?:x(?P<mult>[1-9]\d*))?$")
 
 # Chips per board, and the board's chip family — the vocabulary of boards a tag can name.
 _BOARD_CHIPS = {"p100": 1, "p150": 1, "n150": 1, "e150": 1, "p300": 2, "n300": 2}
@@ -69,6 +69,12 @@ _BOARD_ARCH = {
     "n300": "wormhole_b0",
     "e150": "grayskull",
 }
+
+# Catalog device ids that name a board/mesh already covered by the grammar
+# above under a different spelling (t3k is run.py's id for 4 n300 boards, see
+# inference_server._BOARDS_TO_DEVICE) — resolved before comparing tags so a
+# community bundle tagged "n300x4" still matches a detected/explicit --hw t3k.
+_DEVICE_ALIASES = {"t3k": "n300x4"}
 
 
 def is_hardware_tag(tag: str) -> bool:
@@ -117,6 +123,8 @@ def hardware_satisfies(bundle_tag: str, target_tag: str) -> bool:
     grammar, so an unrecognised tag is still filterable, just not comparable."""
     if bundle_tag == target_tag:
         return True
+    bundle_tag = _DEVICE_ALIASES.get(bundle_tag, bundle_tag)
+    target_tag = _DEVICE_ALIASES.get(target_tag, target_tag)
     bundle = _hardware_chips(bundle_tag)
     target = _hardware_chips(target_tag)
     if bundle is None or target is None:
