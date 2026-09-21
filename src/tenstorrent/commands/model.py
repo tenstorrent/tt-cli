@@ -81,13 +81,24 @@ def _cached_cell(m: dict) -> str:
     return f"✓ {_human_size(m['cache_size_bytes'])}".strip() if m["cached"] else "—"
 
 
+def _add_columns(table: Table, columns: tuple[str, ...]) -> None:
+    """Columns that fold rather than ellipsize on a narrow terminal.
+
+    Rich's default overflow is `ellipsis`, which trims whatever column happens to
+    be widest — on a 40-column tmux pane that was the model name, the one value
+    the user needs whole to paste into `tt serve`. Folding wraps a long cell over
+    several lines instead, so a narrow terminal costs height, never characters.
+    """
+    for column in columns:
+        table.add_column(column, overflow="fold")
+
+
 def _list_table(payload: dict, *, detected: bool = False) -> Table:
     device = payload["device"]
     if device:
         hint = " (detected — `tt model list --all` for every device)" if detected else ""
         table = Table(title=f"Models for {device}{hint}")
-        for column in ("name", "type", "engines", "status", "cached"):
-            table.add_column(column)
+        _add_columns(table, ("name", "type", "engines", "status", "cached"))
         for m in payload["models"]:
             table.add_row(
                 m["name"],
@@ -98,8 +109,7 @@ def _list_table(payload: dict, *, detected: bool = False) -> Table:
             )
     else:
         table = Table(title="Model catalog (all devices)")
-        for column in ("name", "type", "engines", "hardware", "cached"):
-            table.add_column(column)
+        _add_columns(table, ("name", "type", "engines", "hardware", "cached"))
         for m in payload["models"]:
             table.add_row(
                 m["name"],
@@ -124,15 +134,12 @@ _COMMUNITY_CAPTION = (
 def _community_table(rows: list[dict]) -> Table:
     """Same shape as the catalog table, minus columns the Hub does not publish."""
     table = Table(title="Community model bundles (tt-model)", caption=_COMMUNITY_CAPTION)
-    # fold rather than ellipsize: the id is what you paste into `tt serve`
-    table.add_column("name", overflow="fold")
     # The table answers "which of these can I run, and is it here already".
     # `serve` would be a constant ✓, `installed` is what source=local says, and
     # `kind`/`engine` are how a bundle is built rather than something you pick one
     # on — all four stay in --json, and `tt serve <id> --dry-run` reports the
     # engine of a bundle that has been pulled.
-    for column in ("source", "arch", "weights"):
-        table.add_column(column)
+    _add_columns(table, ("name", "source", "arch", "weights"))
     for row in rows:
         # Render the value itself rather than a literal, so the table can never
         # disagree with --json about what a row's source is.
