@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import sys
 from dataclasses import dataclass
@@ -284,6 +285,12 @@ class InferenceServerBackend:
         env = dict(os.environ)
         source = "huggingface" if uses_host_weight_cache(model) else "noaction"
         env.setdefault("MODEL_SOURCE", source)
+        # tt runs the server with --no-auth, so no JWT secret is ever checked — but
+        # setup_host still getpass-prompts "Enter your JWT_SECRET:" whenever the
+        # variable is unset (and dies with EOFError when stdin is not a terminal).
+        # A throwaway value keeps the deploy non-interactive; the user's own
+        # JWT_SECRET, if exported, is left alone.
+        env.setdefault("JWT_SECRET", secrets.token_hex(32))
         return env
 
     def _python_for(self, entry: Path) -> str:
