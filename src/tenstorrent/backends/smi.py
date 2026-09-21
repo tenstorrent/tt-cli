@@ -124,6 +124,7 @@ class SmiDelegatedBackend:
                 why=f"invalid JSON: {exc}",
                 next_step="Run `tt update` to align tool versions, or `tt-smi -s` directly to inspect.",
                 exit_code=ExitCode.TOOL_FAILED,
+                reason="smi.snapshot_unparseable",
                 details={"tool": TOOL},
             ) from exc
 

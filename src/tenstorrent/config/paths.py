@@ -63,7 +63,7 @@ class Paths:
 
     @property
     def telemetry_dir(self) -> Path:
-        """Span spool + drain lock for persist-then-drain telemetry (see telemetry/spool.py)."""
+        """Event spool + drain lock for persist-then-drain telemetry (see telemetry/spool.py)."""
         return self.data_dir / "telemetry"
 
     @property
