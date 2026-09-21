@@ -520,9 +520,6 @@ def test_serve_still_installs_tt_model_on_demand(runner, uv_bin, isolated_dirs):
 
 
 # -- stopping catalog-model containers ---------------------------------------------
-FAKE_BIN_DIR = Path(__file__).parent.parent / "fakes" / "bin"
-
-
 def _container(cid, *, snapshot=None, volume=None, name=None, image="img:1"):
     mounts = []
     if snapshot:
@@ -535,23 +532,6 @@ def _container(cid, *, snapshot=None, volume=None, name=None, image="img:1"):
         "Config": {"Image": image},
         "Mounts": mounts,
     }
-
-
-@pytest.fixture
-def fake_docker(monkeypatch, tmp_path):
-    """Point the backend's runtime lookup at the fake docker and collect its stops."""
-    stop_log = tmp_path / "docker-stop.log"
-    monkeypatch.setattr(
-        "tenstorrent.backends.serving.inference_server.shutil.which",
-        lambda name: str(FAKE_BIN_DIR / "docker") if name == "docker" else None,
-    )
-    monkeypatch.setenv("FAKE_DOCKER_STOP_LOG", str(stop_log))
-    monkeypatch.setenv("FAKE_DOCKER_ARGV_LOG", str(tmp_path / "docker-argv.jsonl"))
-
-    def set_containers(entries):
-        monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(entries))
-
-    return set_containers, stop_log
 
 
 @pytest.mark.fakes_only
@@ -658,11 +638,11 @@ def test_model_stop_without_a_container_runtime_is_tool_missing(
 
 # -- logs --------------------------------------------------------------------------
 @pytest.fixture
-def docker_argv_log(fake_docker):
+def docker_argv_log(fake_docker, monkeypatch, tmp_path):
     """Where tests/fakes/bin/docker records `docker logs` invocations."""
-    import os
-
-    return Path(os.environ["FAKE_DOCKER_ARGV_LOG"])
+    log = tmp_path / "docker-argv.jsonl"
+    monkeypatch.setenv("FAKE_DOCKER_ARGV_LOG", str(log))
+    return log
 
 
 def _docker_logs_calls(log: Path) -> list[list[str]]:
