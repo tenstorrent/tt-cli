@@ -186,6 +186,7 @@ def unknown_model_error(name: str, origin: str) -> TTError:
         why=f"It is not in the model catalog ({origin}).",
         next_step="Run `tt model list` to browse available models.",
         exit_code=ExitCode.USAGE,
+        reason="model.unknown",
     )
 
 

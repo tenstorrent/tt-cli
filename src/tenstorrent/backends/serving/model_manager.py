@@ -200,6 +200,7 @@ class ModelManagerBackend:
                 "machine — tt installs the tool on first use, not for teardown.",
                 next_step="`tt serve <namespace>/<name>` installs it and serves a bundle.",
                 exit_code=ExitCode.TOOL_MISSING,
+                reason="tool.missing.tt_model",
                 details={"tool": TOOL},
             )
         return Path(found[0])
