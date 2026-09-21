@@ -4,7 +4,9 @@
 FAKE_DOCKER_CONTAINERS is a JSON list of inspect records (the shape tt reads:
 Id/Name/Config.Image/Mounts/NetworkSettings.Ports/Labels/Ports — the last a raw
 `docker ps --format {{.Ports}}` string, e.g. "0.0.0.0:20000->20000/tcp").
-FAKE_DOCKER_STOP_LOG collects stopped ids.
+FAKE_DOCKER_STOP_LOG collects stopped ids. `logs` prints two canned lines (one of
+them a fake HF token, so redaction can be checked) and records its argv as JSON
+lines in FAKE_DOCKER_LOGS_LOG.
 """
 
 import json
@@ -43,6 +45,15 @@ def main() -> int:
         for entry in _containers():
             if str(entry.get("Id", ""))[:12] in wanted:
                 print(json.dumps(entry))
+        return 0
+    if args[:1] == ["logs"]:
+        log = os.environ.get("FAKE_DOCKER_LOGS_LOG")
+        if log:
+            with open(log, "a") as fh:
+                fh.write(json.dumps(args) + "\n")
+        target = args[-1]
+        print(f"[fake] {target} log line")
+        print("HF_TOKEN=hf_" + "x" * 30)
         return 0
     if args[:1] == ["stop"]:
         log = os.environ.get("FAKE_DOCKER_STOP_LOG")

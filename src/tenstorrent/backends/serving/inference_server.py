@@ -595,20 +595,8 @@ class InferenceServerBackend:
             tool=runtime,
         )
         ids = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
-        if not ids:
-            return []
-        inspected = self.runner.capture(
-            [runtime, "inspect", "--format", "{{json .}}", *ids], tool=runtime
-        )
         containers: list[ServerContainer] = []
-        for line in inspected.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except ValueError:  # a runtime that formats differently — skip, don't fail
-                continue
+        for entry in self.inspect_containers(ids):
             hf_repo, volume = _identity_from_inspect(entry)
             containers.append(
                 ServerContainer(
@@ -621,6 +609,26 @@ class InferenceServerBackend:
                 )
             )
         return containers
+
+    def inspect_containers(self, ids: Sequence[str]) -> list[dict]:
+        """Raw `inspect` records for the given ids, in one call. A line the runtime
+        formats in a way we cannot parse is skipped rather than failing the lot."""
+        if not ids:
+            return []
+        runtime = self.container_runtime()
+        inspected = self.runner.capture(
+            [runtime, "inspect", "--format", "{{json .}}", *ids], tool=runtime
+        )
+        records: list[dict] = []
+        for line in inspected.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except ValueError:
+                continue
+        return records
 
     def stop_containers(self, containers: Sequence[ServerContainer]) -> None:
         """`docker stop` each one: SIGTERM plus grace, never kill — the server has to
