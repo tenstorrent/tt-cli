@@ -3,7 +3,9 @@
   "Hand-maintained stand-in for src/tenstorrent/modelhub/model_support.json, so",
   "exact assertions do not move whenever the real one is regenerated.",
   "Five models, chosen to cover one of everything:",
-  "  Llama-3.1-8B-Instruct  vLLM; p150x4 borrowed from p300x2 (device fallback)",
+  "  Llama-3.1-8B-Instruct  vLLM; p150x4 borrowed from p300x2 (device fallback);",
+  "                         p300 and p300x2 keep their own trace_region_size,",
+  "                         so both are real, distinct profiles",
   "  Qwen3-32B              vLLM on one device only",
   "  resnet-50              forge; bare-label hf_repo (weights ship in the image)",
   "  speecht5_tts           media TTS; weights fetched inside the container",
@@ -50,7 +52,9 @@
      "docker_image": "ghcr.io/example/vllm:0.17.0",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null,
+     "override_tt_config": {
+      "trace_region_size": 155000000
+     },
      "serve_as": "p300x2",
      "support_source": "mesh-equivalent",
      "impl_id": "tt_transformers",
@@ -66,7 +70,9 @@
      "docker_image": "ghcr.io/example/vllm:0.17.0",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null,
+     "override_tt_config": {
+      "trace_region_size": 56000000
+     },
      "impl_id": "tt_transformers",
      "version": "0.17.0"
     },
@@ -80,7 +86,9 @@
      "docker_image": "ghcr.io/example/vllm:0.17.0",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null,
+     "override_tt_config": {
+      "trace_region_size": 155000000
+     },
      "impl_id": "tt_transformers",
      "version": "0.17.0"
     }

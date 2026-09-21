@@ -126,8 +126,9 @@ def test_demo_flow(env, tmp_path):
     assert "--mode-non-interactive" in installer_log
     assert "--versions=release" in installer_log
 
-    # model list (nothing cached in the isolated env)
-    models = tt(env, "model", "list", "--json")
+    # model list (nothing cached in the isolated env); --offline keeps this
+    # e2e run from touching the real Hub for the community-bundle half of it
+    models = tt(env, "--offline", "model", "list", "--json")
     names = {m["name"] for m in json.loads(models.stdout)["models"]}
     assert "Llama-3.1-8B-Instruct" in names
 
@@ -144,7 +145,7 @@ def test_demo_flow(env, tmp_path):
     assert stub.returncode == 7
 
     # report issue builds a prefilled GitHub URL (--no-browser: no xdg-open here)
-    issue = tt(env, "report", "issue", "tt-cli", "--no-browser", "--json")
+    issue = tt(env, "report", "issue", "--no-browser", "--json")
     assert "tenstorrent/tt-cli/issues/new" in json.loads(issue.stdout)["url"]
 
     # exit-code contract through the real main(): unknown key → CONFIG (9)

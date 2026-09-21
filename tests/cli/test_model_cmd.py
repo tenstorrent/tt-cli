@@ -36,6 +36,14 @@ def small_spec(monkeypatch):
     monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(SMALL_SUPPORT))
 
 
+@pytest.fixture(autouse=True)
+def no_community_bundles_by_default(monkeypatch):
+    """`tt model list` always fetches community bundles alongside the catalog — keep
+    this suite network-free by default; a test that cares about the community rows
+    overrides this with its own `_stub_bundles`/`_stub_local` stub."""
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", lambda **kw: [])
+
+
 def _set_cache(monkeypatch, sizes):
     monkeypatch.setattr("tenstorrent.modelhub.catalog.scan_hf_cache", lambda: sizes)
 
@@ -100,7 +108,7 @@ def test_model_list_shows_every_engine_without_a_serve_column(runner):
     All three are servable, so the old serve column would be a constant ✓."""
     result = runner.invoke(app, ["model", "list", "--hw", "n150"])
     assert result.exit_code == 0
-    assert "serve" not in result.output
+    assert "serve" not in _table_header(result.output)
     for name in ("Llama-3.1-8B-Instruct", "whisper-large-v3", "resnet-50"):
         assert name in result.output
 
@@ -132,6 +140,51 @@ def test_model_list_json_and_cache_merge(runner, monkeypatch):
     assert models["whisper-large-v3"]["cached"] is True
     assert models["whisper-large-v3"]["cache_size_bytes"] == 2_200_000_000
     assert models["Llama-3.1-8B-Instruct"]["cached"] is False
+
+
+def test_model_list_drops_a_catalog_profile_superseded_by_a_smaller_one(
+    runner, monkeypatch, tmp_path
+):
+    """A spec that lists the exact same container for a bigger board as for a
+    smaller one really only uses part of it — redundant once the smaller tag
+    is shown (see bundles.drop_superseded_hardware). A bespoke spec, not the
+    shared fixture, so this stays isolated from the other list/serve tests."""
+    support = tmp_path / "model_support.json"
+    support.write_text(json.dumps({
+        "schema_version": 1,
+        "release_version": "0.0.0",
+        "models": [{
+            "name": "tts-demo",
+            "hf_repo": "example/tts-demo",
+            "model_type": "text_to_speech",
+            "engines": ["media"],
+            "devices": {
+                "p150": {
+                    "engines": ["media"], "status": "EXPERIMENTAL", "supported": True,
+                    "docker_image": "ghcr.io/example/media:1.0", "impl_id": "tts-demo",
+                },
+                "p300x2": {
+                    "engines": ["media"], "status": "EXPERIMENTAL", "supported": True,
+                    "docker_image": "ghcr.io/example/media:1.0", "impl_id": "tts-demo",
+                },
+            },
+        }],
+    }))
+    monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(support))
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    payload = json.loads(result.output)
+    row = next(m for m in payload["models"] if m["name"] == "tts-demo")
+    assert row["hardware"] == ["p150"]
+
+
+def test_model_list_keeps_catalog_profiles_with_their_own_tuning(runner):
+    """Llama's p300 and p300x2 share a max_context but ship their own
+    trace_region_size — real, distinct integrations, not a duplicate listing,
+    so neither is dropped just because a smaller board exists."""
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    payload = json.loads(result.output)
+    llama = next(m for m in payload["models"] if m["name"] == "Llama-3.1-8B-Instruct")
+    assert llama["hardware"] == ["n150", "p150x4", "p300", "p300x2"]
 
 
 def test_model_list_cached_filter(runner, monkeypatch):
@@ -833,7 +886,7 @@ def test_model_logs_since_without_a_running_container_is_usage(
     assert _docker_logs_calls(docker_argv_log) == []
 
 
-# -- community bundle listing ------------------------------------------------------
+# -- combined catalog + community listing -------------------------------------------
 def _stub_bundles(monkeypatch, entries):
     """Replace the Hub query; the suite must stay network-free."""
     from tenstorrent.modelhub.bundles import BundleInfo
@@ -847,36 +900,47 @@ def _stub_bundles(monkeypatch, entries):
 
 def _table_header(output: str) -> str:
     """The rendered header row. Matched on the box-drawing column separator, not
-    on a column name: the caption mentions the dropped columns, so searching for
-    one of those names finds a wrapped caption line and asserts nothing."""
+    on a column name: the caption mentions dropped columns, so searching for one
+    of those names finds a wrapped caption line and asserts nothing."""
     return next(line for line in output.splitlines() if "┃" in line)
 
 
-def test_model_list_community_shows_bundles(runner, monkeypatch, isolated_dirs):
+def _json_payload(output: str) -> dict:
+    """Parse --json output, skipping a leading detection-warning line: with no
+    tt-smi wired and neither --hw nor --all given, detection runs once for the
+    combined listing and warns before the payload."""
+    return json.loads(output[output.index("{"):])
+
+
+def _community_names(payload: dict) -> set[str]:
+    return {m["name"] for m in payload["models"] if m["source"] != "tt-inference-server"}
+
+
+def test_model_list_shows_catalog_and_community_together(
+    runner, monkeypatch, isolated_dirs
+):
     _stub_bundles(monkeypatch, [
         {"name": "ns/alpha", "kind": "container", "engine": "vLLM",
          "arch": ["blackhole"], "downloads": 3, "installed": True},
         {"name": "ns/beta", "kind": "thin", "engine": "vLLM",
-         "arch": ["wormhole_b0", "1x4"], "installed": False},
+         "arch": ["wormhole_b0", "1x4"], "hardware": ["n300"], "installed": False},
     ])
-    result = runner.invoke(app, ["model", "list", "--community"])
+    result = runner.invoke(app, ["model", "list", "--all"])
     assert result.exit_code == 0, result.output
     assert "ns/alpha" in result.output and "ns/beta" in result.output
-    assert "wormhole_b0" in result.output
-    # The table answers "can I run this, and is it here already". kind and engine
-    # are how a bundle is built, not something you pick one on; both stay in --json.
+    assert "Qwen3-32B" in result.output  # a catalog model, alongside the bundles
+    assert "n300" in result.output
     header = _table_header(result.output)
     assert [c.strip() for c in header.strip("┃").split("┃")] == [
         "name",
         "source",
-        "arch",
+        "engine",
+        "serving profiles",
         "weights",
     ]
 
 
-def test_model_list_community_writes_the_completion_cache(
-    runner, monkeypatch, isolated_dirs
-):
+def test_model_list_writes_the_completion_cache(runner, monkeypatch, isolated_dirs):
     # Tab completion must never query the Hub, so the listing is what teaches
     # `tt serve <TAB>` the community bundle ids.
     from tenstorrent.modelhub import bundles, completions
@@ -885,67 +949,277 @@ def test_model_list_community_writes_the_completion_cache(
         {"name": "ns/alpha", "kind": "container", "engine": "vLLM",
          "arch": ["blackhole"], "installed": False},
     ])
-    result = runner.invoke(app, ["model", "list", "--community"])
+    result = runner.invoke(app, ["model", "list"])
     assert result.exit_code == 0, result.output
     assert bundles.cached_community_names() == ["ns/alpha"]
     assert completions.complete_model("ns/al") == ["ns/alpha"]
 
 
-def test_model_list_community_json_contract(runner, monkeypatch, isolated_dirs):
+def test_model_list_json_contract_includes_community_rows(
+    runner, monkeypatch, isolated_dirs
+):
     _stub_bundles(monkeypatch, [
         {"name": "ns/alpha", "kind": "container", "engine": "vLLM",
          "arch": ["blackhole"], "downloads": 3, "installed": True},
     ])
-    result = runner.invoke(app, ["model", "list", "--community", "--json"])
-    payload = json.loads(result.output)
-    assert payload["source"] == "tt-model-catalog"
-    assert payload["bundles"][0]["name"] == "ns/alpha"
-    assert payload["bundles"][0]["installed"] is True
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    payload = _json_payload(result.output)
+    row = next(m for m in payload["models"] if m["name"] == "ns/alpha")
+    assert row["source"] == "HuggingFace"
+    assert row["type"] is None
+    assert row["engines"] == ["vLLM"]
 
 
-def test_model_list_community_cached_filters_to_installed(
+def test_model_list_normalizes_the_vllm_plugin_engine_name(
     runner, monkeypatch, isolated_dirs
 ):
-    """--cached means "what is on this machine", so it keeps the local rows — one
-    per installed bundle — and drops the Hub listing entirely."""
+    """A community bundle reports upstream's own engine tag (vllm-plugin); the
+    catalog spells the same engine "vLLM". The table shows one name for both,
+    not two spellings of the same engine."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/alpha", "engine": "vllm-plugin", "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "list"])
+    assert result.exit_code == 0, result.output
+    row = next(
+        line for line in result.output.splitlines()
+        if line.startswith("│") and "ns/alpha" in line
+    )
+    cells = [c.strip() for c in row.strip("│").split("│")]
+    assert cells[2] == "vLLM"  # engines column
+
+
+def test_model_list_json_keeps_the_raw_engine_tag(
+    runner, monkeypatch, isolated_dirs
+):
+    """The display normalization must not change what --json reports."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/alpha", "engine": "vllm-plugin", "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "list", "--json"])
+    payload = _json_payload(result.output)
+    row = next(m for m in payload["models"] if m["name"] == "ns/alpha")
+    assert row["engines"] == ["vllm-plugin"]
+
+
+def test_model_list_cached_filters_community_to_installed(
+    runner, monkeypatch, isolated_dirs
+):
+    """--cached means "what is on this machine": it keeps the catalog's cached
+    rows and the community's local rows, dropping the Hub-only listing."""
     _stub_bundles(monkeypatch, [
         {"name": "ns/alpha", "installed": True},
         {"name": "ns/beta", "installed": False},
     ])
     _stub_local(monkeypatch, [{"name": "ns/alpha"}])
-    result = runner.invoke(app, ["model", "list", "--community", "--cached", "--json"])
-    rows = json.loads(result.output)["bundles"]
-    assert [(b["name"], b["source"]) for b in rows] == [("ns/alpha", "local")]
+    result = runner.invoke(app, ["model", "list", "--all", "--cached", "--json"])
+    payload = _json_payload(result.output)
+    community = [
+        (m["name"], m["source"]) for m in payload["models"] if m["source"] != "tt-inference-server"
+    ]
+    assert community == [("ns/alpha", "local")]
 
 
-def test_model_list_community_does_not_read_the_support_list(
+@pytest.mark.fakes_only
+def test_model_list_defaults_to_this_machines_detected_hardware(
+    runner, smi_bin, monkeypatch, isolated_dirs
+):
+    """With no --hw and no --all, community rows are filtered to what this
+    machine can actually run too, not the whole Hub catalog."""
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "normal")  # detects as p300
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/fits", "arch": ["blackhole"], "hardware": ["p150"]},
+        {"name": "ns/too-big", "arch": ["blackhole"], "hardware": ["p300x2"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    assert _community_names(json.loads(result.output)) == {"ns/fits"}
+
+
+@pytest.mark.fakes_only
+def test_model_list_all_skips_detection(runner, smi_bin, monkeypatch, isolated_dirs):
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "normal")  # detects as p300
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/fits", "arch": ["blackhole"], "hardware": ["p150"]},
+        {"name": "ns/too-big", "arch": ["blackhole"], "hardware": ["p300x2"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert _community_names(payload) == {"ns/fits", "ns/too-big"}
+    assert "resnet-50" in {m["name"] for m in payload["models"]}  # catalog, too
+    assert smi_bin.exists() is False  # --all never shells tt-smi
+
+
+def test_model_list_with_no_detection_tool_shows_everything(
     runner, monkeypatch, isolated_dirs
 ):
-    """The two listings are independent: no spec parse, no tt-smi detection."""
-    _stub_bundles(monkeypatch, [{"name": "ns/alpha"}])
-
-    def boom(*a, **k):  # pragma: no cover - must never run
-        raise AssertionError("the support list was read for --community")
-
-    monkeypatch.setattr("tenstorrent.modelhub.catalog.ModelSupportSource", boom)
-    result = runner.invoke(app, ["model", "list", "--community"])
+    """No tt-smi wired: detection degrades to a warning and the unfiltered list,
+    same as the catalog side — a data gap must never hide an entry outright."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/alpha", "arch": ["blackhole"], "hardware": ["p150"]},
+    ])
+    result = runner.invoke(app, ["model", "list"])
     assert result.exit_code == 0, result.output
+    assert "device detection skipped" in result.output
+    assert "ns/alpha" in result.output
 
 
-def test_model_list_community_rejects_device_filters(runner, isolated_dirs):
-    for argv in (["--hw", "p300x2"], ["--all"]):
-        result = runner.invoke(app, ["model", "list", "--community", *argv])
-        assert result.exit_code == ExitCode.USAGE, argv
-        assert "does not apply" in result.output
+def test_model_list_hw_matches_a_bundle_needing_no_more_chips(
+    runner, monkeypatch, isolated_dirs
+):
+    """--hw p300 (2 blackhole chips) matches a bundle needing fewer or exactly as
+    many chips of the same arch, not just an identical board tag."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/fits", "arch": ["blackhole"], "hardware": ["p150"]},  # 1 chip
+        {"name": "ns/exact", "arch": ["blackhole"], "hardware": ["p300"]},  # 2 chips
+        {"name": "ns/too-big", "arch": ["blackhole"], "hardware": ["p150x4"]},  # 4 chips
+        {"name": "ns/wrong-arch", "arch": ["wormhole_b0"], "hardware": ["n150"]},
+        {"name": "ns/untagged", "arch": ["blackhole"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--hw", "p300", "--json"])
+    assert result.exit_code == 0, result.output
+    assert _community_names(json.loads(result.output)) == {"ns/fits", "ns/exact"}
 
 
-def test_model_list_community_rejects_type_filter(runner, isolated_dirs):
-    result = runner.invoke(app, ["model", "list", "--community", "--type", "llm"])
+def test_model_list_hw_shows_the_profiles_column(
+    runner, monkeypatch, isolated_dirs
+):
+    """--hw keeps the profiles column, showing only the tag(s) that satisfy the
+    filter — whether one uses the whole box or part of it is visible by
+    comparing it to the --hw value already typed."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/whole-box", "arch": ["blackhole"], "hardware": ["p300x2"]},
+        {"name": "ns/part-of-box", "arch": ["blackhole"], "hardware": ["p150"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--hw", "p300x2"])
+    assert result.exit_code == 0, result.output
+    assert "profiles" in _table_header(result.output)
+    assert "p300x2" in result.output
+    assert "p150" in result.output
+
+
+def _hardware_cell_by_name(output: str) -> dict[str, str]:
+    """The rendered profiles column, keyed by bundle name — one comma-joined
+    line per row, so a straight line-by-line parse is enough."""
+    rows = {}
+    for line in output.splitlines():
+        if line.startswith("│") and "ns/" in line:
+            cells = [c.strip() for c in line.strip("│").split("│")]
+            rows[cells[0]] = cells[-2]  # profiles is second-to-last column
+    return rows
+
+
+def test_model_list_hw_shows_every_satisfying_tag(
+    runner, monkeypatch, isolated_dirs
+):
+    """A bundle tagged for several boards shows every tag that satisfies --hw,
+    not just the one closest to it — a p150x4 bundle that also validates on a
+    p150 shows both once --hw asks for something either one fits under, since
+    both are things the target can actually run."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/multi", "arch": ["blackhole"], "hardware": ["p150", "p150x4"]},
+        {"name": "ns/small-only", "arch": ["blackhole"], "hardware": ["p150"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--hw", "p150x4"])
+    assert result.exit_code == 0, result.output
+    rows = _hardware_cell_by_name(result.output)
+    assert rows["ns/multi"] == "p150, p150x4"
+    assert rows["ns/small-only"] == "p150"
+
+
+def test_model_list_hw_shows_an_equivalent_board_alongside_a_subset(
+    runner, monkeypatch, isolated_dirs
+):
+    """p150x4 (four 1-chip boards) and p300x2 (two 2-chip boards) both name 4
+    blackhole chips, so a bundle tagged only for the other board still shows
+    up under a --hw request expressed as this one. A bundle tagged for every
+    size shows every one of them, not just the equivalent or the closest fit."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/tagged-p150x4", "arch": ["blackhole"], "hardware": ["p150x4"]},
+        {"name": "ns/tagged-all", "arch": ["blackhole"],
+         "hardware": ["p150", "p150x4", "p300x2"]},
+        {"name": "ns/subset-only", "arch": ["blackhole"], "hardware": ["p150", "p150x2"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--hw", "p300x2"])
+    assert result.exit_code == 0, result.output
+    rows = _hardware_cell_by_name(result.output)
+    assert rows["ns/tagged-p150x4"] == "p150x4"
+    assert rows["ns/tagged-all"] == "p150, p150x4, p300x2"
+    assert rows["ns/subset-only"] == "p150, p150x2"
+
+
+def test_model_list_hw_is_case_insensitive(runner, monkeypatch, isolated_dirs):
+    _stub_bundles(monkeypatch, [{"name": "ns/alpha", "hardware": ["p150x4"]}])
+    result = runner.invoke(app, ["model", "list", "--hw", "P150X4", "--json"])
+    assert _community_names(json.loads(result.output)) == {"ns/alpha"}
+
+
+@pytest.mark.fakes_only
+def test_model_list_detected_hardware_matches_the_equivalent_explicit_hw(
+    runner, smi_bin, monkeypatch, isolated_dirs
+):
+    """The hardware cell depends only on the resolved target, not on whether it
+    came from detection or from --hw: a bundle on a machine that auto-detects
+    as p300x2 must read exactly like `--hw p300x2` typed by hand — same rows,
+    every fitting tag shown, in both."""
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "multi")  # detects as p300x2
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/multi", "arch": ["blackhole"],
+         "hardware": ["p150", "p150x2", "p300x2"]},
+    ])
+    detected = runner.invoke(app, ["model", "list"])
+    assert detected.exit_code == 0, detected.output
+    explicit = runner.invoke(app, ["model", "list", "--hw", "p300x2"])
+    assert explicit.exit_code == 0, explicit.output
+    assert _hardware_cell_by_name(detected.output) == _hardware_cell_by_name(explicit.output)
+    assert _hardware_cell_by_name(detected.output)["ns/multi"] == "p150, p150x2, p300x2"
+
+
+def test_model_list_type_filter_drops_community_bundles(
+    runner, monkeypatch, isolated_dirs
+):
+    """Community bundles publish no model type, so --type simply excludes them —
+    same outcome as any other filter they cannot match, no dedicated error."""
+    _stub_bundles(monkeypatch, [{"name": "ns/alpha"}])
+    result = runner.invoke(app, ["model", "list", "--all", "--type", "llm", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert _community_names(payload) == set()
+    assert "Llama-3.1-8B-Instruct" in {m["name"] for m in payload["models"]}
+
+
+def test_model_list_rejects_both_scope_flags(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "list", "--community", "--catalog"])
     assert result.exit_code == ExitCode.USAGE
-    assert "not published as a repo tag" in result.output
+    assert "opposites" in result.output
 
 
-def test_model_list_community_offline_shows_local_bundles_only(
+def test_model_list_community_only_skips_the_catalog(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [{"name": "ns/alpha"}])
+    result = runner.invoke(app, ["model", "list", "--community", "--all", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    assert payload["scope"] == "community"
+    assert {m["name"] for m in payload["models"]} == {"ns/alpha"}
+
+
+def test_model_list_catalog_only_skips_the_hub(runner, monkeypatch, isolated_dirs):
+    """--catalog must never query the Hub — it is the fast, network-free path."""
+    def boom(**kw):  # pragma: no cover - the Hub must not be reached
+        raise AssertionError("the Hub was queried under --catalog")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", boom)
+    result = runner.invoke(app, ["model", "list", "--catalog", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    assert payload["scope"] == "catalog"
+    assert "Qwen3-32B" in {m["name"] for m in payload["models"]}
+
+
+def test_model_list_offline_shows_local_bundles_only(
     runner, monkeypatch, isolated_dirs
 ):
     """Local installs are entirely on disk, so --offline degrades to them instead of
@@ -961,31 +1235,32 @@ def test_model_list_community_offline_shows_local_bundles_only(
         raise AssertionError("the Hub was queried under --offline")
 
     monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", boom)
-    result = runner.invoke(app, ["--offline", "model", "list", "--community"])
+    result = runner.invoke(app, ["--offline", "model", "list"])
     assert result.exit_code == 0, result.output
     assert "ns/local" in result.output
-    assert "only bundles installed on this machine" in result.output
+    assert "only community bundles installed on this machine" in result.output
 
 
-def test_model_list_community_weights_cell_states(runner, monkeypatch, isolated_dirs):
-    """Three distinct states: cached with a size, referenced but absent, unknown."""
+def test_model_list_cached_cell_states(runner, monkeypatch, isolated_dirs):
+    """Cached with a size vs. not: everything else (referenced but absent, or the
+    bundle not pulled so the reference is unknown) reads the same, a dash."""
     _stub_bundles(monkeypatch, [
         {"name": "ns/cached", "installed": True,
          "weights_repo": "org/w", "weights_bytes": 2_000_000_000},
         {"name": "ns/nocache", "installed": True, "weights_repo": "org/w2"},
         {"name": "ns/unpulled", "installed": False},
     ])
-    result = runner.invoke(app, ["model", "list", "--community"])
+    result = runner.invoke(app, ["model", "list"])
     assert result.exit_code == 0, result.output
-    # last column is `weights`; compare that cell alone, not the whole row
-    weights = {}
+    # last column is `cached`; compare that cell alone, not the whole row
+    cached = {}
     for line in result.output.splitlines():
         if line.startswith("│") and "ns/" in line:
             cells = [c.strip() for c in line.strip("│").split("│")]
-            weights[cells[0]] = cells[-1]
-    assert weights["ns/cached"] == "✓ 1.9 GB"
-    assert weights["ns/nocache"] == "—"  # referenced, but not in the cache
-    assert weights["ns/unpulled"] == "?"  # not pulled, so the reference is unknown
+            cached[cells[0]] = cells[-1]
+    assert cached["ns/cached"] == "✓ 1.9 GB"
+    assert cached["ns/nocache"] == "—"  # referenced, but not in the cache
+    assert cached["ns/unpulled"] == "—"  # not pulled, so the reference is unknown
 
 
 def _stub_local(monkeypatch, entries):
@@ -996,39 +1271,39 @@ def _stub_local(monkeypatch, entries):
     return made
 
 
-def test_model_list_community_includes_unpublished_local_bundles(
+def test_model_list_includes_unpublished_local_bundles(
     runner, monkeypatch, isolated_dirs
 ):
     """A bundle someone shared privately is installed here but absent from the
     catalog — it must still be listed, marked as local."""
     _stub_bundles(monkeypatch, [{"name": "ns/published"}])
     _stub_local(monkeypatch, [{"name": "someone/private", "kind": "container"}])
-    result = runner.invoke(app, ["model", "list", "--community", "--json"])
+    result = runner.invoke(app, ["model", "list", "--json"])
     assert result.exit_code == 0, result.output
-    rows = {b["name"]: b["source"] for b in json.loads(result.output)["bundles"]}
-    assert rows == {"ns/published": "HF", "someone/private": "local"}
+    payload = _json_payload(result.output)
+    rows = {
+        m["name"]: m["source"] for m in payload["models"] if m["source"] != "tt-inference-server"
+    }
+    assert rows == {"ns/published": "HuggingFace", "someone/private": "local"}
 
 
-def test_model_list_community_lists_a_bundle_once_per_source(
+def test_model_list_lists_a_bundle_once_per_source(
     runner, monkeypatch, isolated_dirs
 ):
     """Published and installed are two different facts about a bundle. Collapsing
     them to one row loses whichever one the merge did not pick."""
     _stub_bundles(monkeypatch, [{"name": "ns/both", "downloads": 7}])
     _stub_local(monkeypatch, [{"name": "ns/both"}])
-    result = runner.invoke(app, ["model", "list", "--community", "--json"])
-    payload = json.loads(result.output)["bundles"]
-    assert [b["source"] for b in payload] == ["HF", "local"]
-    assert [b["name"] for b in payload] == ["ns/both", "ns/both"]
+    result = runner.invoke(app, ["model", "list", "--json"])
+    payload = [m for m in _json_payload(result.output)["models"] if m["name"] == "ns/both"]
+    assert [m["source"] for m in payload] == ["HuggingFace", "local"]
     assert payload[0]["downloads"] == 7  # only the Hub publishes this
 
 
-def test_model_list_community_marks_local_rows_in_the_table(
-    runner, monkeypatch, isolated_dirs
-):
+def test_model_list_marks_local_rows_in_the_table(runner, monkeypatch, isolated_dirs):
     _stub_bundles(monkeypatch, [])
     _stub_local(monkeypatch, [{"name": "someone/private"}])
-    result = runner.invoke(app, ["model", "list", "--community"])
+    result = runner.invoke(app, ["model", "list"])
     assert "someone/private" in result.output
     assert "local" in result.output
     # the installed column is gone — source carries it now

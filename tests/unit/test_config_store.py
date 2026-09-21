@@ -247,7 +247,7 @@ def test_sync_adds_a_missing_key_with_its_comments(old_file):
     assert 'flush_mode = "async"' in text
     # The documentation comes with it, which is the whole point of syncing rather than
     # telling people to add the key themselves.
-    assert "# How spans are delivered" in text
+    assert "# How events are delivered" in text
     # And it lands in the right table, not appended to the last one.
     parsed = tomlkit.parse(text).unwrap()
     assert parsed["telemetry"]["flush_mode"] == "async"
