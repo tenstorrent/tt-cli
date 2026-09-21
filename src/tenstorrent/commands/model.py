@@ -25,7 +25,7 @@ from ..backends.serving.model_manager import (
     looks_like_bundle_id,
 )
 from .._compat import confirm
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, PagedHelpGroup, QuietFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..models.model import ModelInfo
@@ -38,7 +38,11 @@ from ..modelhub.completions import (
 )
 
 model_app = typer.Typer(
-    help="Model management: browse, pull, and compile models.", no_args_is_help=True
+    help="Model management: browse, pull, and compile models.",
+    no_args_is_help=True,
+    # `tt model --help` is one of the two help pages long enough to scroll off a
+    # small pane; see PagedHelpGroup.
+    cls=PagedHelpGroup,
 )
 
 
@@ -221,6 +225,7 @@ def list_models(
     appctx.output.emit(
         {"device": device, "models": [dataclasses.asdict(m) for m in models]},
         renderer=lambda payload: _list_table(payload, detected=detected),
+        page=True,
     )
 
 
@@ -274,6 +279,7 @@ def _list_community(
     appctx.output.emit(
         {"source": "tt-model-catalog", "bundles": [dataclasses.asdict(b) for b in found]},
         renderer=lambda payload: _community_table(payload["bundles"]),
+        page=True,
     )
 
 
