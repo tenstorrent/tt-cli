@@ -817,3 +817,40 @@ def test_serve_rejects_a_device_the_model_has_no_entry_for(runner, docker_presen
     assert "no support entry for n300" in result.output
     assert "galaxy" in result.output  # it lists what the model does have
     assert not fake_server.exists()
+
+
+# -- JWT_SECRET seeding -----------------------------------------------------------------
+
+
+@pytest.fixture
+def inference_env_log(tmp_path, monkeypatch):
+    log = tmp_path / "inference-env.jsonl"
+    monkeypatch.setenv("FAKE_INFERENCE_ENV_LOG", str(log))
+    return log
+
+
+def _seen_jwt(log) -> str | None:
+    return json.loads(log.read_text().splitlines()[-1])["JWT_SECRET"]
+
+
+@pytest.mark.fakes_only
+def test_serve_seeds_a_jwt_secret_so_setup_host_never_prompts(
+    runner, docker_present, fake_server, inference_env_log, monkeypatch
+):
+    """run.py's setup_host getpass-prompts for JWT_SECRET even under --no-auth and
+    dies with EOFError off a terminal; tt hands it a throwaway value."""
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    seen = _seen_jwt(inference_env_log)
+    assert seen and len(seen) >= 32
+
+
+@pytest.mark.fakes_only
+def test_serve_keeps_the_users_jwt_secret(
+    runner, docker_present, fake_server, inference_env_log, monkeypatch
+):
+    monkeypatch.setenv("JWT_SECRET", "mine")
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert _seen_jwt(inference_env_log) == "mine"
