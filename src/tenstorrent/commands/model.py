@@ -176,13 +176,24 @@ def list_models(
     community: bool = typer.Option(
         False,
         "--community",
-        help="List community tt-model bundles from the Hub instead of the released "
-        "model catalog.",
+        help="Browse community bundles instead of the released catalog: models "
+        "anyone has packaged with tt-model-manager and published on the Hugging "
+        "Face Hub. Not tested or maintained by Tenstorrent; served with "
+        "`tt serve <namespace>/<name>`.",
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
 ) -> None:
-    """Browse models that run on this machine (default: detected hardware only)."""
+    """Browse the released model catalog for this machine's hardware.
+
+    The catalog is the set of models Tenstorrent ships and tests through
+    tt-inference-server, filtered to what runs on the detected hardware. Start
+    here for a model with known per-device support (`tt model info NAME` for
+    details, `tt serve NAME` to run it). Add --community to browse instead the
+    bundles the community has published with tt-model-manager on the Hugging
+    Face Hub — bring-ups Tenstorrent does not maintain, which serve the same
+    way with `tt serve <namespace>/<name>`.
+    """
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
     if community:

@@ -48,7 +48,8 @@ This is not an exhaustive list. For the full list of commands and options in eac
 
 | Model serving | Functionality |
 |---|---|
-| `tt model list` | Models that run on this machine's detected hardware (`--all` for every device; `--cached`, `--type`, `--hw` filters; `--community` for tt-model-manager bundles) |
+| `tt model list` | The released catalog: models Tenstorrent ships and tests via tt-inference-server, filtered to this machine's detected hardware (`--all` for every device; `--cached`, `--type`, `--hw` filters) |
+| `tt model list --community` | Community bundles instead: models anyone has published with tt-model-manager on the Hugging Face Hub, not tested or maintained by Tenstorrent (served with `tt serve <namespace>/<name>`) |
 | `tt model info NAME` | Model metadata: engines, per-device support/status, requirements, cache state |
 | `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`) |
 | `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id |

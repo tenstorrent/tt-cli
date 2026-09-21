@@ -98,10 +98,13 @@ works as an alias everywhere a name is accepted. Every engine is servable —
 
 ## Community bundles
 
-`tt model list --community` lists models packaged with
-[tt-model-manager](https://github.com/tenstorrent/tt-model-manager): bundles
-published as HuggingFace repos. These are served by engines included in the repos themselves
-(`vllm-plugin`, `tt-dit-server`, etc). `tt model pull
+`tt model list --community` lists a different set from the released catalog
+that plain `tt model list` shows: models anyone has packaged with
+[tt-model-manager](https://github.com/tenstorrent/tt-model-manager) and
+published as HuggingFace repos. Tenstorrent does not test or maintain these;
+reach for them when the catalog lacks the model you want. They are served by
+engines included in the repos themselves (`vllm-plugin`, `tt-dit-server`, etc).
+`tt model pull
 <namespace>/<name>` installs one, and `tt serve <namespace>/<name>` serves it,
 passing through anything `tt serve` does not recognize (`tt serve repo/model --
 --port 8080 --follow`).
