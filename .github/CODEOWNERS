@@ -1,0 +1,8 @@
+# Review ownership for tt-cli. GitHub requests a review from the owners of every
+# path a pull request touches, which is what satisfies the "1 approving review"
+# branch protection rule on main.
+#
+# One catch-all rule for now: anyone on the DX team can review anything here.
+# Split this by path if ownership ever diverges.
+
+* @tenstorrent/dx-team

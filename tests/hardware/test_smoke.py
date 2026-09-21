@@ -153,12 +153,12 @@ def _why(spool, child_env: dict) -> str:
             lines.append(
                 "    spool.sending.jsonl exists -> an uploader DID run and claimed the "
                 "batch; the POST is what failed (proxy, firewall, or a rejecting "
-                "collector). NB: httpx and the OTLP exporter both honour HTTP_PROXY / "
+                "collector). NB: httpx honours HTTP_PROXY / "
                 "ALL_PROXY with no implicit localhost bypass."
             )
         elif spool.path.exists():
             lines.append(
-                f"    spool.jsonl still holds {spool.stats().spans} span(s) with no "
+                f"    events.jsonl still holds {spool.stats().events} event(s) with no "
                 "in-flight batch -> the hand-off never happened (threshold not reached, "
                 "or the uploader failed to launch)."
             )
@@ -215,7 +215,7 @@ def test_detached_drainer_delivers_through_a_real_process(isolated_dirs, monkeyp
     Thread(target=server.serve_forever, daemon=True).start()
     env = {
         **os.environ,
-        "TT_TELEMETRY_ENDPOINT": f"http://127.0.0.1:{server.server_port}/i/v1/traces",
+        "TT_TELEMETRY_ENDPOINT": f"http://127.0.0.1:{server.server_port}/batch/",
         "TT_TELEMETRY_POSTHOG_KEY": "phc_hardware_smoke",
     }
     env.pop("TT_TELEMETRY_DISABLED", None)
@@ -228,7 +228,7 @@ def test_detached_drainer_delivers_through_a_real_process(isolated_dirs, monkeyp
         )
         assert done.returncode == 0, done.stderr
         # Enough commands to cross the hand-off threshold, each a real subprocess.
-        for _ in range(spool_module.DRAIN_SPAN_THRESHOLD):
+        for _ in range(spool_module.DRAIN_EVENT_THRESHOLD):
             done = subprocess.run(
                 [sys.executable, "-m", "tenstorrent", "config", "path"],
                 env=env, capture_output=True, timeout=60,
@@ -246,7 +246,7 @@ def test_detached_drainer_delivers_through_a_real_process(isolated_dirs, monkeyp
         # deadline to finish rather than asserting inside that window.
         while time.monotonic() < deadline and spool.sending_path.exists():
             time.sleep(0.2)
-        assert spool.stats().spans == 0, "spool not cleaned up after a successful upload"
+        assert spool.stats().events == 0, "spool not cleaned up after a successful upload"
         assert not spool.sending_path.exists(), "in-flight batch not dropped after a successful upload"
     finally:
         server.shutdown()

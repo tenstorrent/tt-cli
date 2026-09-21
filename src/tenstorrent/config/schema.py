@@ -16,14 +16,14 @@ DEFAULTS: dict[str, Any] = {
         # Opt-in: nothing is collected or sent until the user says yes — via the
         # first-run prompt or `tt config set telemetry.enabled true`.
         "enabled": False,
-        # OTLP/HTTP traces endpoint (PostHog). Full path — the exporter must not
-        # append /v1/traces. EU users swap the host for eu.i.posthog.com.
-        "endpoint": "https://us.i.posthog.com/i/v1/traces",
+        # PostHog batch capture endpoint (full URL). EU projects swap the host for
+        # eu.i.posthog.com; a self-hosted PostHog uses its own host.
+        "endpoint": "https://us.i.posthog.com/batch/",
         # PostHog write-only project key. Empty = telemetry stays inert (nothing sent).
         "posthog_project_key": "phc_kyqdAU5XuGgkcFtoLjj78rNXNnwoQ9KWj47eBs6TADRr",
-        # "async" spools spans to disk and uploads them from a detached process, so no
-        # command ever waits on the network. "sync" exports in-process (slower, but a
-        # span shows up in the collector immediately) — for development.
+        # "async" spools events to disk and uploads them from a detached process, so no
+        # command ever waits on the network. "sync" posts in-process (slower, but an
+        # event shows up in PostHog immediately) — for development.
         "flush_mode": "async",
     },
     "paths": {
@@ -68,18 +68,18 @@ TEMPLATE = """\
 # Details: https://github.com/tenstorrent/tt-cli/blob/main/TELEMETRY.md
 # Opt in / out any time: tt config set telemetry.enabled true|false
 enabled = false
-# OpenTelemetry OTLP/HTTP traces endpoint (PostHog). Full path, incl. /i/v1/traces.
+# PostHog batch capture endpoint (full URL; EU projects use eu.i.posthog.com).
 # Override per-run with TT_TELEMETRY_ENDPOINT; TT_TELEMETRY_DISABLED=1 turns it all off.
-endpoint = "https://us.i.posthog.com/i/v1/traces"
+endpoint = "https://us.i.posthog.com/batch/"
 # PostHog write-only project key. Empty = nothing is sent. Override with
 # TT_TELEMETRY_POSTHOG_KEY.
 posthog_project_key = "phc_kyqdAU5XuGgkcFtoLjj78rNXNnwoQ9KWj47eBs6TADRr"
-# How spans are delivered. "async" (default) appends each span to a local spool and
+# How events are delivered. "async" (default) appends each event to a local spool and
 # uploads batches from a detached process, so no command waits on the network.
-# "sync" exports in-process: ~400ms slower per command, but spans reach the collector
-# immediately, which is what you want when developing against scripts/otlp_sink.py.
+# "sync" posts in-process: slower per command, but events reach PostHog immediately,
+# which is what you want when developing against scripts/posthog_sink.py.
 # Override per-run with TT_TELEMETRY_FLUSH_MODE=sync. Set TT_TELEMETRY_LOG_FILE=<path>
-# to also write every span to a file in OTLP/JSON format and see exactly what is sent.
+# to also write every event to a file as JSON lines and see exactly what is sent.
 flush_mode = "async"
 
 [paths]

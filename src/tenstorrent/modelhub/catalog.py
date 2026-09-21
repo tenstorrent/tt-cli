@@ -18,7 +18,7 @@ that list is just ModelSupportSource. tt-model bundles (tt-model-manager's
 self-contained running folders, `tt_kernel_manifest.json` on disk) are
 deliberately NOT a source here: they share no schema with the compat spec (no
 per-device status, no max_context), so `modelhub/bundles.py` lists them
-separately for `tt model list --community`.
+separately and `tt model list` merges the two only at render time.
 Cache state comes from `huggingface_hub.scan_cache_dir`, so `tt model list`
 shows what is actually on disk regardless of which tool downloaded it.
 """
@@ -184,6 +184,7 @@ def unknown_model_error(name: str, origin: str) -> TTError:
         why=f"It is not in the model catalog ({origin}).",
         next_step="Run `tt model list` to browse available models.",
         exit_code=ExitCode.USAGE,
+        reason="model.unknown",
     )
 
 
