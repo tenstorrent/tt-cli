@@ -1,0 +1,12 @@
+{
+  "entries": {
+    "ns/reviewed-model": {
+      "note": "",
+      "repo": "ns/Reviewed-Model",
+      "reviewed_at": "2026-09-18T12:00:00Z",
+      "reviewer": "dx-reviewer",
+      "revision": "0123456789abcdef0123456789abcdef01234567"
+    }
+  },
+  "schema": 1
+}
