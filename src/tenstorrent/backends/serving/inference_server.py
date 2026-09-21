@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import sys
 from dataclasses import dataclass
@@ -92,6 +93,14 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+def _model_glob(model: ModelInfo, suffix: str) -> str:
+    """Filename glob for one model's workflow_logs entries. Names embed the model
+    between underscores, so the underscore-delimited pattern cannot confuse
+    Llama-3.1-8B with Llama-3.1-8B-Instruct. Shared by rm and logs so they agree
+    on what "this model's files" means."""
+    return f"*_{model.name}_{suffix}"
+
+
 def _size_of(path: Path) -> int:
     try:
         return _dir_size(path) if path.is_dir() else path.stat().st_size
@@ -150,7 +159,9 @@ class ServerContainer:
 
 
 def _identity_from_inspect(entry: dict) -> tuple[str | None, str | None]:
-    """(hf_repo, volume_name) read out of one `docker inspect` record."""
+    """(hf_repo, volume_name) read out of one `docker inspect` record.
+
+    Also used by `tt model ps` (backends/serving/ps.py) to name a container."""
     hf_repo = volume = None
     for mount in entry.get("Mounts") or []:
         match = _HF_SNAPSHOT_RE.search(str(mount.get("Source") or ""))
@@ -284,6 +295,12 @@ class InferenceServerBackend:
         env = dict(os.environ)
         source = "huggingface" if uses_host_weight_cache(model) else "noaction"
         env.setdefault("MODEL_SOURCE", source)
+        # tt runs the server with --no-auth, so no JWT secret is ever checked — but
+        # setup_host still getpass-prompts "Enter your JWT_SECRET:" whenever the
+        # variable is unset (and dies with EOFError when stdin is not a terminal).
+        # A throwaway value keeps the deploy non-interactive; the user's own
+        # JWT_SECRET, if exported, is left alone.
+        env.setdefault("JWT_SECRET", secrets.token_hex(32))
         return env
 
     def _python_for(self, entry: Path) -> str:
@@ -529,7 +546,7 @@ class InferenceServerBackend:
         # cannot confuse Llama-3.1-8B with Llama-3.1-8B-Instruct.
         logs_dir = root / "workflow_logs"
         if logs_dir.is_dir():
-            for path in sorted(logs_dir.rglob(f"*_{model.name}_*")):
+            for path in sorted(logs_dir.rglob(_model_glob(model, "*"))):
                 found.append(Artifact("logs", path, _size_of(path)))
         # persistent_volume/volume_id_<impl>-<model>-v<version>/ — only created when
         # run.py is given --host-volume (tt serve passes --host-hf-cache instead), so
@@ -539,6 +556,29 @@ class InferenceServerBackend:
             for path in sorted(volumes.glob(f"volume_id_*-{model.name}-v*")):
                 found.append(Artifact("volume", path, _size_of(path)))
         return found
+
+    def log_files(self, model: ModelInfo) -> list[Path]:
+        """This model's log files under the checkout's workflow_logs/, oldest first.
+
+        run.py writes its own log to run_logs/run_<ts>_<model>_<workflow>_<id>.log
+        and streams the server container's output to
+        docker_server/{vllm|media|multihost}_<ts>_<model>_<device>_<workflow>.log
+        (v0.18.0; re-check on a pin bump). The `.log` suffix keeps the
+        runtime_model_specs/*.json sidecars out."""
+        root = self.checkout_root()
+        if root is None:
+            return []
+        logs_dir = root / "workflow_logs"
+        if not logs_dir.is_dir():
+            return []
+        files = [p for p in logs_dir.rglob(_model_glob(model, "*.log")) if p.is_file()]
+        return sorted(files, key=lambda p: (p.stat().st_mtime, p.name))
+
+    def newest_log_file(self, model: ModelInfo) -> Path | None:
+        """The log most recently written to — the live server's, when one is running:
+        run.py's foreground `docker run` keeps appending container output to it."""
+        files = self.log_files(model)
+        return files[-1] if files else None
 
     def remove_artifacts(self, artifacts: Sequence[Artifact]) -> int:
         """Delete the given artifacts; returns the bytes reclaimed."""
@@ -576,7 +616,7 @@ class InferenceServerBackend:
             raise TTError(
                 "No container runtime found.",
                 why="tt-inference-server runs its model backends in containers, so "
-                "stopping one needs docker or podman.",
+                "listing or stopping one needs docker or podman.",
                 next_step="Install one — e.g. https://docs.docker.com/engine/install/",
                 exit_code=ExitCode.TOOL_MISSING,
                 details={"tool": "docker"},

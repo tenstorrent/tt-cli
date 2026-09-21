@@ -36,6 +36,14 @@ def small_spec(monkeypatch):
     monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(SMALL_SUPPORT))
 
 
+@pytest.fixture(autouse=True)
+def no_community_bundles_by_default(monkeypatch):
+    """`tt model list` always fetches community bundles alongside the catalog — keep
+    this suite network-free by default; a test that cares about the community rows
+    overrides this with its own `_stub_bundles`/`_stub_local` stub."""
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", lambda **kw: [])
+
+
 def _set_cache(monkeypatch, sizes):
     monkeypatch.setattr("tenstorrent.modelhub.catalog.scan_hf_cache", lambda: sizes)
 
@@ -100,7 +108,7 @@ def test_model_list_shows_every_engine_without_a_serve_column(runner):
     All three are servable, so the old serve column would be a constant ✓."""
     result = runner.invoke(app, ["model", "list", "--hw", "n150"])
     assert result.exit_code == 0
-    assert "serve" not in result.output
+    assert "serve" not in _table_header(result.output)
     for name in ("Llama-3.1-8B-Instruct", "whisper-large-v3", "resnet-50"):
         assert name in result.output
 
@@ -132,6 +140,51 @@ def test_model_list_json_and_cache_merge(runner, monkeypatch):
     assert models["whisper-large-v3"]["cached"] is True
     assert models["whisper-large-v3"]["cache_size_bytes"] == 2_200_000_000
     assert models["Llama-3.1-8B-Instruct"]["cached"] is False
+
+
+def test_model_list_drops_a_catalog_profile_superseded_by_a_smaller_one(
+    runner, monkeypatch, tmp_path
+):
+    """A spec that lists the exact same container for a bigger board as for a
+    smaller one really only uses part of it — redundant once the smaller tag
+    is shown (see bundles.drop_superseded_hardware). A bespoke spec, not the
+    shared fixture, so this stays isolated from the other list/serve tests."""
+    support = tmp_path / "model_support.json"
+    support.write_text(json.dumps({
+        "schema_version": 1,
+        "release_version": "0.0.0",
+        "models": [{
+            "name": "tts-demo",
+            "hf_repo": "example/tts-demo",
+            "model_type": "text_to_speech",
+            "engines": ["media"],
+            "devices": {
+                "p150": {
+                    "engines": ["media"], "status": "EXPERIMENTAL", "supported": True,
+                    "docker_image": "ghcr.io/example/media:1.0", "impl_id": "tts-demo",
+                },
+                "p300x2": {
+                    "engines": ["media"], "status": "EXPERIMENTAL", "supported": True,
+                    "docker_image": "ghcr.io/example/media:1.0", "impl_id": "tts-demo",
+                },
+            },
+        }],
+    }))
+    monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(support))
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    payload = json.loads(result.output)
+    row = next(m for m in payload["models"] if m["name"] == "tts-demo")
+    assert row["hardware"] == ["p150"]
+
+
+def test_model_list_keeps_catalog_profiles_with_their_own_tuning(runner):
+    """Llama's p300 and p300x2 share a max_context but ship their own
+    trace_region_size — real, distinct integrations, not a duplicate listing,
+    so neither is dropped just because a smaller board exists."""
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    payload = json.loads(result.output)
+    llama = next(m for m in payload["models"] if m["name"] == "Llama-3.1-8B-Instruct")
+    assert llama["hardware"] == ["n150", "p150x4", "p300", "p300x2"]
 
 
 def test_model_list_cached_filter(runner, monkeypatch):
@@ -467,9 +520,6 @@ def test_serve_still_installs_tt_model_on_demand(runner, uv_bin, isolated_dirs):
 
 
 # -- stopping catalog-model containers ---------------------------------------------
-FAKE_BIN_DIR = Path(__file__).parent.parent / "fakes" / "bin"
-
-
 def _container(cid, *, snapshot=None, volume=None, name=None, image="img:1"):
     mounts = []
     if snapshot:
@@ -482,22 +532,6 @@ def _container(cid, *, snapshot=None, volume=None, name=None, image="img:1"):
         "Config": {"Image": image},
         "Mounts": mounts,
     }
-
-
-@pytest.fixture
-def fake_docker(monkeypatch, tmp_path):
-    """Point the backend's runtime lookup at the fake docker and collect its stops."""
-    stop_log = tmp_path / "docker-stop.log"
-    monkeypatch.setattr(
-        "tenstorrent.backends.serving.inference_server.shutil.which",
-        lambda name: str(FAKE_BIN_DIR / "docker") if name == "docker" else None,
-    )
-    monkeypatch.setenv("FAKE_DOCKER_STOP_LOG", str(stop_log))
-
-    def set_containers(entries):
-        monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(entries))
-
-    return set_containers, stop_log
 
 
 @pytest.mark.fakes_only
@@ -602,7 +636,237 @@ def test_model_stop_without_a_container_runtime_is_tool_missing(
     assert result.exit_code == ExitCode.TOOL_MISSING
 
 
-# -- community bundle listing ------------------------------------------------------
+# -- logs --------------------------------------------------------------------------
+@pytest.fixture
+def docker_argv_log(fake_docker, monkeypatch, tmp_path):
+    """Where tests/fakes/bin/docker records `docker logs` invocations."""
+    log = tmp_path / "docker-argv.jsonl"
+    monkeypatch.setenv("FAKE_DOCKER_ARGV_LOG", str(log))
+    return log
+
+
+def _docker_logs_calls(log: Path) -> list[list[str]]:
+    if not log.exists():
+        return []
+    return [json.loads(line)["argv"] for line in log.read_text().splitlines()]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_delegates_to_tt_model(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle"]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_forwards_follow_and_profile(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
+    result = runner.invoke(
+        app, ["model", "logs", "ns/bundle", "--follow", "--profile", "fast"]
+    )
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle", "--follow", "--profile", "fast"]
+
+
+def _tt_model_container(repo: str, profile: str, *, running: bool = True) -> dict:
+    return {
+        "Id": f"{abs(hash((repo, profile))):012x}"[:12],
+        "Name": f"/tt-model-{repo.split('/')[-1]}-{profile}",
+        "Config": {"Image": "tt-model/x:1"},
+        "Labels": {
+            "org.tenstorrent.tt-model": repo.split("/")[-1],
+            "org.tenstorrent.tt-model.repo": repo,
+            "org.tenstorrent.tt-model.profile": profile,
+        },
+        "State": {"Running": running},
+    }
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_names_the_running_profile(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
+    """tt-model's own default matches profile names as substrings (p150 claims the
+    p150x2 container), so tt names the profile it can see running."""
+    set_containers, _ = fake_docker
+    set_containers(
+        [
+            _tt_model_container("ns/bundle", "p150x2"),
+            _tt_model_container("ns/bundle", "p150", running=False),
+            _tt_model_container("ns/other", "p150"),
+        ]
+    )
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle", "--profile", "p150x2"]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_leaves_the_profile_to_tt_model_when_ambiguous(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
+    set_containers, _ = fake_docker
+    set_containers(
+        [_tt_model_container("ns/bundle", "a"), _tt_model_container("ns/bundle", "b")]
+    )
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle"]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_reports_a_tt_model_failure(
+    runner, fake_model_manager, fake_docker, isolated_dirs, monkeypatch
+):
+    monkeypatch.setenv("FAKE_TT_MODEL_FAIL", "1")
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert "tt-model logs exited with 1" in result.output
+
+
+@pytest.mark.fakes_only
+@pytest.mark.parametrize("flag", [["--since", "10m"], ["--tail", "5"]])
+def test_model_logs_bundle_rejects_since_and_tail(
+    runner, fake_model_manager, isolated_dirs, flag
+):
+    """tt-model logs knows only --follow/--profile; say so instead of dropping the flag."""
+    result = runner.invoke(app, ["model", "logs", "ns/bundle", *flag])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "docker logs" in result.output
+    assert not fake_model_manager.exists()  # tt-model never invoked
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_does_not_install_tt_model(runner, uv_bin, isolated_dirs):
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == ExitCode.TOOL_MISSING
+    assert not uv_bin.exists()
+
+
+def test_model_logs_unknown_name_is_usage(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instrukt"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "Unknown model" in result.output
+
+
+def test_model_logs_rejects_json(runner, fake_checkout, isolated_dirs):
+    result = runner.invoke(app, ["--json", "model", "logs", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "plain text" in result.output
+
+
+def test_model_logs_profile_is_bundle_only(runner, fake_checkout, isolated_dirs):
+    result = runner.invoke(
+        app, ["model", "logs", "Llama-3.1-8B-Instruct", "--profile", "x"]
+    )
+    assert result.exit_code == ExitCode.USAGE
+    assert "profiles" in result.output
+
+
+@pytest.fixture
+def checkout_with_log_history(fake_checkout):
+    """fake_checkout plus an older Llama server log, a run.py log and a spec sidecar,
+    with mtimes ordered so "newest" is unambiguous."""
+    import os
+
+    logs = fake_checkout / "workflow_logs"
+    old = logs / "docker_server" / "vllm_2025-12-31_00-00-00_Llama-3.1-8B-Instruct_p300x2_server.log"
+    old.write_text("old line 1\nold line 2\n")
+    run_log = logs / "run_logs" / "run_2026-01-01_00-00-00_Llama-3.1-8B-Instruct_server_abcd1234.log"
+    run_log.parent.mkdir()
+    run_log.write_text("run.py line\n")
+    spec = logs / "runtime_model_specs" / "runtime_model_spec_2026-01-02_Llama-3.1-8B-Instruct_x.json"
+    spec.parent.mkdir()
+    spec.write_text("{}")
+    newest = logs / "docker_server" / "vllm_2026-01-01_00-00-00_Llama-3.1-8B-Instruct_p300x2_server.log"
+    newest.write_text("line 1\nline 2\nline 3\n")
+    for i, path in enumerate([old, run_log, newest, spec]):
+        os.utime(path, (1_700_000_000 + i, 1_700_000_000 + i))
+    return newest
+
+
+def test_model_logs_prints_the_newest_matching_log_file(
+    runner, checkout_with_log_history, isolated_dirs
+):
+    """Newest by mtime among *_<model>_*.log — not the newer .json sidecar, not the
+    other model's file, not an older run."""
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "line 1\nline 2\nline 3\n"
+    assert str(checkout_with_log_history) in result.output  # the "showing" line
+
+
+def test_model_logs_tail_prints_the_last_n_lines(
+    runner, checkout_with_log_history, isolated_dirs
+):
+    result = runner.invoke(
+        app, ["model", "logs", "Llama-3.1-8B-Instruct", "--tail", "2", "--quiet"]
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "line 2\nline 3\n"
+
+
+def test_model_logs_without_a_matching_file_is_an_error(
+    runner, fake_checkout, isolated_dirs
+):
+    """A model in the catalog that was never served here: say so, point at tt serve."""
+    result = runner.invoke(app, ["model", "logs", "whisper-large-v3"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "No logs for whisper-large-v3" in result.output
+    assert "tt serve whisper-large-v3" in result.output
+
+
+def test_model_logs_without_a_checkout_is_an_error(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "No logs for" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_logs_since_uses_docker_logs_on_the_running_container(
+    runner, fake_docker, docker_argv_log, fake_checkout, isolated_dirs
+):
+    set_containers, _ = fake_docker
+    set_containers([
+        _container(
+            "aaaaaaaaaaaa11",
+            snapshot="/hf/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/rev",
+        ),
+        _container("bbbbbbbbbbbb22", snapshot="/hf/hub/models--Qwen--Qwen3-32B/snapshots/rev"),
+    ])
+    result = runner.invoke(
+        app,
+        ["model", "logs", "Llama-3.1-8B-Instruct", "--since", "10m", "--tail", "5", "-f"],
+    )
+    assert result.exit_code == 0, result.output
+    assert _docker_logs_calls(docker_argv_log) == [
+        ["logs", "--since", "10m", "--tail", "5", "--follow", "aaaaaaaaaaaa"]
+    ]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_since_without_a_running_container_is_usage(
+    runner, fake_docker, docker_argv_log, fake_checkout, isolated_dirs
+):
+    """The file has no time index, so --since needs the live container."""
+    set_containers, _ = fake_docker
+    set_containers([
+        _container("bbbbbbbbbbbb22", snapshot="/hf/hub/models--Qwen--Qwen3-32B/snapshots/rev"),
+    ])
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instruct", "--since", "10m"])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--tail" in result.output
+    assert _docker_logs_calls(docker_argv_log) == []
+
+
+# -- combined catalog + community listing -------------------------------------------
 def _stub_bundles(monkeypatch, entries):
     """Replace the Hub query; the suite must stay network-free."""
     from tenstorrent.modelhub.bundles import BundleInfo
@@ -616,36 +880,47 @@ def _stub_bundles(monkeypatch, entries):
 
 def _table_header(output: str) -> str:
     """The rendered header row. Matched on the box-drawing column separator, not
-    on a column name: the caption mentions the dropped columns, so searching for
-    one of those names finds a wrapped caption line and asserts nothing."""
+    on a column name: the caption mentions dropped columns, so searching for one
+    of those names finds a wrapped caption line and asserts nothing."""
     return next(line for line in output.splitlines() if "┃" in line)
 
 
-def test_model_list_community_shows_bundles(runner, monkeypatch, isolated_dirs):
+def _json_payload(output: str) -> dict:
+    """Parse --json output, skipping a leading detection-warning line: with no
+    tt-smi wired and neither --hw nor --all given, detection runs once for the
+    combined listing and warns before the payload."""
+    return json.loads(output[output.index("{"):])
+
+
+def _community_names(payload: dict) -> set[str]:
+    return {m["name"] for m in payload["models"] if m["source"] != "tt-inference-server"}
+
+
+def test_model_list_shows_catalog_and_community_together(
+    runner, monkeypatch, isolated_dirs
+):
     _stub_bundles(monkeypatch, [
         {"name": "ns/alpha", "kind": "container", "engine": "vLLM",
          "arch": ["blackhole"], "downloads": 3, "installed": True},
         {"name": "ns/beta", "kind": "thin", "engine": "vLLM",
-         "arch": ["wormhole_b0", "1x4"], "installed": False},
+         "arch": ["wormhole_b0", "1x4"], "hardware": ["n300"], "installed": False},
     ])
-    result = runner.invoke(app, ["model", "list", "--community"])
+    result = runner.invoke(app, ["model", "list", "--all"])
     assert result.exit_code == 0, result.output
     assert "ns/alpha" in result.output and "ns/beta" in result.output
-    assert "wormhole_b0" in result.output
-    # The table answers "can I run this, and is it here already". kind and engine
-    # are how a bundle is built, not something you pick one on; both stay in --json.
+    assert "Qwen3-32B" in result.output  # a catalog model, alongside the bundles
+    assert "n300" in result.output
     header = _table_header(result.output)
     assert [c.strip() for c in header.strip("┃").split("┃")] == [
         "name",
         "source",
-        "arch",
+        "engine",
+        "serving profiles",
         "weights",
     ]
 
 
-def test_model_list_community_writes_the_completion_cache(
-    runner, monkeypatch, isolated_dirs
-):
+def test_model_list_writes_the_completion_cache(runner, monkeypatch, isolated_dirs):
     # Tab completion must never query the Hub, so the listing is what teaches
     # `tt serve <TAB>` the community bundle ids.
     from tenstorrent.modelhub import bundles, completions
@@ -654,67 +929,277 @@ def test_model_list_community_writes_the_completion_cache(
         {"name": "ns/alpha", "kind": "container", "engine": "vLLM",
          "arch": ["blackhole"], "installed": False},
     ])
-    result = runner.invoke(app, ["model", "list", "--community"])
+    result = runner.invoke(app, ["model", "list"])
     assert result.exit_code == 0, result.output
     assert bundles.cached_community_names() == ["ns/alpha"]
     assert completions.complete_model("ns/al") == ["ns/alpha"]
 
 
-def test_model_list_community_json_contract(runner, monkeypatch, isolated_dirs):
+def test_model_list_json_contract_includes_community_rows(
+    runner, monkeypatch, isolated_dirs
+):
     _stub_bundles(monkeypatch, [
         {"name": "ns/alpha", "kind": "container", "engine": "vLLM",
          "arch": ["blackhole"], "downloads": 3, "installed": True},
     ])
-    result = runner.invoke(app, ["model", "list", "--community", "--json"])
-    payload = json.loads(result.output)
-    assert payload["source"] == "tt-model-catalog"
-    assert payload["bundles"][0]["name"] == "ns/alpha"
-    assert payload["bundles"][0]["installed"] is True
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    payload = _json_payload(result.output)
+    row = next(m for m in payload["models"] if m["name"] == "ns/alpha")
+    assert row["source"] == "HuggingFace"
+    assert row["type"] is None
+    assert row["engines"] == ["vLLM"]
 
 
-def test_model_list_community_cached_filters_to_installed(
+def test_model_list_normalizes_the_vllm_plugin_engine_name(
     runner, monkeypatch, isolated_dirs
 ):
-    """--cached means "what is on this machine", so it keeps the local rows — one
-    per installed bundle — and drops the Hub listing entirely."""
+    """A community bundle reports upstream's own engine tag (vllm-plugin); the
+    catalog spells the same engine "vLLM". The table shows one name for both,
+    not two spellings of the same engine."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/alpha", "engine": "vllm-plugin", "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "list"])
+    assert result.exit_code == 0, result.output
+    row = next(
+        line for line in result.output.splitlines()
+        if line.startswith("│") and "ns/alpha" in line
+    )
+    cells = [c.strip() for c in row.strip("│").split("│")]
+    assert cells[2] == "vLLM"  # engines column
+
+
+def test_model_list_json_keeps_the_raw_engine_tag(
+    runner, monkeypatch, isolated_dirs
+):
+    """The display normalization must not change what --json reports."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/alpha", "engine": "vllm-plugin", "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "list", "--json"])
+    payload = _json_payload(result.output)
+    row = next(m for m in payload["models"] if m["name"] == "ns/alpha")
+    assert row["engines"] == ["vllm-plugin"]
+
+
+def test_model_list_cached_filters_community_to_installed(
+    runner, monkeypatch, isolated_dirs
+):
+    """--cached means "what is on this machine": it keeps the catalog's cached
+    rows and the community's local rows, dropping the Hub-only listing."""
     _stub_bundles(monkeypatch, [
         {"name": "ns/alpha", "installed": True},
         {"name": "ns/beta", "installed": False},
     ])
     _stub_local(monkeypatch, [{"name": "ns/alpha"}])
-    result = runner.invoke(app, ["model", "list", "--community", "--cached", "--json"])
-    rows = json.loads(result.output)["bundles"]
-    assert [(b["name"], b["source"]) for b in rows] == [("ns/alpha", "local")]
+    result = runner.invoke(app, ["model", "list", "--all", "--cached", "--json"])
+    payload = _json_payload(result.output)
+    community = [
+        (m["name"], m["source"]) for m in payload["models"] if m["source"] != "tt-inference-server"
+    ]
+    assert community == [("ns/alpha", "local")]
 
 
-def test_model_list_community_does_not_read_the_support_list(
+@pytest.mark.fakes_only
+def test_model_list_defaults_to_this_machines_detected_hardware(
+    runner, smi_bin, monkeypatch, isolated_dirs
+):
+    """With no --hw and no --all, community rows are filtered to what this
+    machine can actually run too, not the whole Hub catalog."""
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "normal")  # detects as p300
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/fits", "arch": ["blackhole"], "hardware": ["p150"]},
+        {"name": "ns/too-big", "arch": ["blackhole"], "hardware": ["p300x2"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    assert _community_names(json.loads(result.output)) == {"ns/fits"}
+
+
+@pytest.mark.fakes_only
+def test_model_list_all_skips_detection(runner, smi_bin, monkeypatch, isolated_dirs):
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "normal")  # detects as p300
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/fits", "arch": ["blackhole"], "hardware": ["p150"]},
+        {"name": "ns/too-big", "arch": ["blackhole"], "hardware": ["p300x2"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert _community_names(payload) == {"ns/fits", "ns/too-big"}
+    assert "resnet-50" in {m["name"] for m in payload["models"]}  # catalog, too
+    assert smi_bin.exists() is False  # --all never shells tt-smi
+
+
+def test_model_list_with_no_detection_tool_shows_everything(
     runner, monkeypatch, isolated_dirs
 ):
-    """The two listings are independent: no spec parse, no tt-smi detection."""
-    _stub_bundles(monkeypatch, [{"name": "ns/alpha"}])
-
-    def boom(*a, **k):  # pragma: no cover - must never run
-        raise AssertionError("the support list was read for --community")
-
-    monkeypatch.setattr("tenstorrent.modelhub.catalog.ModelSupportSource", boom)
-    result = runner.invoke(app, ["model", "list", "--community"])
+    """No tt-smi wired: detection degrades to a warning and the unfiltered list,
+    same as the catalog side — a data gap must never hide an entry outright."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/alpha", "arch": ["blackhole"], "hardware": ["p150"]},
+    ])
+    result = runner.invoke(app, ["model", "list"])
     assert result.exit_code == 0, result.output
+    assert "device detection skipped" in result.output
+    assert "ns/alpha" in result.output
 
 
-def test_model_list_community_rejects_device_filters(runner, isolated_dirs):
-    for argv in (["--hw", "p300x2"], ["--all"]):
-        result = runner.invoke(app, ["model", "list", "--community", *argv])
-        assert result.exit_code == ExitCode.USAGE, argv
-        assert "does not apply" in result.output
+def test_model_list_hw_matches_a_bundle_needing_no_more_chips(
+    runner, monkeypatch, isolated_dirs
+):
+    """--hw p300 (2 blackhole chips) matches a bundle needing fewer or exactly as
+    many chips of the same arch, not just an identical board tag."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/fits", "arch": ["blackhole"], "hardware": ["p150"]},  # 1 chip
+        {"name": "ns/exact", "arch": ["blackhole"], "hardware": ["p300"]},  # 2 chips
+        {"name": "ns/too-big", "arch": ["blackhole"], "hardware": ["p150x4"]},  # 4 chips
+        {"name": "ns/wrong-arch", "arch": ["wormhole_b0"], "hardware": ["n150"]},
+        {"name": "ns/untagged", "arch": ["blackhole"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--hw", "p300", "--json"])
+    assert result.exit_code == 0, result.output
+    assert _community_names(json.loads(result.output)) == {"ns/fits", "ns/exact"}
 
 
-def test_model_list_community_rejects_type_filter(runner, isolated_dirs):
-    result = runner.invoke(app, ["model", "list", "--community", "--type", "llm"])
+def test_model_list_hw_shows_the_profiles_column(
+    runner, monkeypatch, isolated_dirs
+):
+    """--hw keeps the profiles column, showing only the tag(s) that satisfy the
+    filter — whether one uses the whole box or part of it is visible by
+    comparing it to the --hw value already typed."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/whole-box", "arch": ["blackhole"], "hardware": ["p300x2"]},
+        {"name": "ns/part-of-box", "arch": ["blackhole"], "hardware": ["p150"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--hw", "p300x2"])
+    assert result.exit_code == 0, result.output
+    assert "profiles" in _table_header(result.output)
+    assert "p300x2" in result.output
+    assert "p150" in result.output
+
+
+def _hardware_cell_by_name(output: str) -> dict[str, str]:
+    """The rendered profiles column, keyed by bundle name — one comma-joined
+    line per row, so a straight line-by-line parse is enough."""
+    rows = {}
+    for line in output.splitlines():
+        if line.startswith("│") and "ns/" in line:
+            cells = [c.strip() for c in line.strip("│").split("│")]
+            rows[cells[0]] = cells[-2]  # profiles is second-to-last column
+    return rows
+
+
+def test_model_list_hw_shows_every_satisfying_tag(
+    runner, monkeypatch, isolated_dirs
+):
+    """A bundle tagged for several boards shows every tag that satisfies --hw,
+    not just the one closest to it — a p150x4 bundle that also validates on a
+    p150 shows both once --hw asks for something either one fits under, since
+    both are things the target can actually run."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/multi", "arch": ["blackhole"], "hardware": ["p150", "p150x4"]},
+        {"name": "ns/small-only", "arch": ["blackhole"], "hardware": ["p150"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--hw", "p150x4"])
+    assert result.exit_code == 0, result.output
+    rows = _hardware_cell_by_name(result.output)
+    assert rows["ns/multi"] == "p150, p150x4"
+    assert rows["ns/small-only"] == "p150"
+
+
+def test_model_list_hw_shows_an_equivalent_board_alongside_a_subset(
+    runner, monkeypatch, isolated_dirs
+):
+    """p150x4 (four 1-chip boards) and p300x2 (two 2-chip boards) both name 4
+    blackhole chips, so a bundle tagged only for the other board still shows
+    up under a --hw request expressed as this one. A bundle tagged for every
+    size shows every one of them, not just the equivalent or the closest fit."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/tagged-p150x4", "arch": ["blackhole"], "hardware": ["p150x4"]},
+        {"name": "ns/tagged-all", "arch": ["blackhole"],
+         "hardware": ["p150", "p150x4", "p300x2"]},
+        {"name": "ns/subset-only", "arch": ["blackhole"], "hardware": ["p150", "p150x2"]},
+    ])
+    result = runner.invoke(app, ["model", "list", "--hw", "p300x2"])
+    assert result.exit_code == 0, result.output
+    rows = _hardware_cell_by_name(result.output)
+    assert rows["ns/tagged-p150x4"] == "p150x4"
+    assert rows["ns/tagged-all"] == "p150, p150x4, p300x2"
+    assert rows["ns/subset-only"] == "p150, p150x2"
+
+
+def test_model_list_hw_is_case_insensitive(runner, monkeypatch, isolated_dirs):
+    _stub_bundles(monkeypatch, [{"name": "ns/alpha", "hardware": ["p150x4"]}])
+    result = runner.invoke(app, ["model", "list", "--hw", "P150X4", "--json"])
+    assert _community_names(json.loads(result.output)) == {"ns/alpha"}
+
+
+@pytest.mark.fakes_only
+def test_model_list_detected_hardware_matches_the_equivalent_explicit_hw(
+    runner, smi_bin, monkeypatch, isolated_dirs
+):
+    """The hardware cell depends only on the resolved target, not on whether it
+    came from detection or from --hw: a bundle on a machine that auto-detects
+    as p300x2 must read exactly like `--hw p300x2` typed by hand — same rows,
+    every fitting tag shown, in both."""
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "multi")  # detects as p300x2
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/multi", "arch": ["blackhole"],
+         "hardware": ["p150", "p150x2", "p300x2"]},
+    ])
+    detected = runner.invoke(app, ["model", "list"])
+    assert detected.exit_code == 0, detected.output
+    explicit = runner.invoke(app, ["model", "list", "--hw", "p300x2"])
+    assert explicit.exit_code == 0, explicit.output
+    assert _hardware_cell_by_name(detected.output) == _hardware_cell_by_name(explicit.output)
+    assert _hardware_cell_by_name(detected.output)["ns/multi"] == "p150, p150x2, p300x2"
+
+
+def test_model_list_type_filter_drops_community_bundles(
+    runner, monkeypatch, isolated_dirs
+):
+    """Community bundles publish no model type, so --type simply excludes them —
+    same outcome as any other filter they cannot match, no dedicated error."""
+    _stub_bundles(monkeypatch, [{"name": "ns/alpha"}])
+    result = runner.invoke(app, ["model", "list", "--all", "--type", "llm", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert _community_names(payload) == set()
+    assert "Llama-3.1-8B-Instruct" in {m["name"] for m in payload["models"]}
+
+
+def test_model_list_rejects_both_scope_flags(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "list", "--community", "--catalog"])
     assert result.exit_code == ExitCode.USAGE
-    assert "not published as a repo tag" in result.output
+    assert "opposites" in result.output
 
 
-def test_model_list_community_offline_shows_local_bundles_only(
+def test_model_list_community_only_skips_the_catalog(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [{"name": "ns/alpha"}])
+    result = runner.invoke(app, ["model", "list", "--community", "--all", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    assert payload["scope"] == "community"
+    assert {m["name"] for m in payload["models"]} == {"ns/alpha"}
+
+
+def test_model_list_catalog_only_skips_the_hub(runner, monkeypatch, isolated_dirs):
+    """--catalog must never query the Hub — it is the fast, network-free path."""
+    def boom(**kw):  # pragma: no cover - the Hub must not be reached
+        raise AssertionError("the Hub was queried under --catalog")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", boom)
+    result = runner.invoke(app, ["model", "list", "--catalog", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(result.output)
+    assert payload["scope"] == "catalog"
+    assert "Qwen3-32B" in {m["name"] for m in payload["models"]}
+
+
+def test_model_list_offline_shows_local_bundles_only(
     runner, monkeypatch, isolated_dirs
 ):
     """Local installs are entirely on disk, so --offline degrades to them instead of
@@ -730,31 +1215,32 @@ def test_model_list_community_offline_shows_local_bundles_only(
         raise AssertionError("the Hub was queried under --offline")
 
     monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", boom)
-    result = runner.invoke(app, ["--offline", "model", "list", "--community"])
+    result = runner.invoke(app, ["--offline", "model", "list"])
     assert result.exit_code == 0, result.output
     assert "ns/local" in result.output
-    assert "only bundles installed on this machine" in result.output
+    assert "only community bundles installed on this machine" in result.output
 
 
-def test_model_list_community_weights_cell_states(runner, monkeypatch, isolated_dirs):
-    """Three distinct states: cached with a size, referenced but absent, unknown."""
+def test_model_list_cached_cell_states(runner, monkeypatch, isolated_dirs):
+    """Cached with a size vs. not: everything else (referenced but absent, or the
+    bundle not pulled so the reference is unknown) reads the same, a dash."""
     _stub_bundles(monkeypatch, [
         {"name": "ns/cached", "installed": True,
          "weights_repo": "org/w", "weights_bytes": 2_000_000_000},
         {"name": "ns/nocache", "installed": True, "weights_repo": "org/w2"},
         {"name": "ns/unpulled", "installed": False},
     ])
-    result = runner.invoke(app, ["model", "list", "--community"])
+    result = runner.invoke(app, ["model", "list"])
     assert result.exit_code == 0, result.output
-    # last column is `weights`; compare that cell alone, not the whole row
-    weights = {}
+    # last column is `cached`; compare that cell alone, not the whole row
+    cached = {}
     for line in result.output.splitlines():
         if line.startswith("│") and "ns/" in line:
             cells = [c.strip() for c in line.strip("│").split("│")]
-            weights[cells[0]] = cells[-1]
-    assert weights["ns/cached"] == "✓ 1.9 GB"
-    assert weights["ns/nocache"] == "—"  # referenced, but not in the cache
-    assert weights["ns/unpulled"] == "?"  # not pulled, so the reference is unknown
+            cached[cells[0]] = cells[-1]
+    assert cached["ns/cached"] == "✓ 1.9 GB"
+    assert cached["ns/nocache"] == "—"  # referenced, but not in the cache
+    assert cached["ns/unpulled"] == "—"  # not pulled, so the reference is unknown
 
 
 def _stub_local(monkeypatch, entries):
@@ -765,39 +1251,39 @@ def _stub_local(monkeypatch, entries):
     return made
 
 
-def test_model_list_community_includes_unpublished_local_bundles(
+def test_model_list_includes_unpublished_local_bundles(
     runner, monkeypatch, isolated_dirs
 ):
     """A bundle someone shared privately is installed here but absent from the
     catalog — it must still be listed, marked as local."""
     _stub_bundles(monkeypatch, [{"name": "ns/published"}])
     _stub_local(monkeypatch, [{"name": "someone/private", "kind": "container"}])
-    result = runner.invoke(app, ["model", "list", "--community", "--json"])
+    result = runner.invoke(app, ["model", "list", "--json"])
     assert result.exit_code == 0, result.output
-    rows = {b["name"]: b["source"] for b in json.loads(result.output)["bundles"]}
-    assert rows == {"ns/published": "HF", "someone/private": "local"}
+    payload = _json_payload(result.output)
+    rows = {
+        m["name"]: m["source"] for m in payload["models"] if m["source"] != "tt-inference-server"
+    }
+    assert rows == {"ns/published": "HuggingFace", "someone/private": "local"}
 
 
-def test_model_list_community_lists_a_bundle_once_per_source(
+def test_model_list_lists_a_bundle_once_per_source(
     runner, monkeypatch, isolated_dirs
 ):
     """Published and installed are two different facts about a bundle. Collapsing
     them to one row loses whichever one the merge did not pick."""
     _stub_bundles(monkeypatch, [{"name": "ns/both", "downloads": 7}])
     _stub_local(monkeypatch, [{"name": "ns/both"}])
-    result = runner.invoke(app, ["model", "list", "--community", "--json"])
-    payload = json.loads(result.output)["bundles"]
-    assert [b["source"] for b in payload] == ["HF", "local"]
-    assert [b["name"] for b in payload] == ["ns/both", "ns/both"]
+    result = runner.invoke(app, ["model", "list", "--json"])
+    payload = [m for m in _json_payload(result.output)["models"] if m["name"] == "ns/both"]
+    assert [m["source"] for m in payload] == ["HuggingFace", "local"]
     assert payload[0]["downloads"] == 7  # only the Hub publishes this
 
 
-def test_model_list_community_marks_local_rows_in_the_table(
-    runner, monkeypatch, isolated_dirs
-):
+def test_model_list_marks_local_rows_in_the_table(runner, monkeypatch, isolated_dirs):
     _stub_bundles(monkeypatch, [])
     _stub_local(monkeypatch, [{"name": "someone/private"}])
-    result = runner.invoke(app, ["model", "list", "--community"])
+    result = runner.invoke(app, ["model", "list"])
     assert "someone/private" in result.output
     assert "local" in result.output
     # the installed column is gone — source carries it now
@@ -942,8 +1428,9 @@ def test_model_pull_rejects_both_direction_flags(runner, isolated_dirs):
         ["model", "pull", "ns/bundle", "--bundle"],
         ["model", "stop", "ns/bundle"],
         ["model", "rm", "ns/bundle", "--yes"],
+        ["model", "logs", "ns/bundle"],
     ],
-    ids=["serve", "pull", "stop", "rm"],
+    ids=["serve", "pull", "stop", "rm", "logs"],
 )
 def test_every_tt_model_call_gets_the_configured_hf_cache(
     runner, fake_model_manager, always_tty, isolated_dirs, tmp_path, argv

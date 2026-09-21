@@ -18,14 +18,18 @@ Two run modes, selected on the pytest command line:
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from tenstorrent.telemetry.env import CI_ENV_VARS
+from tenstorrent.tools import registry as registry_module
 
 FAKES_DIR = Path(__file__).parent / "fakes"
 FAKE_BIN = FAKES_DIR / "bin"
@@ -190,6 +194,14 @@ def isolated_dirs(request, tmp_path, monkeypatch):
     # Never inherit manifest/golden overrides from the outer shell.
     for var in ("TT_MANIFEST_PATH", "TT_GOLDEN_PATH"):
         monkeypatch.delenv(var, raising=False)
+    # The registry's last-resort probe of tt-installer's venv (~/.tenstorrent-venv) is
+    # redirected in BOTH modes. Under --hardware HOME stays real (below), so without
+    # this a runner provisioned by the installer would make every "nothing installed"
+    # test find its real tt-smi. Real tools reach tests through TT_TOOL_BIN_* only.
+    installer_venv_bin = tmp_path / "installer-venv" / "bin"
+    monkeypatch.setattr(
+        registry_module, "installer_venv_bin", lambda name: installer_venv_bin / name
+    )
     # Golden versions come from tt-sw-manifest's golden.json, which `tt update`
     # fetches at the pinned tag — a network call the fake suite must never make.
     # Point TT_GOLDEN_PATH at a verbatim captured copy (v1.0.0) so versions are
@@ -263,3 +275,86 @@ def fakes_dir():
 @pytest.fixture
 def fake_bin():
     return FAKE_BIN
+
+
+@pytest.fixture
+def fake_docker(monkeypatch, tmp_path):
+    """Point the serving backends' runtime lookup at tests/fakes/bin/docker.
+
+    Returns (set_containers, stop_log): set_containers(entries) publishes a list of
+    inspect records through FAKE_DOCKER_CONTAINERS; stop_log collects the ids that
+    `docker stop` was asked for. Docker is found with shutil.which inside the
+    backend module rather than through the registry, hence the attribute patch."""
+    stop_log = tmp_path / "docker-stop.log"
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.inference_server.shutil.which",
+        lambda name: str(FAKE_BIN / "docker") if name == "docker" else None,
+    )
+    monkeypatch.setenv("FAKE_DOCKER_STOP_LOG", str(stop_log))
+
+    def set_containers(entries):
+        monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(entries))
+
+    return set_containers, stop_log
+
+
+@pytest.fixture
+def served():
+    """A real loopback server answering GET /v1/models, like a served model does.
+
+    Returns a callable: served(*ids) -> base_url. Real HTTP rather than a patched
+    urlopen, so the discovery path that runs on hardware is the one under test.
+    served.reject() starts one that answers 404 text/html to everything — what
+    TT-Studio's own backend does on port 8000.
+    """
+    servers: list[ThreadingHTTPServer] = []
+
+    def _start(handler_cls) -> str:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
+        servers.append(server)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return f"http://127.0.0.1:{server.server_port}/v1"
+
+    def start(*ids: str) -> str:
+        payload = json.dumps(
+            {
+                "object": "list",
+                "data": [
+                    {"id": i, "object": "model", "max_model_len": 131072} for i in ids
+                ],
+            }
+        ).encode()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler's name
+                body = payload if self.path.endswith("/models") else b"{}"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        return _start(Handler)
+
+    def reject() -> str:
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                body = b"<html><body>Not Found</body></html>"
+                self.send_response(404)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        return _start(Handler)
+
+    start.reject = reject
+    yield start
+    for server in servers:
+        server.shutdown()
