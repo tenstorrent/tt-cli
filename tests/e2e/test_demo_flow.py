@@ -126,8 +126,9 @@ def test_demo_flow(env, tmp_path):
     assert "--mode-non-interactive" in installer_log
     assert "--versions=release" in installer_log
 
-    # model list (nothing cached in the isolated env)
-    models = tt(env, "model", "list", "--json")
+    # model list (nothing cached in the isolated env); --offline keeps this
+    # e2e run from touching the real Hub for the community-bundle half of it
+    models = tt(env, "--offline", "model", "list", "--json")
     names = {m["name"] for m in json.loads(models.stdout)["models"]}
     assert "Llama-3.1-8B-Instruct" in names
 
