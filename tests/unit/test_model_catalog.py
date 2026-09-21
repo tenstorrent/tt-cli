@@ -219,23 +219,25 @@ def test_later_sources_override_earlier_by_name():
 def test_bundle_tags_are_classified_into_kind_engine_and_arch():
     from tenstorrent.modelhub.bundles import _classify
 
-    kind, engine, arch = _classify(
+    kind, engine, arch, hardware = _classify(
         ["blackhole", "tt-model-cache", "tt-model-catalog", "tt-model-container",
          "vllm-plugin", "region:us", "1x4"]
     )
     assert (kind, engine) == ("container", "vllm-plugin")  # upstream's own name
-    # tt-model's own tags, region:, and the 1x4 mesh shape are all dropped —
-    # arch is the architecture family, see the test below
+    # tt-model's own tags, region:, and the 1x4 mesh shape (not a board grammar
+    # match) are all dropped — arch is the architecture family, see the test below
     assert arch == ["blackhole"]
+    assert hardware == []
 
 
 def test_arch_is_the_architecture_family_and_nothing_else():
     """Repo tags are free text, so "everything left over is arch" reported
     `tenstorrent`, `tt-model` and `vllm-fork` as hardware — all three are live in
-    the catalog today. Board and mesh tags are dropped too: `p300x2` is one
-    publisher's wording for a configuration, while the family is what says
-    whether a bundle can run on your machine at all. A tag tt does not recognise
-    is left out rather than guessed at, so a new family belongs in _ARCH_TAGS."""
+    the catalog today. Board/mesh tags go in their own `hardware` column instead
+    (see test_classify_splits_arch_from_hardware_tags in test_bundles.py), and the
+    family is what says whether a bundle can run on your machine at all. A tag tt
+    does not recognise is left out rather than guessed at, so a new family belongs
+    in _ARCH_TAGS."""
     from tenstorrent.modelhub.bundles import _classify
 
     assert _classify(["blackhole", "p300x2", "tenstorrent", "tt-model"])[2] == ["blackhole"]
@@ -346,7 +348,7 @@ def test_engine_is_read_from_the_repo_tag_without_a_manifest():
     so a bundle nobody has pulled still reports its engine."""
     from tenstorrent.modelhub.bundles import _classify
 
-    _, engine, arch = _classify(["blackhole", "tt-model-container", "tt-dit-server"])
+    _, engine, arch, _ = _classify(["blackhole", "tt-model-container", "tt-dit-server"])
     assert engine == "tt-dit-server"
     assert arch == ["blackhole"]  # not misfiled as an arch
 
@@ -356,7 +358,7 @@ def test_an_unknown_future_engine_kind_is_still_recognized():
     from tenstorrent.modelhub.bundles import _classify
 
     for tag in ("sglang-plugin", "tt-quasar-server"):
-        _, engine, arch = _classify(["blackhole", tag])
+        _, engine, arch, _ = _classify(["blackhole", tag])
         assert (engine, arch) == (tag, ["blackhole"]), tag
 
 

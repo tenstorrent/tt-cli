@@ -49,7 +49,7 @@ kind = "git-venv"
 # name (kind = "uv-tool") with a one-line change once it ships to PyPI.
 # v0.18.0 is the first pin validated on Blackhole P300 hardware (earlier tags,
 # e.g. v0.6.0, predate the p300/p300x2 device types entirely).
-golden_version = "v0.21.0"
+golden_version = "v0.22.0"
 repo = "https://github.com/tenstorrent/tt-inference-server"
 entry = "run.py"
 python = "3.10"
@@ -74,7 +74,7 @@ package = "tt-model"
 repo = "https://github.com/tenstorrent/tt-model-manager"
 # Upstream publishes no tags yet, so the pin is a commit. Bumping it reinstalls
 # via registry.ensure() (recorded state != golden pin).
-golden_version = "5cc787dbd4b057319aae6aa69afe510fcc8628d5"
+golden_version = "d28ed4dc757c9d6a5ba26955e36779872ee5cce3"
 python = "3.10"
 health = ["--version"]
 
