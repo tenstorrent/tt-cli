@@ -87,7 +87,7 @@ health = ["--version"]
 # 2026-09-04; not in v2.10.1), hence the branch pin. A branch moves, and
 # registry.ensure() only reinstalls when the pin *string* changes, so the studio
 # backend does a best-effort `git pull --ff-only` before each run (skipped with
-# --offline). Pinned from dev@f7ee462 on 2026-09-04.
+# --offline). Catalog copy taken from dev@f96ec8c7 on 2026-09-22.
 kind = "git-venv"
 golden_version = "dev"
 repo = "https://github.com/tenstorrent/tt-studio"

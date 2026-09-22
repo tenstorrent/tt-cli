@@ -124,7 +124,7 @@ def test_the_bundled_studio_catalog_parses_and_adds_only_what_the_spec_lacks(mon
     monkeypatch.delenv("TT_MODEL_SUPPORT_PATH", raising=False)
     source = StudioModelsSource()
     assert source.origin == "bundled studio_models.json"
-    assert len(source.entries()) == 60
+    assert len(source.entries()) == 72
     studio_only = [
         m.name for m in ModelCatalog().list(cached_sizes={}) if m.backends == ["studio"]
     ]
