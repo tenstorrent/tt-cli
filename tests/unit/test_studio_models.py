@@ -85,22 +85,32 @@ def test_missing_override_path_is_a_config_error(monkeypatch, tmp_path):
     assert err.value.exit_code == ExitCode.CONFIG
 
 
-def test_the_support_list_wins_and_studio_only_adds_what_it_lacks(small_catalogs):
-    """A model tt-inference-server serves is never offered through studio, so a
-    shared name keeps the support list's entry wholesale — backend included."""
+def test_the_support_list_wins_and_studio_is_kept_as_a_second_path(small_catalogs):
+    """A shared name keeps the support list's entry wholesale — its device marks
+    and serve overrides — but studio stays in `backends`: studio deploys
+    tt-inference-server's models too, and `tt serve X --studio` has to be able
+    to ask for that. inference-server is listed first, as the default."""
     catalog = ModelCatalog()
     assert catalog.origin.endswith("model_support_small.json")
     models = _by_name(catalog.list(cached_sizes={}))
     llama = models["Llama-3.1-8B-Instruct"]
-    assert llama.backends == ["inference-server"]
+    assert llama.backends == ["inference-server", "studio"]
     assert llama.tt_model_id == "Llama-3.1-8B-Instruct"
     assert llama.devices["p300x2"].tool_call_parser == "llama3_json"
     assert "t3k" not in llama.hardware  # studio-only boards do not leak in
     assert models["Qwen3.5-9B"].backends == ["studio"]
-    assert models["Qwen3-32B"].backends == ["inference-server"]
+    assert models["Qwen3-32B"].backends == ["inference-server"]  # support list only
     # whisper is in both fixtures: support-list marks (broken on p300x2) survive
-    assert models["whisper-large-v3"].backends == ["inference-server"]
+    assert models["whisper-large-v3"].backends == ["inference-server", "studio"]
     assert models["whisper-large-v3"].devices["p300x2"].supported is False
+
+
+def test_merge_backends_orders_by_preference_and_dedupes():
+    from tenstorrent.modelhub.catalog import merge_backends
+
+    assert merge_backends(["studio"], ["inference-server"]) == ["inference-server", "studio"]
+    assert merge_backends(["inference-server"], ["inference-server"]) == ["inference-server"]
+    assert merge_backends(["studio"], ["other"]) == ["studio", "other"]
 
 
 def test_find_resolves_a_studio_only_model_by_name_or_repo(small_catalogs):

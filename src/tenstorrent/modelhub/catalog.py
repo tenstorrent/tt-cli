@@ -13,10 +13,12 @@ and lets the same artifact ship, publish, and drive the CLI.
 `TT_MODEL_SUPPORT_PATH` overrides the bundled file.
 
 ModelCatalog is the only consumer-facing surface. It merges an ordered list of
-entry sources, later sources overriding earlier ones by ModelInfo.name; today
-that list is StudioModelsSource (modelhub/studio.py) then ModelSupportSource,
-so a model tt-inference-server serves is never offered through studio and
-studio only adds the models the support list lacks. tt-model bundles (tt-model-manager's
+entry sources, later sources overriding earlier ones by ModelInfo.name, except
+that `backends` is the union of every source that carries the name; today that
+list is StudioModelsSource (modelhub/studio.py) then ModelSupportSource, so a
+model both know keeps the support list's entry (its device marks and serve
+overrides) and is offered through inference-server and studio alike, while
+studio-only models come through with just studio. tt-model bundles (tt-model-manager's
 self-contained running folders, `tt_kernel_manifest.json` on disk) are
 deliberately NOT a source here: they share no schema with the compat spec (no
 per-device status, no max_context), so `modelhub/bundles.py` lists them
@@ -180,6 +182,23 @@ def scan_hf_cache() -> dict[str, int]:
     }
 
 
+# The order `backends` is reported in, which is also the order `tt serve` prefers
+# with no path flag: tt-inference-server first, then studio.
+BACKEND_ORDER = ("inference-server", "studio")
+
+
+def merge_backends(*groups: Sequence[str]) -> list[str]:
+    """The union of several backends lists in BACKEND_ORDER (unknown names last,
+    in first-seen order), without duplicates."""
+    seen: list[str] = []
+    for group in groups:
+        for backend in group:
+            if backend not in seen:
+                seen.append(backend)
+    rank = {name: i for i, name in enumerate(BACKEND_ORDER)}
+    return sorted(seen, key=lambda b: (rank.get(b, len(rank)), seen.index(b)))
+
+
 def unknown_model_error(name: str, origin: str) -> TTError:
     return TTError(
         f"Unknown model {name!r}.",
@@ -193,9 +212,9 @@ def unknown_model_error(name: str, origin: str) -> TTError:
 class ModelCatalog:
     def __init__(self, sources: Sequence[CatalogSource] | None = None) -> None:
         # Ordered entry sources, merged by ModelInfo.name with later sources
-        # winning, so an appended source can override the released spec's entry
-        # of the same name. tt-model bundles are kept out of this list on
-        # purpose — see modelhub/bundles.py.
+        # winning (backends excepted — those accumulate), so an appended source
+        # can override the released spec's entry of the same name. tt-model
+        # bundles are kept out of this list on purpose — see modelhub/bundles.py.
         if sources is None:
             from .studio import StudioModelsSource
 
@@ -208,6 +227,14 @@ class ModelCatalog:
         merged: dict[str, ModelInfo] = {}
         for source in self.sources:
             for entry in source.entries():
+                previous = merged.get(entry.name)
+                if previous is not None:
+                    # The later entry wins wholesale, but a serving path an earlier
+                    # source offered is still a path: studio deploys the models
+                    # tt-inference-server serves too, so both are kept.
+                    entry = dataclasses.replace(
+                        entry, backends=merge_backends(previous.backends, entry.backends)
+                    )
                 merged[entry.name] = entry
         return [
             dataclasses.replace(

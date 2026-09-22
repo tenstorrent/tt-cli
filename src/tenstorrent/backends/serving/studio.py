@@ -3,11 +3,11 @@
 
 """TT-Studio serving backend — the third `tt serve` path.
 
-Studio carries a few models neither tt-inference-server's released spec nor a
-tt-model bundle covers (modelhub/studio.py lists them). Its run.py owns the whole
-stack — docker compose, the deploy, progress and health — so tt only finds the
-pinned checkout and streams `run.py run <model>` from it; stopping is
-`run.py --stop-model <model>` the same way.
+Studio deploys the models in its own catalog (modelhub/studio.py) — most of
+them tt-inference-server's, run from the same images, plus a few only studio
+carries. Its run.py owns the whole stack — docker compose, the deploy, progress
+and health — so tt only finds the pinned checkout and streams `run.py run
+<model>` from it; stopping is `run.py --stop-model <model>` the same way.
 """
 
 from __future__ import annotations

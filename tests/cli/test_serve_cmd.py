@@ -875,12 +875,25 @@ def test_auto_prefers_the_inference_server_when_both_know_the_model(
     assert not fake_studio.exists()
 
 
-def test_studio_is_refused_for_a_model_the_inference_server_serves(
+@pytest.mark.fakes_only
+def test_studio_deploys_a_model_the_inference_server_also_serves(
     runner, studio_docker, fake_studio, fake_server
 ):
+    """Studio's catalog carries tt-inference-server's models and deploys them from
+    the same images, so --studio is honoured for them; only the default differs."""
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--studio"])
+    assert result.exit_code == 0, result.output
+    assert _studio_argv(fake_studio) == ["run", "Llama-3.1-8B-Instruct"]
+    assert not fake_server.exists()
+
+
+def test_studio_is_refused_for_a_model_its_catalog_lacks(
+    runner, studio_docker, fake_studio, fake_server
+):
+    # Qwen3-32B is in the support fixture only
+    result = runner.invoke(app, ["serve", "Qwen3-32B", "--studio"])
     assert result.exit_code == ExitCode.UNSUPPORTED, result.output
-    assert "not offered through studio" in result.output
+    assert "catalog" in result.output  # "TT-Studio's catalog does not carry it"
     assert "--inference-server" in result.output
     assert not fake_studio.exists() and not fake_server.exists()
 
@@ -894,10 +907,11 @@ def test_inference_server_refuses_a_studio_only_model(runner, docker_present, fa
 
 def test_model_manager_refuses_a_catalog_model(runner, fake_model_manager):
     result = runner.invoke(
-        app, ["serve", "Llama-3.1-8B-Instruct", "--model"]
+        app, ["serve", "Llama-3.1-8B-Instruct", "--model-manager"]
     )
     assert result.exit_code == ExitCode.USAGE, result.output
     assert "bundle" in result.output
+    assert "Drop --model-manager" in result.output
     assert not fake_model_manager.exists()
 
 
@@ -916,7 +930,7 @@ def test_studio_refuses_a_bundle_id(runner, fake_studio):
 
 @pytest.mark.fakes_only
 def test_explicit_model_manager_still_serves_a_bundle(runner, fake_model_manager):
-    result = runner.invoke(app, ["serve", "acme/demo", "--model"])
+    result = runner.invoke(app, ["serve", "acme/demo", "--model-manager"])
     assert result.exit_code == 0, result.output
     assert json.loads(fake_model_manager.read_text().splitlines()[-1])["argv"] == [
         "serve", "acme/demo",
@@ -985,13 +999,15 @@ def test_studio_dry_run_reports_the_installed_checkout(runner, fake_studio, fake
 def test_picker_lists_the_backends_models_and_serves_the_choice(
     runner, serve_tty, studio_docker, fake_studio
 ):
-    # no tt-smi wired → no device filter → only the studio-only models are
-    # offered (the shared ones belong to inference-server); "2" is Qwen3.8-27B
-    result = runner.invoke(app, ["serve", "--studio"], input="2\n")
+    # no tt-smi wired → no device filter → studio's whole catalog is offered,
+    # the models tt-inference-server also serves included; "3" is Qwen3.8-27B
+    result = runner.invoke(app, ["serve", "--studio"], input="3\n")
     assert result.exit_code == 0, result.output
-    assert "1. Qwen3.5-9B" in result.output
-    assert "2. Qwen3.8-27B" in result.output
-    assert "Llama" not in result.output
+    assert "1. Llama-3.1-8B-Instruct" in result.output
+    assert "2. Qwen3.5-9B" in result.output
+    assert "3. Qwen3.8-27B" in result.output
+    assert "4. whisper-large-v3" in result.output
+    assert "Qwen3-32B" not in result.output  # support list only
     assert _studio_argv(fake_studio) == ["run", "Qwen3.8-27B"]
 
 
@@ -1001,10 +1017,12 @@ def test_picker_filters_to_the_detected_device(
 ):
     monkeypatch.setenv("TT_TOOL_BIN_TT_SMI", str(fake_bin / "tt-smi"))
     monkeypatch.setenv("FAKE_SMI_SCENARIO", "multi")  # p300x2
-    result = runner.invoke(app, ["serve", "--studio"], input="1\n")
+    result = runner.invoke(app, ["serve", "--studio"], input="2\n")
     assert result.exit_code == 0, result.output
     assert "Models for p300x2" in result.output
     assert "Qwen3.8-27B" in result.output
+    # the support list's marks apply to the shared entries: whisper is broken there
+    assert "whisper" not in result.output
     assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]
 
 
@@ -1039,7 +1057,7 @@ def test_bare_serve_still_shows_help(runner):
 
 
 def test_model_manager_picker_needs_a_pulled_bundle(runner, serve_tty, fake_model_manager):
-    result = runner.invoke(app, ["serve", "--model"])
+    result = runner.invoke(app, ["serve", "--model-manager"])
     assert result.exit_code == ExitCode.ERROR, result.output
     assert "tt model list --community" in result.output
 
@@ -1048,7 +1066,7 @@ def test_model_manager_picker_needs_a_pulled_bundle(runner, serve_tty, fake_mode
 def test_model_manager_picker_offers_pulled_bundles(
     runner, serve_tty, fake_model_manager, pulled_bundle
 ):
-    result = runner.invoke(app, ["serve", "--model"], input="1\n")
+    result = runner.invoke(app, ["serve", "--model-manager"], input="1\n")
     assert result.exit_code == 0, result.output
     assert "1. acme/demo" in result.output
     assert json.loads(fake_model_manager.read_text().splitlines()[-1])["argv"] == [

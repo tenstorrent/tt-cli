@@ -11,9 +11,10 @@ run `tt model list`, so the file ships with tt. `TT_STUDIO_MODELS_PATH`
 overrides it. Re-copy the file whenever the tt-studio pin moves.
 
 Entries come out with backends=["studio"] and no tt_model_id (that field is
-tt-inference-server's id). ModelCatalog lets the support list win by name, so a
-model tt-inference-server serves is offered through it alone and studio only
-ever adds the models tt-inference-server cannot serve.
+tt-inference-server's id). ModelCatalog lets the support list win by name but
+keeps studio in `backends`, so a model both know is offered through either path
+(`tt serve X --studio` deploys it with studio, which runs tt-inference-server's
+own images) and studio-only models come through with studio alone.
 """
 
 from __future__ import annotations

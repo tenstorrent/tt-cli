@@ -51,8 +51,8 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt model list` | Models that run on this machine's detected hardware and how each is served (`via`: inference-server, studio or tt-model; `--all` for every device; `--cached`, `--type`, `--hw` filters; `--community` for tt-model-manager bundles) |
 | `tt model info NAME` | Model metadata: engines, per-device support/status, requirements, cache state |
 | `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`) |
-| `tt serve [NAME] [-- ARGS…]` | Serve a model via tt-inference-server, TT-Studio, or tt-model-manager for a community bundle id (`--inference-server`, `--studio` or `--model` forces a path; with no NAME, pick from what that backend serves) — see [Serving backends](#serving-backends) |
-| `tt model stop NAME` | Stop a running model server, through studio for a studio-only model (`--profile` to stop only one profile of a bundle) |
+| `tt serve [NAME] [-- ARGS…]` | Serve a model via tt-inference-server, TT-Studio, or tt-model-manager for a community bundle id (`--inference-server`, `--studio` or `--model-manager` forces a path; with no NAME, pick from what that backend serves) — see [Serving backends](#serving-backends) |
+| `tt model stop NAME` | Stop a running model server, through studio when studio deployed it (`--profile` to stop only one profile of a bundle) |
 | `tt model ps` | Model servers running on this machine: name, backend, port, health, uptime (`--all` includes stopped containers; `--no-probe` skips the HTTP health check) |
 
 | Other | Functionality |
@@ -80,10 +80,10 @@ tt launch stop openwebui               # stop it, keeping its data
 `tt serve NAME` picks the serving path from the model:
 
 - **inference-server** — every model `tt model list` shows with `via inference-server`, driven through tt-inference-server's `run.py`. Preferred whenever it knows the model.
-- **studio** — the few models only [TT-Studio](https://github.com/tenstorrent/tt-studio)'s catalog carries (today `Qwen3.5-9B` and `Qwen3.8-27B`). tt clones studio's `dev` branch on first use and runs `run.py run NAME` from it, which brings the stack up, deploys the model and reports the endpoint; `tt model stop NAME` runs its `--stop-model`. A model tt-inference-server serves is never offered through studio, even with `--studio`. Single-chip models (a `P150` entry) are listed for the multi-card Blackhole boards too, the way studio runs them — one chip of a P300. Studio allocates chips and ports itself, so `--device` and `--port` are ignored there with a warning.
+- **studio** — every model in [TT-Studio](https://github.com/tenstorrent/tt-studio)'s catalog: most are tt-inference-server's, which studio deploys from the same images, plus the few only studio carries (today `Qwen3.5-9B` and `Qwen3.8-27B`), for which it is the default. `tt serve NAME --studio` picks it for any of them. tt clones studio's `dev` branch on first use and runs `run.py run NAME` from it, which brings the stack up, deploys the model and reports the endpoint; `tt model stop NAME` runs its `--stop-model` for anything studio deployed. Single-chip models (a `P150` entry) are listed for the multi-card Blackhole boards too, the way studio runs them — one chip of a P300. Studio allocates chips and ports itself, so `--device` and `--port` are ignored there with a warning.
 - **model-manager** — tt-model bundles (`namespace/name`) neither catalog knows.
 
-`tt model list` shows the path in its `via` column; `tt model info` says the same. `--inference-server`, `--studio` or `--model` forces a path and refuses one the model does not offer. With no model, `tt serve --studio` (or `--inference-server`, `--model`) lists what that path serves on this machine and asks for a number; the picker needs a terminal and is off under `--json`/`--quiet`.
+`tt model list` shows the paths in its `via` column (`inference-server, studio` for a model both offer); `tt model info` says the same. `--inference-server`, `--studio` or `--model-manager` forces a path and refuses one the model does not offer. With no model, `tt serve --studio` (or `--inference-server`, `--model-manager`) lists what that path serves on this machine — for studio, its whole catalog — and asks for a number; the picker needs a terminal and is off under `--json`/`--quiet`.
 
 Every path inherits a Hugging Face token: `HF_TOKEN` from the shell if set, else the token `hf auth login` stored (`HF_TOKEN_PATH`, then `<HF_HOME>/token`). `tt serve --dry-run` names the source without printing the token.
 

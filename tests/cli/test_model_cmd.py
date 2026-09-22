@@ -1246,11 +1246,11 @@ def test_model_list_shows_which_backend_serves_each_model(runner):
     assert result.exit_code == 0, result.output
     by_name = {m["name"]: m for m in json.loads(result.output)["models"]}
     assert by_name["Qwen3.5-9B"]["backends"] == ["studio"]
-    # in both catalogs, but tt-inference-server serves it, so studio is not offered
-    assert by_name["Llama-3.1-8B-Instruct"]["backends"] == ["inference-server"]
+    # in both catalogs: tt-inference-server is the default, studio is offered too
+    assert by_name["Llama-3.1-8B-Instruct"]["backends"] == ["inference-server", "studio"]
     table = runner.invoke(app, ["model", "list", "--hw", "p300x2"]).output
     assert "via" in table
-    assert "studio" in table
+    assert "inference-server, studio" in table
 
 
 def test_model_list_offers_single_chip_studio_models_on_bigger_boards(runner):
@@ -1282,3 +1282,49 @@ def test_model_stop_for_studio_does_not_install_studio(runner, isolated_dirs):
     result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
     assert result.exit_code == ExitCode.TOOL_MISSING, result.output
     assert not (isolated_dirs / "data" / "tools").exists()
+
+
+def test_model_info_for_a_model_both_paths_offer(runner):
+    result = runner.invoke(app, ["model", "info", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert "inference-server, studio" in result.output
+    assert "--studio" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_stop_asks_studio_when_studio_deployed_a_shared_model(
+    runner, studio_bin, fake_docker
+):
+    """`tt serve Llama-3.1-8B-Instruct --studio` leaves a container named after
+    the model that is not tt-inference-server's; its owner stops it."""
+    set_containers, stop_log = fake_docker
+    set_containers([
+        _container(
+            "cccccccccccc33",
+            name="Llama-3.1-8B-Instruct",
+            image="ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release:0.19.0",
+        ),
+    ])
+    result = runner.invoke(app, ["model", "stop", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(studio_bin.read_text().splitlines()[-1]) == [
+        "--stop-model", "Llama-3.1-8B-Instruct",
+    ]
+    assert not stop_log.exists()  # docker stop was not used
+
+
+@pytest.mark.fakes_only
+def test_model_stop_keeps_the_inference_server_path_when_studio_is_not_involved(
+    runner, studio_bin, fake_docker
+):
+    set_containers, stop_log = fake_docker
+    set_containers([
+        _container(
+            "dddddddddddd44",
+            snapshot="/hf/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/rev",
+        ),
+    ])
+    result = runner.invoke(app, ["model", "stop", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert stop_log.read_text().split() == ["dddddddddddd"]
+    assert not studio_bin.exists()

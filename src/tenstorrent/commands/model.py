@@ -25,7 +25,7 @@ from ..backends.serving.model_manager import (
     looks_like_bundle_id,
 )
 from ..backends.serving.studio import StudioBackend
-from ..backends.serving.ps import human_duration, list_served
+from ..backends.serving.ps import STUDIO, human_duration, list_served
 from .._compat import confirm
 from ..cli import JsonFlag, QuietFlag, handle_tt_errors
 from ..context import get_app_context
@@ -108,9 +108,9 @@ def _validate_hardware(hardware: str) -> str:
 _MODEL_CAPTION = (
     "source: tt-inference-server/tt-studio catalog vs. HuggingFace/local community. "
     "profiles: smallest board/mesh tag per capability. "
-    "via: the serving path `tt serve` takes — inference-server for its released "
-    "spec, studio for the models only TT-Studio carries, tt-model for a bundle. "
-    "`tt model list --help` for details."
+    "via: the paths `tt serve` offers — inference-server (its released spec, the "
+    "default), studio (TT-Studio's catalog; `--studio` picks it), tt-model for a "
+    "bundle. `tt model list --help` for details."
 )
 
 
@@ -361,7 +361,9 @@ def _info_renderer(payload: dict) -> Table:
     table.add_row("type", m["model_type"])
     table.add_row("engines", ", ".join(m["engines"]))
     table.add_row("via", ", ".join(m["backends"]))
-    if m["tt_model_id"]:
+    if m["tt_model_id"] and "studio" in m["backends"]:
+        servable = f"yes — `tt serve {m['name']}` (`--studio` deploys it with TT-Studio)"
+    elif m["tt_model_id"]:
         servable = f"yes — `tt serve {m['name']}`"
     elif m["backends"] == ["studio"]:
         servable = f"yes, through TT-Studio — `tt serve {m['name']}`"
@@ -630,13 +632,27 @@ def stop_model(
         )
         backend.stop(bundle, profile=profile)
         return
-    if studio_only(model):
+    if studio_only(model) or _studio_is_serving(appctx, model):
         # Deployed by studio's run.py, so studio stops it (and resets its chips).
         StudioBackend(appctx.registry, appctx.runner, appctx.config, appctx.output).stop(
             model
         )
         return
     _stop_catalog_model(appctx, model)
+
+
+def _studio_is_serving(appctx, model) -> bool:
+    """Whether a running container is studio's deploy of this model. A model both
+    paths offer may have come up through `tt serve X --studio`, and studio's
+    containers are not tt-inference-server's (`tt model ps` tells them apart the
+    same way), so the owner has to be asked to stop it."""
+    runtime = InferenceServerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    ).container_runtime()
+    return any(
+        row.backend == STUDIO and row.name == model.name
+        for row in list_served(appctx.runner, runtime, probe=False)
+    )
 
 
 def _stop_catalog_model(appctx, model) -> None:
