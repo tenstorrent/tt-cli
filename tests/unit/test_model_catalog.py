@@ -455,7 +455,7 @@ def test_describe_prefers_the_community_row_and_matches_case_insensitively(monke
         listed=[{"name": "NS/Alpha", "kind": "container", "installed": True}],
     )
     found = bundles.describe("ns/ALPHA")
-    assert (found.name, found.source, found.kind) == ("NS/Alpha", "HF", "container")
+    assert (found.name, found.source, found.kind) == ("NS/Alpha", "HuggingFace", "container")
     # narrowed by the name half; the exact match is decided locally
     assert calls == [{"query": "ALPHA", "config": None}]
 

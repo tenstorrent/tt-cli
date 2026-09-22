@@ -435,7 +435,7 @@ def _bundle_info(appctx, name: str, *, json_mode: bool) -> None:
         return
     row = bundles.describe(name, config=appctx.config, offline=appctx.offline)
     # None: not asked (--offline), so neither "listed" nor "unlisted" is honest.
-    in_catalog = None if appctx.offline else (row is not None and row.source == "HF")
+    in_catalog = None if appctx.offline else (row is not None and row.source != "local")
     if row is None:
         row = _unlisted_bundle(appctx, name)
     appctx.output.emit(
@@ -507,6 +507,8 @@ def _bundle_info_renderer(payload: dict) -> Table:
         catalog = "not in the community catalog — published on the Hub"
     table.add_row("catalog", catalog)
     table.add_row("arch", ", ".join(b["arch"]) or "—")
+    if not serve:  # pulled bundles show the manifest's target below instead
+        table.add_row("hardware", _hardware_cell(b, None))
     table.add_row("engine", b["engine"] or "—")
     if b["downloads"] is not None:
         table.add_row("downloads", str(b["downloads"]))
@@ -514,7 +516,7 @@ def _bundle_info_renderer(payload: dict) -> Table:
         "installed", "yes" if b["installed"] else f"no — `tt model pull {name}`"
     )
     if b["weights_repo"]:
-        cached = _weights_cell(b)
+        cached = _cached_cell(_bundle_row(b))
         state = "not in the HF cache" if cached == "—" else f"cached {cached}"
         table.add_row("weights", f"{b['weights_repo']} — {state}")
     else:

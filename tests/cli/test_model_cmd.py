@@ -1536,6 +1536,21 @@ def test_model_info_bundle_matches_the_id_case_insensitively(
     assert json.loads(result.output)["bundle"]["name"] == "NS/Bundle"
 
 
+def test_model_info_unpulled_bundle_shows_its_catalog_hardware_tags(
+    runner, monkeypatch, isolated_dirs
+):
+    """Without a pulled manifest there are no launch settings, so the catalog's
+    hardware tags stand in (the same ones `tt model list --community` shows)."""
+    _stub_bundles(
+        monkeypatch,
+        [{"name": "ns/bundle", "arch": ["blackhole"], "hardware": ["p300x2", "p150x4"]}],
+    )
+    result = runner.invoke(app, ["model", "info", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    assert "p150x4, p300x2" in result.output
+    assert "docker image" not in result.output
+
+
 def test_model_info_pulled_bundle_shows_its_launch_settings(
     runner, monkeypatch, tmp_path, isolated_dirs
 ):
