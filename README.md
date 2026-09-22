@@ -48,12 +48,14 @@ This is not an exhaustive list. For the full list of commands and options in eac
 
 | Model serving | Functionality |
 |---|---|
-| `tt model list` | Models that run on this machine's detected hardware (`--all` for every device; `--cached`, `--type`, `--hw` filters; `--community` for tt-model-manager bundles) |
+| `tt model list` | Models that run on this machine's detected hardware, from two sources: the released catalog (models Tenstorrent ships and tests via tt-inference-server) and community bundles (`--all` for every device; `--cached`, `--type`, `--hw` filters) |
+| `tt model list --catalog` / `--community` | Narrow to one source: `--catalog` for the released catalog only; `--community` for bundles anyone has published with tt-model-manager on the Hugging Face Hub, not tested or maintained by Tenstorrent (served with `tt serve <namespace>/<name>`) |
 | `tt model info NAME` | Model metadata: engines, per-device support/status, requirements, cache state |
 | `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`) |
 | `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id |
 | `tt model stop NAME` | Stop a running model server (`--profile` to stop only one profile of a bundle) |
 | `tt model ps` | Model servers running on this machine: name, backend, port, health, uptime (`--all` includes stopped containers; `--no-probe` skips the HTTP health check) |
+| `tt model logs NAME` | Output of a served model: the newest tt-inference-server log file for a catalog model, or `tt-model logs` for a bundle (`--follow`; `--tail N`; `--since` needs a running container; `--profile` for bundles) |
 
 | Other | Functionality |
 |---|---|
