@@ -54,6 +54,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt serve [NAME] [-- ARGS…]` | Serve a model via tt-inference-server, TT-Studio, or tt-model-manager for a community bundle id (`--inference-server`, `--studio` or `--model-manager` forces a path; with no NAME, pick from what that backend serves) — see [Serving backends](#serving-backends) |
 | `tt model stop NAME` | Stop a running model server, through studio when studio deployed it (`--profile` to stop only one profile of a bundle) |
 | `tt model ps` | Model servers running on this machine: name, backend, port, health, uptime (`--all` includes stopped containers; `--no-probe` skips the HTTP health check) |
+| `tt model logs NAME` | Output of a served model: the newest tt-inference-server log file for a catalog model, or `tt-model logs` for a bundle (`--follow`; `--tail N`; `--since` needs a running container; `--profile` for bundles) |
 
 | Other | Functionality |
 |---|---|
