@@ -83,7 +83,8 @@ health = ["--version"]
 # (bundled copy: modelhub/studio_models.json — re-copy it from
 # app/backend/shared_config/models_from_inference_server.json on a bump). tt
 # delegates the whole lifecycle to the checkout's run.py: `run <model>` deploys,
-# `--stop-model <model>` stops. Both exist only on the dev branch (tt-studio #1073,
+# `--stop-model <model>` stops it, `--stop` takes the stack down (after a stop or a
+# failed deploy). The first two exist only on the dev branch (tt-studio #1073,
 # 2026-09-04; not in v2.10.1), hence the branch pin. A branch moves, and
 # registry.ensure() only reinstalls when the pin *string* changes, so the studio
 # backend does a best-effort `git pull --ff-only` before each run (skipped with

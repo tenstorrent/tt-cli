@@ -7,7 +7,10 @@ Studio deploys the models in its own catalog (modelhub/studio.py) — most of
 them tt-inference-server's, run from the same images, plus a few only studio
 carries. Its run.py owns the whole stack — docker compose, the deploy, progress
 and health — so tt only finds the pinned checkout and streams `run.py run
-<model>` from it; stopping is `run.py --stop-model <model>` the same way.
+<model>` from it. Stopping is `run.py --stop-model <model>` followed by
+`run.py --stop`, which takes the stack (containers and networks) down with it;
+a failed deploy tears the stack down the same way, so nothing studio brought up
+is left running behind an error.
 """
 
 from __future__ import annotations
@@ -110,15 +113,42 @@ class StudioBackend:
             self._refresh_checkout(entry.parent, offline=offline)
         self.output.status(
             f"Starting TT-Studio and deploying {model.name} — Ctrl-C stops watching, "
-            f"`tt model stop {model.name}` stops the model."
+            f"`tt model stop {model.name}` stops the model and studio."
         )
         # run.py resolves the repo root, .env and its compose file from cwd.
-        return self.runner.stream(
-            self._argv(model, entry=entry),
+        try:
+            return self.runner.stream(
+                self._argv(model, entry=entry),
+                env=self._env(),
+                cwd=str(entry.parent),
+                tool=TOOL,
+            )
+        except TTError as exc:
+            if exc.exit_code == ExitCode.TOOL_FAILED:
+                # A deploy that died part-way leaves studio's stack up with no
+                # model behind it; take it down so the error is the only thing
+                # left. Only a real failure — Ctrl-C is a KeyboardInterrupt, not
+                # a TTError, and "stops watching" as the status line promises.
+                self._teardown(entry, after=f"deploying {model.name} failed")
+            raise
+
+    def _teardown(self, entry: Path, *, after: str) -> None:
+        """`run.py --stop`: stop studio's containers and networks. Best-effort —
+        a teardown that fails must not mask what it was cleaning up after."""
+        self.output.status(f"Stopping TT-Studio ({after}) …")
+        rc = self.runner.stream(
+            [self._python_for(entry), str(entry), "--stop"],
             env=self._env(),
             cwd=str(entry.parent),
             tool=TOOL,
+            check=False,
         )
+        if rc != 0:
+            self.output.warn(
+                f"TT-Studio's `run.py --stop` exited with status {rc}; its containers "
+                "may still be running. Check with `docker ps`, or run "
+                f"`python {entry} --stop` from {entry.parent} to retry."
+            )
 
     def plan(self, model: ModelInfo, *, offline: bool = False) -> dict:
         """What `serve` would run, without installing or touching docker."""
@@ -159,9 +189,15 @@ class StudioBackend:
         return Path(found[0])
 
     def stop(self, model: ModelInfo) -> int:
+        """`--stop-model` first, so studio resets the model's chips, then `--stop`
+        for the stack itself: with the model gone nothing needs studio's
+        containers and services, and leaving them up is what people asked
+        `tt model stop` to prevent."""
         entry = self._installed_entry()
         argv = [self._python_for(entry), str(entry), "--stop-model", model.name]
         self.output.status(f"Stopping {model.name} via TT-Studio …")
-        return self.runner.stream(
+        rc = self.runner.stream(
             argv, env=self._env(), cwd=str(entry.parent), tool=TOOL
         )
+        self._teardown(entry, after=f"{model.name} stopped")
+        return rc

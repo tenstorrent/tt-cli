@@ -2,9 +2,11 @@
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
 #!/usr/bin/env python3
-"""Fake tt-studio run.py: accepts exactly the shapes tt drives (`run MODEL` and
-`--stop-model MODEL`, so an argv drift fails loudly), records argv, cwd and the
-HF_TOKEN it inherited."""
+"""Fake tt-studio run.py: accepts exactly the shapes tt drives (`run MODEL`,
+`--stop-model MODEL` and `--stop`, so an argv drift fails loudly), records argv,
+cwd and the HF_TOKEN it inherited. FAKE_STUDIO_FAIL fails the deploy only, the
+way a real one dies part-way — `--stop` still succeeds, unless
+FAKE_STUDIO_STOP_FAIL is set too."""
 
 import argparse
 import json
@@ -15,12 +17,13 @@ import sys
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--stop-model", default=None)
+    parser.add_argument("--stop", action="store_true")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run")
     run.add_argument("model")
     args = parser.parse_args()
-    if args.command is None and args.stop_model is None:
-        parser.error("expected `run MODEL` or --stop-model MODEL")
+    if args.command is None and args.stop_model is None and not args.stop:
+        parser.error("expected `run MODEL`, --stop-model MODEL or --stop")
     log = os.environ.get("FAKE_STUDIO_LOG")
     if log:
         with open(log, "a") as fh:
@@ -33,7 +36,13 @@ def main() -> int:
     if env_log:
         with open(env_log, "a") as fh:
             fh.write(json.dumps({"HF_TOKEN": os.environ.get("HF_TOKEN")}) + "\n")
-    if os.environ.get("FAKE_STUDIO_FAIL"):
+    if args.stop:
+        if os.environ.get("FAKE_STUDIO_STOP_FAIL"):
+            print("fake tt-studio: --stop failed", file=sys.stderr)
+            return 1
+        print("fake tt-studio: stack stopped")
+        return 0
+    if args.command == "run" and os.environ.get("FAKE_STUDIO_FAIL"):
         print("fake tt-studio: deploy failed", file=sys.stderr)
         return 1
     if args.stop_model:

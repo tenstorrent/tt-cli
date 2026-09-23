@@ -1502,11 +1502,20 @@ def test_model_info_for_a_studio_only_model(runner):
 
 @pytest.mark.fakes_only
 def test_model_stop_routes_a_studio_only_model_to_studio(runner, studio_bin, fakes_dir):
+    """Stopping a studio model stops the model (resetting its chips) and then
+    studio's own containers and services, so nothing of studio's is left up."""
     result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
     assert result.exit_code == 0, result.output
-    assert json.loads(studio_bin.read_text().splitlines()[-1]) == [
-        "--stop-model", "Qwen3.5-9B",
-    ]
+    calls = [json.loads(line) for line in studio_bin.read_text().splitlines()]
+    assert calls == [["--stop-model", "Qwen3.5-9B"], ["--stop"]]
+
+
+@pytest.mark.fakes_only
+def test_model_stop_reports_a_studio_teardown_that_fails(runner, studio_bin, monkeypatch):
+    monkeypatch.setenv("FAKE_STUDIO_STOP_FAIL", "1")
+    result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
+    assert result.exit_code == 0, result.output  # the model itself did stop
+    assert "`run.py --stop` exited with status 1" in result.output
 
 
 def test_model_stop_for_studio_does_not_install_studio(runner, isolated_dirs):
@@ -1538,9 +1547,8 @@ def test_model_stop_asks_studio_when_studio_deployed_a_shared_model(
     ])
     result = runner.invoke(app, ["model", "stop", "Llama-3.1-8B-Instruct"])
     assert result.exit_code == 0, result.output
-    assert json.loads(studio_bin.read_text().splitlines()[-1]) == [
-        "--stop-model", "Llama-3.1-8B-Instruct",
-    ]
+    calls = [json.loads(line) for line in studio_bin.read_text().splitlines()]
+    assert calls == [["--stop-model", "Llama-3.1-8B-Instruct"], ["--stop"]]
     assert not stop_log.exists()  # docker stop was not used
 
 

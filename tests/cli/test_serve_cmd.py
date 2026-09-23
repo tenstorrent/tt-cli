@@ -965,10 +965,38 @@ def test_studio_needs_docker(runner, fake_studio, monkeypatch):
 
 
 @pytest.mark.fakes_only
-def test_studio_failure_is_tool_failed(runner, studio_docker, fake_studio, monkeypatch):
+def test_studio_failure_is_tool_failed_and_tears_the_stack_down(
+    runner, studio_docker, fake_studio, monkeypatch
+):
+    """A deploy that dies must not leave studio's containers and services up
+    behind the error: run.py --stop follows the failed `run`."""
     monkeypatch.setenv("FAKE_STUDIO_FAIL", "1")
     result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    calls = [json.loads(line) for line in fake_studio.read_text().splitlines()]
+    assert calls == [["run", "Qwen3.5-9B"], ["--stop"]]
+    assert "Stopping TT-Studio" in result.output
+
+
+@pytest.mark.fakes_only
+def test_studio_teardown_failure_does_not_mask_the_deploy_error(
+    runner, studio_docker, fake_studio, monkeypatch
+):
+    monkeypatch.setenv("FAKE_STUDIO_FAIL", "1")
+    monkeypatch.setenv("FAKE_STUDIO_STOP_FAIL", "1")
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert "`run.py --stop` exited with status 1" in result.output
+    calls = [json.loads(line) for line in fake_studio.read_text().splitlines()]
+    assert calls == [["run", "Qwen3.5-9B"], ["--stop"]]
+
+
+@pytest.mark.fakes_only
+def test_studio_success_leaves_the_stack_up(runner, studio_docker, fake_studio):
+    result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
+    assert result.exit_code == 0, result.output
+    calls = [json.loads(line) for line in fake_studio.read_text().splitlines()]
+    assert calls == [["run", "Qwen3.5-9B"]]
 
 
 def test_studio_dry_run_needs_neither_docker_nor_a_checkout(runner, isolated_dirs):
