@@ -188,6 +188,15 @@ class OutputManager:
             return
         self.status_console.print(f"warning: {message}", style="yellow")
 
+    def raw(self, line: str) -> None:
+        """One line of a tool's own output, verbatim — only under --verbose.
+
+        Markup and highlighting are off: a log line carrying `[core.py:98]` would
+        otherwise be parsed as Rich markup and fail to render.
+        """
+        if self.verbose and not self.quiet and not self.json_mode:
+            self.status_console.print(line, markup=False, highlight=False, style="dim")
+
     def debug(self, message: str) -> None:
         if self.verbose and not self.quiet:
             self.status_console.print(message, style="dim")

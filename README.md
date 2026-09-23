@@ -54,7 +54,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt model info NAME` | Model metadata: engines, per-device support/status, requirements, cache state; for a tt-model bundle id, its manifest and compatibility verdict (or catalog row) |
 | `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`; bundles: `--force`, `--no-weights`) |
 | `tt model profiles NAME` | A pulled bundle's serve profiles and its default |
-| `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id (bundles: `--profile`, `--detach`, `--print`, `--refresh`, `--no-update-check`, `--no-weights`) |
+| `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id (bundles: `--profile`, `--detach`, `--print`, `--refresh`, `--no-update-check`, `--no-weights`). Shows the boot as a live checklist — image pull, weights, device, KV cache, warmup — and returns when the endpoint answers |
 | `tt model curl [PROMPT]` | Send a chat completion to the model being served; unknown options go into the request body (`--max-tokens 40`), `--print` shows the curl instead |
 | `tt model stop NAME` | Stop a running model server (`--profile` to stop only one profile of a bundle) |
 | `tt model rm NAME` | Remove a model's local artifacts, keeping its weights unless `--include-weights` (`--dry-run`, `--yes`) |
@@ -71,6 +71,29 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt self update` | Upgrade `tt` itself where it owns its environment (`--check` to only look) — see [Keeping tt up to date](/docs/DEVELOPERS.md) |
 
 For a comprehensive view on packaging, publishing and pulling down community models [read more here](/docs/community-models.md)
+
+## Watching a model come up
+
+A first serve can take ten minutes: the image is pulled, the weights are fetched, the
+device is opened, the KV cache is sized and the model is warmed up. `tt serve` shows
+those as a live checklist instead of the server's thousands of log lines, and returns
+only once the endpoint actually answers — so `tt launch` straight afterwards works.
+There is no flag for it; it is what serving looks like.
+
+The full output is never thrown away. `tt serve` prints where it is teed
+(`~/.local/share/tenstorrent/logs/serve-<model>-<timestamp>.log`) before it starts, so
+`tail -f` that file in another terminal to watch the raw boot, and `tt model logs
+<model> --follow` does the same for a server already running. A boot that fails names
+the cause and points at the same file.
+
+`TT_SERVE_READY_TIMEOUT=<seconds>` raises the one-hour bound on that wait. Ctrl-C stops
+watching, not the server — the container keeps booting, and `tt model stop <model>`
+ends it.
+
+Serving a catalog model needs a Hugging Face token: tt-inference-server fetches weights
+and tokenizers from the Hub and asks for one interactively when `HF_TOKEN` is unset.
+Run `hf auth login` once (or export `HF_TOKEN`) and `tt serve` stays non-interactive;
+without one it says so up front rather than stopping at a prompt you cannot see.
 
 ## Interactive clients with `tt launch`
 

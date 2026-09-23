@@ -2,12 +2,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
 import contextlib
+import os
 import subprocess
+import time
 
 import pytest
 
 from tenstorrent.errors import ExitCode, TTError
-from tenstorrent.tools.runner import Runner
+from tenstorrent.tools.runner import LineSplitter, Runner
 
 
 def test_capture_returns_stdout():
@@ -123,3 +125,64 @@ def test_exec_tty_uses_exec_fn_seam():
         runner.exec_tty(["tt-smi"])
     assert recorded["file"] == "tt-smi"
     assert recorded["argv"] == ["tt-smi"]
+
+
+# -- stream_lines ---------------------------------------------------------------------
+def test_stream_lines_hands_over_every_line_from_both_streams():
+    runner = Runner(sudo_command="")
+    seen: list[str] = []
+    code = runner.stream_lines(
+        ["python3", "-c", "import sys; print('out'); print('err', file=sys.stderr)"],
+        on_line=seen.append,
+    )
+    assert code == 0
+    assert set(seen) == {"out", "err"}
+
+
+def test_stream_lines_reports_a_failing_tool_with_its_status():
+    runner = Runner(sudo_command="")
+    with pytest.raises(TTError) as excinfo:
+        runner.stream_lines(["python3", "-c", "raise SystemExit(3)"], on_line=lambda _: None)
+    assert excinfo.value.exit_code is ExitCode.TOOL_FAILED
+    assert excinfo.value.details["returncode"] == 3
+
+
+def test_stream_lines_missing_binary_is_tool_missing():
+    runner = Runner(sudo_command="")
+    with pytest.raises(TTError) as excinfo:
+        runner.stream_lines(["definitely-not-a-binary"], on_line=lambda _: None)
+    assert excinfo.value.exit_code is ExitCode.TOOL_MISSING
+
+
+def test_a_carriage_return_bar_is_a_line_as_soon_as_it_repaints():
+    """tqdm repaints one "line" for minutes; splitting on LF alone would hold
+    every update back until the download finished."""
+    splitter = LineSplitter()
+    assert splitter.feed(b"12%|# | 1/8\r34%|### | 3/8\r") == ["12%|# | 1/8", "34%|### | 3/8"]
+    assert splitter.feed(b"done\n") == ["done"]
+    assert splitter.flush() == []
+
+
+def test_a_multi_byte_character_split_across_chunks_survives():
+    splitter = LineSplitter()
+    assert splitter.feed("✅ setup".encode()[:2]) == []
+    assert splitter.feed("✅ setup".encode()[2:]) == []
+    assert splitter.flush() == ["✅ setup"]
+
+
+def test_stream_lines_sees_a_pythons_output_before_it_exits_only_when_unbuffered():
+    """Why every piped tool gets PYTHONUNBUFFERED: Python block-buffers stdout
+    at 8 KB when it is a pipe, so a long-running tool's early lines arrive only
+    when it finally exits — which is exactly when progress stops being useful."""
+    runner = Runner(sudo_command="")
+    script = "import os, sys, time; print('early'); time.sleep(1.5)"
+    for env, expect_early in (({"PYTHONUNBUFFERED": "1"}, True), ({}, False)):
+        seen: list[tuple[str, float]] = []
+        start = time.monotonic()
+        runner.stream_lines(
+            ["python3", "-c", script],
+            on_line=lambda line: seen.append((line, time.monotonic() - start)),
+            env={"PATH": os.environ.get("PATH", ""), **env},
+        )
+        assert [line for line, _ in seen] == ["early"]
+        assert (seen[0][1] < 1.0) is expect_early

@@ -94,7 +94,13 @@ class ModelManagerBackend:
             repo_id, offline=offline, port=port, serve_flags=serve_flags,
             extra_args=extra_args, entry=Path(entry),
         )
-        self.output.status(f"Serving {repo_id} via tt-model …")
+        # Passthrough, not a piped stream: tt-model draws its own boot checklist
+        # on the terminal it inherits — image, weight bytes, device, KV cache,
+        # warmup — and capturing that to re-render it here would only replace a
+        # live view with a worse copy of it. All tt adds is the same one-line
+        # pointer to the raw output that the catalog path prints.
+        self.output.status(f"Serving {repo_id} via tt-model.")
+        self.output.status(f"Raw output: tt model logs {repo_id} --follow", style="dim")
         return self.runner.stream(argv, env=self._env(), tool=TOOL)
 
     def _argv(

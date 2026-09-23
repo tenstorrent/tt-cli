@@ -162,6 +162,10 @@ def serve(
     """[beta] Serve a model for inference via tt-inference-server, or via tt-model
     when the name is a bundle id the released spec does not cover.
 
+    The boot is shown as a live checklist — image, weights, device, KV cache,
+    warmup — and the command returns once the endpoint answers. The server's own
+    output is saved to a file the run names; `--verbose` also prints it.
+
     For a bundle id, anything tt serve does not recognize is passed to tt-model —
     its own flags and its vLLM passthrough: `tt serve ns/model -- --max-model-len 4096`.
     """
@@ -237,7 +241,7 @@ def serve(
     ui.register_phases(PHASES)
     with ui.phase("Checks"):
         with ui.step("Container runtime") as step:
-            backend.preflight(entry)
+            backend.preflight(entry, workflow=workflow.value)
             step.detail("docker" if shutil.which("docker") else "podman")
     with ui.phase("Prepare"):
         launch = backend.prepare(

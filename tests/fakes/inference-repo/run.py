@@ -38,7 +38,17 @@ def main() -> int:
     env_log = os.environ.get("FAKE_INFERENCE_ENV_LOG")
     if env_log:
         with open(env_log, "a") as fh:
-            fh.write(json.dumps({"JWT_SECRET": os.environ.get("JWT_SECRET")}) + "\n")
+            fh.write(
+                json.dumps(
+                    {
+                        "JWT_SECRET": os.environ.get("JWT_SECRET"),
+                        "HF_TOKEN": os.environ.get("HF_TOKEN"),
+                        "PYTHONUNBUFFERED": os.environ.get("PYTHONUNBUFFERED"),
+                        "TT_SERVER_BOOT_ATTEMPTS": os.environ.get("TT_SERVER_BOOT_ATTEMPTS"),
+                    }
+                )
+                + "\n"
+            )
     if os.environ.get("FAKE_INFERENCE_FAIL"):
         print("fake inference server: model load failed", file=sys.stderr)
         return 1

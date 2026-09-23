@@ -35,6 +35,25 @@ def uses_host_weight_cache(model: ModelInfo) -> bool:
     return has_hub_weights(model) and model.model_type not in _CONTAINER_FETCHED_TYPES
 
 
+def hf_token() -> str | None:
+    """The Hugging Face token, resolved the way the Hub itself resolves it:
+    HF_TOKEN in the environment, else the one `hf auth login` stored.
+
+    tt-inference-server reads only the environment variable and getpass-prompts
+    for it when it is unset — a prompt that goes to /dev/tty, which a watched
+    serve cannot show and the user cannot answer. So tt resolves the token and
+    passes it down (backends/serving/inference_server.py:_env).
+    """
+    try:
+        from huggingface_hub import get_token
+    except ImportError:  # pragma: no cover — a declared dependency
+        return os.environ.get("HF_TOKEN") or None
+    try:
+        return get_token() or None
+    except OSError:  # an unreadable token file is "no token", not a crash
+        return os.environ.get("HF_TOKEN") or None
+
+
 def hf_home_dir(config: ConfigStore) -> Path:
     """The HF cache root, with HF_HOME semantics (hub cache lives at <root>/hub):
     config override → HF_HOME env → ~/.cache/huggingface.

@@ -24,10 +24,12 @@ from ...config.store import ConfigStore
 from ...errors import ExitCode, TTError
 from ...models.device import DeviceSnapshot
 from ...models.model import DeviceSupport, ModelInfo
-from ...modelhub.hub import hf_home_dir, uses_host_weight_cache
+from ...modelhub.hub import hf_home_dir, hf_token, uses_host_weight_cache
 from ...output import OutputManager
+from ...progress import ready_panel
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
+from . import boot
 
 TOOL = "tt-inference-server"
 WORKFLOWS = ("server", "benchmarks", "evals")
@@ -142,6 +144,11 @@ class ServeLaunch:
     cwd: str
     workflow: str
     model_name: str
+    # What the watched boot needs on top: the model, the device spec it resolved
+    # to, and the --service-port value it has to poll.
+    model: ModelInfo | None = None
+    support: DeviceSupport | None = None
+    port: str = ""
 
 
 @dataclass(frozen=True)
@@ -277,7 +284,7 @@ class InferenceServerBackend:
         self.config = config
         self.output = output
 
-    def preflight(self, model: ModelInfo) -> None:
+    def preflight(self, model: ModelInfo, *, workflow: str = "server") -> None:
         if not (shutil.which("docker") or shutil.which("podman")):
             raise TTError(
                 "No container runtime found.",
@@ -289,11 +296,49 @@ class InferenceServerBackend:
                 reason="tool.missing.docker",
                 details={"tool": "docker"},
             )
+        # Refused here rather than met halfway through: run.py getpass-prompts for
+        # a missing HF_TOKEN, and that prompt goes to /dev/tty — behind the
+        # progress view, where it can be neither seen nor answered.
+        if workflow == "server" and self._would_prompt_for_hf_token():
+            raise TTError(
+                "tt serve needs a Hugging Face token.",
+                why="tt-inference-server requires HF_TOKEN for every containerized "
+                "serve — it fetches weights and tokenizers from the Hub — and asks "
+                "for it interactively when it is unset.",
+                next_step="Run `hf auth login` once, or export HF_TOKEN=hf_… — then "
+                "re-run.",
+                exit_code=ExitCode.CONFIG,
+                reason="hf.token.missing",
+            )
         if not model.cached and uses_host_weight_cache(model):
             self.output.warn(
                 f"{model.name} is not in the local model cache; the server will "
                 f"download it on startup (`tt model pull {model.name}` avoids the wait)."
             )
+
+    def _would_prompt_for_hf_token(self) -> bool:
+        """Whether a containerized serve would stop and ask for HF_TOKEN.
+
+        run.py demands it for every `--docker-server` run, cached weights or
+        not (handle_secrets: huggingface_required is true whenever
+        docker_server is). It writes what it is given to `<checkout>/.env` and
+        reads that back on later runs, so a checkout already holding one never
+        asks again — and a checkout that does not exist yet certainly will.
+        """
+        if hf_token() is not None:
+            return False
+        root = self.checkout_root()
+        dotenv = root / ".env" if root is not None else None
+        if dotenv is None or not dotenv.is_file():
+            return True
+        try:
+            lines = dotenv.read_text().splitlines()
+        except OSError:
+            return True
+        return not any(
+            line.strip().startswith("HF_TOKEN=") and line.strip() != "HF_TOKEN="
+            for line in lines
+        )
 
     def _env(self, model: ModelInfo) -> dict[str, str]:
         """Environment for run.py. Runner.stream() *replaces* the child
@@ -316,6 +361,28 @@ class InferenceServerBackend:
         # A throwaway value keeps the deploy non-interactive; the user's own
         # JWT_SECRET, if exported, is left alone.
         env.setdefault("JWT_SECRET", secrets.token_hex(32))
+        # run.py logs to sys.stdout, which Python block-buffers at 8 KB when it
+        # is a pipe rather than a terminal — so a watched serve saw nothing for
+        # minutes and the checklist sat on its first row. The tool is the one
+        # being watched; it has to flush as it writes.
+        env.setdefault("PYTHONUNBUFFERED", "1")
+        # v0.21.0 added a readiness gate to ServerCommand: with more than one boot
+        # attempt — its default of 2 — run.py blocks polling /health until the
+        # model is warm (up to an hour), and tears the container down and retries
+        # if that runs out. tt already owns both halves of that: the container log
+        # drives the checklist and the same endpoint decides ready. Leaving the
+        # gate on means two processes waiting on one boot, and two deciding when
+        # to destroy it. One attempt restores the fire-and-forget return. (Set
+        # TT_SERVER_BOOT_ATTEMPTS yourself to keep the retry; the watcher reads
+        # the boot correctly either way.)
+        env.setdefault("TT_SERVER_BOOT_ATTEMPTS", "1")
+        # setup_host reads HF_TOKEN from the environment only, and getpass-prompts
+        # when it is unset. Pass the token `hf auth login` stored so someone who
+        # has logged in never meets that prompt (preflight refuses the serve when
+        # there is no token at all).
+        token = hf_token()
+        if token:
+            env.setdefault("HF_TOKEN", token)
         return env
 
     def _python_for(self, entry: Path) -> str:
@@ -490,9 +557,7 @@ class InferenceServerBackend:
             argv += ["--device", device]
         # Always pass it explicitly: otherwise run.py falls back to its own
         # SERVICE_PORT/8000 default instead of ours.
-        if port is None:
-            port = os.environ.get("SERVICE_PORT", DEFAULT_SERVICE_PORT)
-        argv += ["--service-port", str(port)]
+        argv += ["--service-port", self._service_port(port)]
         return argv
 
     def prepare(
@@ -538,20 +603,47 @@ class InferenceServerBackend:
             cwd=str(Path(entry).parent),
             workflow=workflow,
             model_name=model.name,
+            model=model,
+            support=support,
+            port=self._service_port(port),
         )
 
     def launch(self, plan: "ServeLaunch") -> int:
-        """Hand the terminal to run.py. Its output from here on is the server's."""
+        """Run run.py. `--workflow server` is watched to ready (see
+        _serve_watched); anything else hands it the terminal."""
+        # Release every live row first: the child owns the terminal now, and a
+        # spinner thread still painting would fight its output.
+        self.output.ui.handoff()
+        if plan.workflow == "server" and plan.model is not None and plan.port.isdigit():
+            return self._serve_watched(
+                plan.model,
+                plan.argv,
+                env=plan.env,
+                cwd=plan.cwd,
+                support=plan.support,
+                port=int(plan.port),
+            )
+        # Benchmarks and evals are long client-side runs whose own output is the
+        # point, and a port we cannot parse leaves nothing to poll.
         self.output.status(
             f"Starting tt-inference-server ({plan.workflow}) for {plan.model_name} "
             "— Ctrl-C to stop."
         )
-        # Release every live row first: the child owns the terminal now, and a
-        # spinner thread still painting would fight its output.
-        self.output.ui.handoff()
         return self.runner.stream(
             plan.argv, env=plan.env, cwd=plan.cwd, tool=TOOL
         )
+
+    @staticmethod
+    def _service_port(port: int | None) -> str:
+        """Exactly what --service-port gets: the flag, SERVICE_PORT, or our default.
+
+        A string, and unvalidated, because a hand-set SERVICE_PORT belongs to the
+        user: run.py is the right place for it to be rejected. launch() parses the
+        result to know which port to poll, and skips the wait when it cannot.
+        """
+        if port is not None:
+            return str(port)
+        return str(os.environ.get("SERVICE_PORT", DEFAULT_SERVICE_PORT))
 
     def serve(
         self,
@@ -574,6 +666,79 @@ class InferenceServerBackend:
                 force=force,
             )
         )
+
+    def _serve_watched(
+        self,
+        model: ModelInfo,
+        argv: Sequence[str],
+        *,
+        env: dict[str, str],
+        cwd: str,
+        support: DeviceSupport | None,
+        port: int,
+    ) -> int:
+        """`--workflow server`: render the boot as a checklist and wait it out.
+
+        run.py returns as soon as the container is *listed*, which is minutes
+        before a large model has finished loading — so waiting here is what makes
+        `tt serve` mean "the endpoint is up", which is what `tt launch` straight
+        afterwards needs it to mean.
+        """
+        raw_log = boot.raw_log_path(self.config.paths.logs_dir, model.name)
+        self.output.status(f"Serving {model.name} via tt-inference-server.")
+        self.output.status(f"Raw output: tail -f {raw_log}", style="dim", soft_wrap=True)
+        try:
+            result = boot.watch_serve(
+                runner=self.runner,
+                output=self.output,
+                argv=argv,
+                env=env,
+                cwd=cwd,
+                tool=TOOL,
+                model_name=model.name,
+                engines=list(support.engines) if support else [],
+                port=port,
+                raw_log=raw_log,
+                runtime=self.container_runtime(),
+            )
+        except KeyboardInterrupt:
+            # Swallowed, not re-raised: the container outlives run.py and so
+            # outlives us, so Ctrl-C here stopped the watching, not the serve.
+            # Say so, rather than leaving the user to guess whether it was torn
+            # down — and report it as the success it is.
+            self.output.status(
+                f"Stopped watching — {model.name} is still starting. "
+                f"`tt model logs {model.name} --follow` to follow it, "
+                f"`tt model stop {model.name}` to stop it."
+            )
+            return 0
+        if not result.ready:
+            self.output.warn(
+                f"tt could not follow {model.name}'s boot; it may still be starting. "
+                f"`tt model ps` shows what is up."
+            )
+            return 0
+        self.output.emit(
+            {
+                "model": model.name,
+                "backend": "tt-inference-server",
+                "endpoint": result.endpoint,
+                "container": result.container,
+                "log": str(result.raw_log),
+                "ready_seconds": round(result.elapsed, 1),
+            },
+            renderer=lambda data: ready_panel(
+                f"{data['model']} ready",
+                [
+                    ("endpoint", data["endpoint"]),
+                    ("models", f"curl {data['endpoint']}/models"),
+                    ("chat", "tt launch"),
+                ],
+                footer=f"tt model logs {data['model']} --follow"
+                f"   ·   tt model stop {data['model']}",
+            ),
+        )
+        return 0
 
     # -- artifact cleanup (`tt model rm`) --------------------------------------------
     def checkout_root(self) -> Path | None:

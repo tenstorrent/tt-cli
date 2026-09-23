@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,16 @@ def small_spec(monkeypatch):
 @pytest.fixture(autouse=True)
 def empty_hf_cache(monkeypatch):
     monkeypatch.setattr("tenstorrent.modelhub.catalog.scan_hf_cache", lambda: {})
+
+
+@pytest.fixture(autouse=True)
+def hf_token_present(monkeypatch):
+    """The ordinary case: the machine has a Hugging Face login.
+
+    tt-inference-server requires a token for every containerized serve, so
+    without one preflight refuses — see test_serve_refuses_when_there_is_no_hf_token.
+    """
+    monkeypatch.setenv("HF_TOKEN", "hf_token_for_tests")
 
 
 @pytest.fixture
@@ -60,6 +71,28 @@ def test_serve_streams_run_py(runner, docker_present, fake_server, isolated_dirs
         "--no-auth", "--host-hf-cache", str(isolated_dirs / "hf"),
         "--service-port", "20000",
     ]
+
+
+@pytest.mark.fakes_only
+def test_serve_shows_progress_and_where_the_raw_output_went(
+    runner, docker_present, fake_server, isolated_dirs
+):
+    """The checklist replaces the server's wall of output, so the run has to say
+    where that output is — and it must be there. No flag: this is the default."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert "Raw output: tail -f" in result.output
+    logs = sorted((isolated_dirs / "data" / "logs").glob("serve-Llama-3.1-8B-Instruct-*.log"))
+    assert logs and "listening" in logs[-1].read_text()
+
+
+@pytest.mark.fakes_only
+def test_serve_benchmarks_keeps_the_tools_own_output(runner, docker_present, fake_server):
+    """A checklist suits a boot with known steps; a benchmark run's own output
+    is the result, so it is streamed through untouched."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--workflow", "benchmarks"])
+    assert result.exit_code == 0, result.output
+    assert "Raw output: tail -f" not in result.output
 
 
 @pytest.mark.fakes_only
@@ -137,6 +170,66 @@ def test_serve_drives_media_models_too(runner, docker_present, fake_server):
 def test_serve_warns_when_model_not_cached(runner, docker_present, fake_server):
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
     assert "not in the local model cache" in result.output
+
+
+@pytest.fixture
+def no_hf_token(monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr("tenstorrent.backends.serving.inference_server.hf_token", lambda: None)
+
+
+def test_serve_refuses_when_there_is_no_hf_token(
+    runner, docker_present, fake_server, no_hf_token
+):
+    """run.py getpass-prompts for a missing HF_TOKEN on every --docker-server
+    run, and that prompt goes to /dev/tty — behind the progress view, where it
+    can be neither seen nor answered. Refuse up front instead of hanging."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == ExitCode.CONFIG
+    assert "hf auth login" in result.output
+    assert not fake_server.exists()  # refused before anything was started
+
+
+@pytest.mark.fakes_only
+def test_serve_accepts_a_token_the_checkout_already_recorded(
+    runner, docker_present, fake_server, no_hf_token, fakes_dir, tmp_path, monkeypatch
+):
+    """run.py writes the token it was given to <checkout>/.env and reads it back
+    on later runs, so a checkout holding one never asks again."""
+    checkout = tmp_path / "inference-repo"
+    shutil.copytree(fakes_dir / "inference-repo", checkout)
+    (checkout / ".env").write_text("JWT_SECRET=x\nHF_TOKEN=hf_recorded\n")
+    monkeypatch.setenv("TT_TOOL_BIN_TT_INFERENCE_SERVER", str(checkout / "run.py"))
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.fakes_only
+def test_serve_client_side_workflows_need_no_token_up_front(
+    runner, docker_present, fake_server, no_hf_token
+):
+    """Benchmarks and evals run without --docker-server, so run.py does not
+    require the token — and they stream on the inherited terminal anyway, where
+    a prompt would be visible."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--workflow", "evals"])
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.fakes_only
+def test_serve_passes_a_stored_hf_token_so_setup_host_never_prompts(
+    runner, docker_present, fake_server, tmp_path, monkeypatch
+):
+    """`hf auth login` is enough: tt resolves the stored token and exports it,
+    because setup_host reads the environment variable and nothing else."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.inference_server.hf_token", lambda: "hf_stored"
+    )
+    env_log = tmp_path / "inference-env.jsonl"
+    monkeypatch.setenv("FAKE_INFERENCE_ENV_LOG", str(env_log))
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(env_log.read_text().splitlines()[-1])["HF_TOKEN"] == "hf_stored"
 
 
 @pytest.mark.fakes_only
@@ -217,6 +310,17 @@ def test_serve_falls_back_to_tt_model_for_a_bundle_id(
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
     assert record["argv"] == ["serve", "raahemnabeel/qwen3-coder-30b-a3b"]
     assert record["hf_home"]  # HF_HOME exported for the child
+
+
+@pytest.mark.fakes_only
+def test_serve_points_a_bundle_at_its_logs_the_same_way(
+    runner, fake_model_manager, isolated_dirs
+):
+    """tt-model draws its own boot checklist, so tt leaves it alone — but the
+    pointer to the raw output reads the same on both paths."""
+    result = runner.invoke(app, ["serve", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    assert "Raw output: tt model logs ns/bundle --follow" in result.output
 
 
 @pytest.mark.fakes_only
@@ -952,6 +1056,46 @@ def test_serve_seeds_a_jwt_secret_so_setup_host_never_prompts(
     assert result.exit_code == 0, result.output
     seen = _seen_jwt(inference_env_log)
     assert seen and len(seen) >= 32
+
+
+@pytest.mark.fakes_only
+def test_serve_runs_the_server_unbuffered_so_the_checklist_can_follow_it(
+    runner, docker_present, fake_server, inference_env_log
+):
+    """run.py logs to sys.stdout, which Python block-buffers at 8 KB when it is
+    a pipe. Watched serves saw nothing for minutes and sat on the first row."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(inference_env_log.read_text().splitlines()[-1])
+    assert record["PYTHONUNBUFFERED"] == "1"
+
+
+@pytest.mark.fakes_only
+def test_serve_asks_the_server_not_to_wait_on_the_boot_itself(
+    runner, docker_present, fake_server, inference_env_log
+):
+    """From v0.21.0 run.py blocks polling /health until the model is warm, and
+    tears the container down if its own gate runs out. tt already owns both —
+    the container log drives the checklist and the same endpoint decides ready —
+    so leaving the gate on means two processes waiting on one boot and two
+    deciding when to destroy it."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(inference_env_log.read_text().splitlines()[-1])
+    assert record["TT_SERVER_BOOT_ATTEMPTS"] == "1"
+
+
+@pytest.mark.fakes_only
+def test_serve_keeps_a_boot_attempt_count_the_user_asked_for(
+    runner, docker_present, fake_server, inference_env_log, monkeypatch
+):
+    """The watcher reads the boot correctly either way, so the retry is the
+    user's to keep."""
+    monkeypatch.setenv("TT_SERVER_BOOT_ATTEMPTS", "3")
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(inference_env_log.read_text().splitlines()[-1])
+    assert record["TT_SERVER_BOOT_ATTEMPTS"] == "3"
 
 
 @pytest.mark.fakes_only

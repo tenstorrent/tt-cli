@@ -1,0 +1,149 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
+
+"""The checklist as it renders: live on a terminal, plain lines everywhere else."""
+
+import io
+import time
+
+import pytest
+from rich.console import Console
+
+from tenstorrent.output import OutputManager
+from tenstorrent.progress import Checklist, format_bytes, format_duration, ready_panel
+from tenstorrent.progress.view import _SPINNER as SPINNER_FRAMES
+
+
+def make_output(*, terminal=False, **flags):
+    output = OutputManager(**flags)
+    output.status_console = Console(file=io.StringIO(), force_terminal=terminal, width=100)
+    return output
+
+
+def rendered(output):
+    return output.status_console.file.getvalue()
+
+
+def test_a_piped_run_records_each_row_once_instead_of_redrawing():
+    output = make_output()
+    with Checklist(output) as view:
+        view.instant("host ready", "docker 28.1")
+        view.begin("pulling the container image")
+        view.progress(12, 34)
+        view.done("image ready", "vllm:0.22.0")
+    text = rendered(output)
+    assert "✓ host ready" in text
+    assert "✓ image ready" in text
+    assert "vllm:0.22.0" in text
+    assert text.count("image ready") == 1  # settled once, never repainted
+
+
+def test_quiet_and_json_runs_print_no_checklist_at_all():
+    """The status channel is where progress lives; --json must leave stdout and
+    stderr alone for the payload and the error panel."""
+    for flags in ({"quiet": True}, {"json_mode": True}):
+        output = make_output(**flags)
+        with Checklist(output) as view:
+            view.begin("pulling the container image")
+            view.done()
+        assert rendered(output) == ""
+
+
+def test_an_unfinished_row_settles_when_the_block_ends():
+    output = make_output()
+    with Checklist(output) as view:
+        view.begin("warming up the model")
+    assert "✓ warming up the model" in rendered(output)
+
+
+def test_an_interrupted_wait_is_marked_stopped_not_failed():
+    output = make_output()
+    with pytest.raises(KeyboardInterrupt):
+        with Checklist(output) as view:
+            view.begin("waiting for the model server")
+            raise KeyboardInterrupt
+    assert "○ waiting for the model server" in rendered(output)
+    assert "interrupted" in rendered(output)
+
+
+def test_a_placeholder_row_leaves_no_tick_for_work_that_never_happened():
+    """"waiting for the model server" only exists to keep the spinner honest
+    until something reports; a ✓ for it would claim a step that never ran."""
+    output = make_output()
+    with Checklist(output) as view:
+        view.begin("waiting for the model server", placeholder=True)
+        view.begin("opening the Tenstorrent device")
+        view.done("Tenstorrent device opened")
+    text = rendered(output)
+    assert "waiting for the model server" not in text
+    assert "✓ Tenstorrent device opened" in text
+
+
+def test_the_live_block_keeps_moving_while_a_step_reports_nothing():
+    """Weights download for twenty minutes without a word. Live re-renders the
+    object it was handed, so a pre-built frame repaints identically forever —
+    the spinner and the elapsed clock have to be recomputed on every tick, or
+    the whole view reads as hung exactly when it matters most."""
+    output = make_output(terminal=True)
+    with Checklist(output) as view:
+        view.begin("downloading weights")
+        time.sleep(0.4)  # no state change whatsoever
+    painted = {char for char in rendered(output) if char in SPINNER_FRAMES}
+    assert len(painted) > 1, "the spinner never advanced"
+
+
+def test_a_live_run_repaints_one_block_rather_than_appending_rows():
+    output = make_output(terminal=True)
+    with Checklist(output) as view:
+        view.begin("loading weights")
+        view.progress(16, 64)
+        view.done("weights loaded")
+    text = rendered(output)
+    assert "weights loaded" in text
+    assert "\x1b[" in text  # cursor control, i.e. a repainted block
+
+
+@pytest.mark.parametrize(
+    "done, total, is_bytes, expected",
+    [
+        (16, 64, False, "16/64 · 25%"),
+        (1.68e9, 4.98e9, True, "1.68 GB / 4.98 GB · 34%"),
+        # The denominator grows as docker reveals layers, so the ratio can
+        # briefly exceed 1; the bar clamps rather than overflowing.
+        (5, 4, False, "5/4 · 100%"),
+    ],
+)
+def test_progress_reads_as_counts_or_sizes(done, total, is_bytes, expected):
+    from tenstorrent.progress.view import _Row
+
+    row = _Row("x", done=done, total=total, is_bytes=is_bytes)
+    assert expected in row.progress_text()
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [(0, "0 B"), (999, "999 B"), (1500, "1.50 kB"), (15_900_000_000, "15.9 GB")],
+)
+def test_sizes_are_decimal_to_match_what_hugging_face_reports(value, expected):
+    assert format_bytes(value) == expected
+
+
+@pytest.mark.parametrize(
+    "seconds, expected", [(42, "42s"), (64, "1m 04s"), (4020, "1h 07m")]
+)
+def test_durations_read_in_the_unit_that_fits(seconds, expected):
+    assert format_duration(seconds) == expected
+
+
+def test_the_ready_card_names_the_endpoint_and_the_next_command():
+    console = Console(file=io.StringIO(), width=100)
+    console.print(
+        ready_panel(
+            "Llama-3.1-8B-Instruct ready",
+            [("endpoint", "http://127.0.0.1:20000/v1")],
+            footer="tt model logs Llama-3.1-8B-Instruct --follow",
+        )
+    )
+    text = console.file.getvalue()
+    assert "http://127.0.0.1:20000/v1" in text
+    assert "tt model logs" in text
