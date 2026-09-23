@@ -247,7 +247,9 @@ def list_models(
         False,
         "--community",
         help="Only community bundles (Hub + local installs) — skip the released "
-        "catalog. The opposite of --catalog.",
+        "catalog. Community bundles are models anyone has packaged with "
+        "tt-model-manager and published on the Hugging Face Hub; they are not "
+        "tested or maintained by Tenstorrent. The opposite of --catalog.",
     ),
     catalog_only: bool = typer.Option(
         False,
@@ -261,13 +263,17 @@ def list_models(
     """Browse models that run on this machine: the released catalog plus
     community tt-model bundles from the Hub (default: detected hardware only).
 
-    source: `tt-inference-server` is the released catalog; `HuggingFace` is
-    the community catalog on the Hub; `local` is installed here — a bundle
-    on both shows up twice, once per source. profiles: the board/mesh
-    target(s) a model supports, collapsed to the smallest tag per capability
-    (a bigger board that adds nothing over a smaller one is left out). Every
-    entry serves with `tt serve <name>`; weights are referenced rather than
-    shipped."""
+    source: `tt-inference-server` is the released catalog — models Tenstorrent
+    ships and tests, with known per-device support (`tt model info NAME` for
+    details); `HuggingFace` is the community catalog on the Hub — bundles
+    anyone has packaged with tt-model-manager, not tested or maintained by
+    Tenstorrent; `local` is installed here — a bundle on both shows up twice,
+    once per source. Pass --catalog or --community to see just one source.
+    profiles: the board/mesh target(s) a model supports, collapsed to the
+    smallest tag per capability (a bigger board that adds nothing over a
+    smaller one is left out). Every entry serves with `tt serve <name>`
+    (`tt serve <namespace>/<name>` for a bundle); weights are referenced
+    rather than shipped."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
     if community and catalog_only:
