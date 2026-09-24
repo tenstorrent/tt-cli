@@ -19,9 +19,11 @@ directory.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import selectors
+import socket
 import subprocess
 import time
 from dataclasses import dataclass
@@ -166,7 +168,7 @@ def watch_serve(
             view.fail()
             raise _boot_error(
                 model_name,
-                container or prepare,
+                container if container is not None and container.evidence() else prepare,
                 raw_log=raw_log,
                 exited=outcome != "timeout",
                 deadline_s=int(deadline - started),
@@ -241,6 +243,10 @@ def _watch(
         )
         if exists.returncode != 0:
             return
+        if prepare.endpoint_port is None:
+            prepare.endpoint_port = min(
+                _inspect_ports(runner, runtime, str(prepare.container))[1], default=None
+            )
         _apply(view, prepare.finish())
         trackers["container"] = PhaseTracker(phases_for(prepare.engines() or engines))
         view.begin("waiting for the model server", placeholder=True)
@@ -315,6 +321,9 @@ def _watch(
         for line in backend.flush():
             keep(line)
             prepare.feed(line)
+        if proc.returncode != 0:
+            # A backend that failed started nothing of ours.
+            return
         if prepare.container is None:
             prepare.resolve_container(runner, runtime)
         follow_container()
@@ -364,12 +373,16 @@ def _watch(
                 drained = True
 
             now = time.monotonic()
-            # Not before the container is ours to talk about: something already
-            # listening on the port would otherwise be reported as this serve,
-            # ready in milliseconds, with no container to name.
-            if ready_at is None and (prepare.container or drained) and now >= next_probe:
+            # A backend that gave up is a failure, whatever the port says: with
+            # another model already serving there, the probe would answer for it.
+            if drained and proc.returncode != 0 and ready_at is None:
+                return finish("failed")
+
+            if ready_at is None and prepare.container and now >= next_probe:
                 next_probe = now + _PROBE_INTERVAL_S
-                if discovery.probe(endpoint_for(prepare, port), timeout_s=_PROBE_TIMEOUT_S):
+                if discovery.probe(
+                    endpoint_for(prepare, port), timeout_s=_PROBE_TIMEOUT_S
+                ) and _serves_on(runner, runtime, str(prepare.container), prepare.endpoint_port or port):
                     # Not returned yet unless the backend is done: it may poll
                     # the same endpoint and be about to exit on its own, and
                     # cutting its pipe mid-write would break a serve that has
@@ -377,8 +390,6 @@ def _watch(
                     ready_at = now
             if ready_at is not None and (drained or now - ready_at > _EXIT_GRACE_S):
                 return finish("ready")
-            if drained and proc.returncode != 0:
-                return finish("failed")
             if drained and prepare.container is None:
                 return finish("no-container")
             if state["gone"] and ready_at is None:
@@ -392,6 +403,60 @@ def _watch(
             _release(logs)
             logs.terminate()
         _release(proc)
+
+
+def _serves_on(runner: Runner, runtime: str, container: str, port: int) -> bool:
+    """Whether `container` is running and is what listens on host `port`.
+
+    What makes an answering endpoint this serve's rather than a neighbour's. A
+    container on the host network publishes nothing, so for one of those
+    running is all docker can vouch for.
+    """
+    running, ports = _inspect_ports(runner, runtime, container)
+    return running and (not ports or port in ports)
+
+
+def _inspect_ports(runner: Runner, runtime: str, container: str) -> tuple[bool, set[int]]:
+    """(running, host ports it publishes). Not running when docker cannot say."""
+    listed = runner.capture(
+        [runtime, "inspect", "--format",
+         "{{.State.Running}} {{json .NetworkSettings.Ports}}", container],
+        tool=runtime, check=False,
+    )
+    running, _, raw = listed.stdout.strip().partition(" ")
+    if listed.returncode != 0 or running != "true":
+        return False, set()
+    try:
+        bindings = json.loads(raw) or {}
+    except ValueError:
+        bindings = {}
+    return True, {
+        int(binding["HostPort"])
+        for published in bindings.values() if isinstance(published, list)
+        for binding in published
+        if isinstance(binding, dict) and str(binding.get("HostPort", "")).isdigit()
+    }
+
+
+def port_is_free(port: int) -> bool:
+    """Whether this host port can be bound right now, the way docker will bind
+    it (the wildcard address). A snapshot: something can still take it before
+    the container starts, and then docker's own error stands."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("", port))
+        except OSError:
+            return False
+    return True
+
+
+def pick_free_port(preferred: int, *, attempts: int = 100) -> int | None:
+    """The first free port at or above `preferred`, as tt-model picks its own."""
+    for candidate in range(preferred, min(preferred + attempts, 65536)):
+        if port_is_free(candidate):
+            return candidate
+    return None
 
 
 def _release(proc: subprocess.Popen) -> None:
@@ -419,7 +484,11 @@ def _apply(view: Checklist, events) -> None:
 
 
 # -- failure ---------------------------------------------------------------------------
-_HELD_RE = re.compile(r"Sysmem mapped at unexpected NOC address|CHIP_IN_USE|stale process holding")
+_HELD_RE = re.compile(
+    r"Sysmem mapped at unexpected NOC address|CHIP_IN_USE|stale process holding"
+    # tt-model refusing up front: every chip is mounted by a running container.
+    r"|tt device\(s\) are free"
+)
 _FLAG_RE = re.compile(r"unrecognized arguments|error: argument|no such option")
 _RESET_RE = re.compile(
     r"Try resetting the board|Timed out while waiting for active ethernet core"

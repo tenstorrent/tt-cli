@@ -1136,3 +1136,33 @@ def test_serve_keeps_the_users_jwt_secret(
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
     assert result.exit_code == 0, result.output
     assert _seen_jwt(inference_env_log) == "mine"
+
+
+@pytest.mark.fakes_only
+def test_serve_walks_past_a_port_another_model_holds(
+    runner, docker_present, fake_server, monkeypatch
+):
+    """A second model beside the first: the default port is taken, so the next
+    free one is used rather than asking docker for one it will refuse."""
+    from tenstorrent.backends.serving import boot
+
+    monkeypatch.delenv("SERVICE_PORT", raising=False)
+    monkeypatch.setattr(boot, "port_is_free", lambda port: port != 20000)
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert "serving on 20001 instead" in result.output
+    argv = json.loads(fake_server.read_text().splitlines()[-1])
+    assert argv[-2:] == ["--service-port", "20001"]
+
+
+@pytest.mark.fakes_only
+def test_serve_refuses_a_port_the_user_chose_that_is_taken(
+    runner, docker_present, fake_server, monkeypatch
+):
+    from tenstorrent.backends.serving import boot
+
+    monkeypatch.setattr(boot, "port_is_free", lambda port: False)
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--port", "20000"])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "Port 20000 is already in use" in result.output
+    assert not fake_server.exists() or not fake_server.read_text().strip()

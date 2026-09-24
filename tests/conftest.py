@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from tenstorrent.backends.serving import boot as serving_boot
 from tenstorrent.telemetry.env import CI_ENV_VARS
 from tenstorrent.tools import registry as registry_module
 
@@ -155,6 +156,9 @@ def inference_bin(isolated_dirs, hardware_mode, monkeypatch, tmp_path) -> Path |
         "TT_TOOL_BIN_TT_INFERENCE_SERVER", str(FAKES_DIR / "inference-repo" / "run.py")
     )
     monkeypatch.setenv("FAKE_INFERENCE_LOG", str(log))
+    # The fake binds nothing, and whatever the developer is serving on 20000
+    # must not move the port a test asserts on.
+    monkeypatch.setattr(serving_boot, "port_is_free", lambda port: True)
     return log
 
 

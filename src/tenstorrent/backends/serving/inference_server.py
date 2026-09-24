@@ -588,6 +588,8 @@ class InferenceServerBackend:
         # registry.ensure may clone the repo and build a venv — minutes of work
         # that now renders its own steps (see tools/installers.py).
         entry = self.registry.ensure(TOOL, offline=offline)
+        if workflow == "server":
+            port = self._free_service_port(model, port)
         argv = self._argv(
             model,
             workflow=workflow,
@@ -667,6 +669,41 @@ class InferenceServerBackend:
                 force=force,
             )
         )
+
+    def _free_service_port(self, model: ModelInfo, port: int | None) -> int | None:
+        """The port to serve on, checked before run.py is asked to publish it.
+
+        docker refuses a taken port only once run.py runs the container, into a
+        log file of run.py's own, and meanwhile the model already on it answers
+        every probe. So a port the user chose is refused here while the reason
+        can still be said; left to us, we walk up past busy ones as tt-model
+        does, which is what lets a second model serve beside the first.
+        """
+        setting = self._service_port(port)
+        if not setting.isdigit():
+            return port  # the user's SERVICE_PORT; run.py is the one to reject it
+        wanted = int(setting)
+        if boot.port_is_free(wanted):
+            return port
+        if port is not None or "SERVICE_PORT" in os.environ:
+            raise TTError(
+                f"Port {wanted} is already in use.",
+                why="Another server — often a model served earlier — is listening there.",
+                next_step=f"Pick another: `tt serve {model.name} --port <port>`, or "
+                "`tt model ps` to see what is running.",
+                exit_code=ExitCode.USAGE,
+                reason="serve.port.in_use",
+            )
+        chosen = boot.pick_free_port(wanted)
+        if chosen is None:
+            raise TTError(
+                f"No free port found from {wanted} upward.",
+                next_step=f"Pass one explicitly: `tt serve {model.name} --port <port>`.",
+                exit_code=ExitCode.USAGE,
+                reason="serve.port.in_use",
+            )
+        self.output.status(f"Port {wanted} is in use; serving on {chosen} instead.", style="dim")
+        return chosen
 
     def _serve_watched(
         self,

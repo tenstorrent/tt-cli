@@ -69,6 +69,16 @@ FAKE_DOCKER_LOGS = textwrap.dedent(
 )
 
 
+def _running_on(port):
+    """A docker that says every container is up and publishing `port`."""
+    def spawn(argv, **kwargs):
+        out = ""
+        if argv[:2] == ["docker", "inspect"] and "{{.State.Running}}" in " ".join(argv):
+            out = 'true {"8000/tcp":[{"HostIp":"0.0.0.0","HostPort":"%d"}]}' % port
+        return subprocess.CompletedProcess(argv, 0, out, "")
+    return spawn
+
+
 @pytest.fixture
 def harness(tmp_path):
     """A watch_serve call wired to a scripted backend and a scripted docker."""
@@ -102,10 +112,7 @@ def harness(tmp_path):
                 argv = [sys.executable, str(logs_script), str(body), str(logs_linger)]
             return subprocess.Popen(argv, **kwargs)
 
-        runner = Runner(
-            popen=popen,
-            spawn=capture or (lambda *a, **k: subprocess.CompletedProcess(a[0], 0, "", "")),
-        )
+        runner = Runner(popen=popen, spawn=capture or _running_on(20000))
         return boot.watch_serve(
             runner=runner,
             output=output or OutputManager(),
@@ -536,3 +543,55 @@ def test_a_note_is_not_mistaken_for_a_skipped_step():
         "✓ docker load tt-model/depth-anything-3-p150:88d067be2a39"
     ]
     assert "is loaded but is a different" in " ".join(prepare.evidence())
+
+
+def _gone(argv, **kwargs):
+    """A docker with no such container: the one named was never started."""
+    if argv[:2] == ["docker", "inspect"]:
+        return subprocess.CompletedProcess(argv, 1, "", "Error: No such object")
+    return subprocess.CompletedProcess(argv, 0, "", "")
+
+
+def test_a_neighbour_answering_on_the_port_is_not_this_serve(harness, monkeypatch):
+    """A second serve on a busy port: docker refuses the container, run.py fails,
+    and the model already there answers every probe. That is not ready."""
+    with pytest.raises(TTError):
+        harness(
+            rc=1, probe_answers=(True,) * 50, capture=_gone, monkeypatch=monkeypatch
+        )
+
+
+def test_the_endpoint_is_where_the_container_publishes_not_the_default(
+    harness, monkeypatch
+):
+    """tt-model walks up past busy ports and need not say where it landed; the
+    default would find whatever model is already there."""
+    harness.script.write_text('print(\'{"event":"container","id":"tt-model-m"}\')\n')
+    result = harness(
+        logs_linger=5.0, capture=_running_on(20001), monkeypatch=monkeypatch,
+        prepare=ModelManagerPreparation("ns/m"),
+    )
+    assert result.ready
+    assert result.endpoint == "http://127.0.0.1:20001/v1"
+
+
+def test_tt_model_refusing_for_want_of_chips_is_a_failure_not_ready(
+    harness, monkeypatch
+):
+    """Captured verbatim from a second `tt serve` beside a p300x2 model that has
+    every chip mounted: tt-model refuses before it starts anything."""
+    harness.script.write_text(textwrap.dedent(
+        '''
+        import sys
+        print("  \\u2022 port 20000 is in use; serving on 20001 instead")
+        print("only 0 of 4 tt device(s) are free (chip(s) 0, 1, 2, 3 in use); "
+              "this profile needs 1")
+        sys.exit(1)
+        '''
+    ))
+    with pytest.raises(TTError) as excinfo:
+        harness(
+            probe_answers=(True,) * 50, monkeypatch=monkeypatch,
+            prepare=ModelManagerPreparation("mando2222/vibethinker-3b-blackhole-v51"),
+        )
+    assert "already in use" in excinfo.value.what
