@@ -3,7 +3,7 @@
 
 """Measuring a weights download that nothing reports."""
 
-from tenstorrent.progress.weights import WeightsProgress, directory_size, repo_cache_dir
+from tenstorrent.backends.serving.progress.weights import WeightsProgress, directory_size, repo_cache_dir
 
 
 def _blob(path, size):

@@ -26,7 +26,7 @@ from ...errors import ExitCode, TTError
 from ...modelhub import bundles
 from ...modelhub.hub import hf_home_dir, hf_token
 from ...output import OutputManager
-from ...progress import format_duration, ready_panel
+from .progress import format_duration, ready_panel
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
 from . import boot

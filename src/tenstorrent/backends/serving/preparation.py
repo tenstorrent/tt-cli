@@ -16,7 +16,7 @@ import re
 import shutil
 from typing import Sequence
 
-from ...progress import HOST_PHASES, Event, PhaseTracker
+from .progress import HOST_PHASES, Event, PhaseTracker
 
 #: Shared row wording, keyed by step. Taken from the host phase template rather
 #: than restated, so the two backends cannot drift apart on a rename.

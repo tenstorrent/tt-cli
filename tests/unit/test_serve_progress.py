@@ -5,9 +5,9 @@
 
 import pytest
 
-from tenstorrent.progress import HOST_PHASES, MEDIA_PHASES, VLLM_PHASES, phases_for
-from tenstorrent.progress.phases import parse_bars, parse_pull_layer
-from tenstorrent.progress.tracker import PhaseTracker
+from tenstorrent.backends.serving.progress import HOST_PHASES, MEDIA_PHASES, VLLM_PHASES, phases_for
+from tenstorrent.backends.serving.progress.phases import parse_bars, parse_pull_layer
+from tenstorrent.backends.serving.progress.tracker import PhaseTracker
 
 # Trimmed from a real run.py server run (v0.22.0) — the lines the host template
 # keys on, in the order run.py prints them.

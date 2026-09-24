@@ -10,8 +10,8 @@ import pytest
 from rich.console import Console
 
 from tenstorrent.output import OutputManager
-from tenstorrent.progress import Checklist, format_bytes, format_duration, ready_panel
-from tenstorrent.progress.view import _SPINNER as SPINNER_FRAMES
+from tenstorrent.backends.serving.progress import Checklist, format_bytes, format_duration, ready_panel
+from tenstorrent.backends.serving.progress.view import _SPINNER as SPINNER_FRAMES
 
 
 def make_output(*, terminal=False, **flags):
@@ -114,7 +114,7 @@ def test_a_live_run_repaints_one_block_rather_than_appending_rows():
     ],
 )
 def test_progress_reads_as_counts_or_sizes(done, total, is_bytes, expected):
-    from tenstorrent.progress.view import _Row
+    from tenstorrent.backends.serving.progress.view import _Row
 
     row = _Row("x", done=done, total=total, is_bytes=is_bytes)
     assert expected in row.progress_text()

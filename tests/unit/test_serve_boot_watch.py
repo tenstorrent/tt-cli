@@ -19,7 +19,7 @@ from tenstorrent.backends.serving import boot
 from tenstorrent.backends.serving.preparation import ModelManagerPreparation, RunPyPreparation
 from tenstorrent.errors import ExitCode, TTError
 from tenstorrent.output import OutputManager
-from tenstorrent.progress import Checklist, PhaseTracker, phases_for
+from tenstorrent.backends.serving.progress import Checklist, PhaseTracker, phases_for
 from tenstorrent.tools.runner import Runner
 
 CONTAINER_LOG = """\
@@ -184,8 +184,8 @@ def test_run_py_failing_is_reported_against_the_saved_output(harness, tmp_path, 
 def test_the_reason_comes_from_the_log_not_the_exit_status(tmp_path):
     """"exited with status 1" says nothing. The line the tool printed on its way
     out — `AssertionError: HF_TOKEN validation failed` — is the whole answer."""
-    from tenstorrent.progress import HOST_PHASES
-    from tenstorrent.progress.tracker import PhaseTracker
+    from tenstorrent.backends.serving.progress import HOST_PHASES
+    from tenstorrent.backends.serving.progress.tracker import PhaseTracker
 
     tracker = PhaseTracker(HOST_PHASES)
     for line in ("INFO: TT-Inference version: 0.22.0",
@@ -219,8 +219,8 @@ def test_ready_timeout_env_is_validated_up_front(monkeypatch):
 def test_a_failed_boot_names_the_cause_rather_than_dumping_the_log(
     evidence, expected, tmp_path
 ):
-    from tenstorrent.progress import VLLM_PHASES
-    from tenstorrent.progress.tracker import PhaseTracker
+    from tenstorrent.backends.serving.progress import VLLM_PHASES
+    from tenstorrent.backends.serving.progress.tracker import PhaseTracker
 
     tracker = PhaseTracker(VLLM_PHASES)
     for line in evidence:
@@ -275,8 +275,8 @@ def test_a_crashed_container_is_noticed_the_moment_its_logs_end(harness, monkeyp
 def test_a_mesh_that_needs_a_reset_says_so(tmp_path):
     """Replayed from a real p300x2 boot: tt-metal's TT_THROW names the cause
     hundreds of traceback lines before vLLM reports the engine dying."""
-    from tenstorrent.progress import VLLM_PHASES
-    from tenstorrent.progress.tracker import PhaseTracker
+    from tenstorrent.backends.serving.progress import VLLM_PHASES
+    from tenstorrent.backends.serving.progress.tracker import PhaseTracker
 
     tracker = PhaseTracker(VLLM_PHASES, tail_lines=5)
     tracker.feed("2026-09-23 18:07:03 | info | Device | Opening user mode device driver")
@@ -523,7 +523,7 @@ def test_every_spelling_of_the_vllm_stack_picks_the_vllm_template(engine, vllm):
     """Both backends boot the same engine and spell it differently; matching on
     equality classified every bundle as media and read its log with the wrong
     phases."""
-    from tenstorrent.progress import VLLM_PHASES
+    from tenstorrent.backends.serving.progress import VLLM_PHASES
 
     assert (phases_for([engine]) is VLLM_PHASES) is vllm
 
@@ -643,7 +643,7 @@ def test_a_device_that_needs_a_reset_fails_a_server_that_stays_up(harness, monke
 
 
 def test_a_download_inside_the_container_shows_what_has_landed(harness, monkeypatch):
-    from tenstorrent.progress import MEDIA_PHASES
+    from tenstorrent.backends.serving.progress import MEDIA_PHASES
 
     monkeypatch.setattr(boot, "phases_for", lambda engines: MEDIA_PHASES)
     monkeypatch.setattr(boot, "_WEIGH_INTERVAL_S", 0.0)

@@ -20,7 +20,7 @@ A serve has two halves, and they are owned by different things.
 
 The boot half is written by the engine, not by the tool that launched it, and
 both backends launch the same stack (vLLM/a media inference engine on tt-metal). 
-So tt reads the container's log itself — `docker logs --follow` — and classifies it with one tracker (`progress/phases.py`). Nothing a backend says about the boot is used.
+So tt reads the container's log itself — `docker logs --follow` — and classifies it with one tracker (`backends/serving/progress/phases.py`). Nothing a backend says about the boot is used.
 That is what makes the two paths identical rather than merely similar: it is the
 same code over the same bytes.
 

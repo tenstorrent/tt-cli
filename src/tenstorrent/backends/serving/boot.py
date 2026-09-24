@@ -36,7 +36,7 @@ from typing import Callable, Sequence
 from ...errors import ExitCode, TTError
 from ...launchers import discovery
 from ...output import OutputManager
-from ...progress import Checklist, PhaseTracker, WeightsProgress, format_bytes, phases_for
+from .progress import Checklist, PhaseTracker, WeightsProgress, format_bytes, phases_for
 from ...tools.runner import LineSplitter, Runner
 from .preparation import Preparation
 

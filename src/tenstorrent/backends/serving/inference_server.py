@@ -26,7 +26,7 @@ from ...models.device import DeviceSnapshot
 from ...models.model import DeviceSupport, ModelInfo
 from ...modelhub.hub import hf_home_dir, hf_token, uses_host_weight_cache
 from ...output import OutputManager
-from ...progress import format_duration, ready_panel
+from .progress import format_duration, ready_panel
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
 from . import boot, chips
