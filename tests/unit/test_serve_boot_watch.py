@@ -100,6 +100,7 @@ def harness(tmp_path):
         # tests should not pay for the pacing a real boot needs.
         answers = list(probe_answers)
         monkeypatch.setattr(boot, "_PROBE_INTERVAL_S", 0.0)
+        monkeypatch.setattr(boot, "_healthy", lambda url: True)
         monkeypatch.setattr(
             boot.discovery, "probe",
             lambda url, timeout_s=0: ["served"] if answers and answers.pop(0) else None,
@@ -595,3 +596,26 @@ def test_tt_model_refusing_for_want_of_chips_is_a_failure_not_ready(
             prepare=ModelManagerPreparation("mando2222/vibethinker-3b-blackhole-v51"),
         )
     assert "already in use" in excinfo.value.what
+
+
+def test_a_media_worker_that_cannot_open_its_chip_fails_the_serve(harness, monkeypatch):
+    calls = []
+    running = _running_on(20000)
+
+    def capture(argv, **kwargs):
+        calls.append(argv)
+        return running(argv, **kwargs)
+
+    body = (
+        "INFO - setup_runner_environment: TT_VISIBLE_DEVICES=0\n"
+        "TT_THROW: Device 0: Timed out while waiting for active ethernet core 29-25 "
+        "to become active again. Try resetting the board.\n"
+        "ERROR - Worker 0 device init failed: Unexpected device initialization error\n"
+    )
+    with pytest.raises(TTError) as excinfo:
+        harness(
+            container_body=body, logs_linger=5.0, linger=5.0, capture=capture,
+            probe_answers=(), monkeypatch=monkeypatch,
+        )
+    assert "needs a reset" in excinfo.value.what
+    assert ["docker", "stop", "tt-inference-server-abc123"] in calls

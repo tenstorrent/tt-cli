@@ -26,6 +26,8 @@ import selectors
 import socket
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -208,7 +210,7 @@ def _watch(
     backend = LineSplitter()
     tail = LineSplitter()
     state: dict[str, object] = {
-        "logs": None, "gone": False, "next_look": 0.0, "next_weigh": 0.0,
+        "logs": None, "gone": False, "fatal": False, "next_look": 0.0, "next_weigh": 0.0,
     }
 
     def pump_backend(chunk: bytes) -> None:
@@ -281,6 +283,8 @@ def _watch(
             for line in tail.feed(chunk):
                 keep(line)
                 _apply(view, trackers["container"].feed(line))
+                if _FATAL_RE.search(line):
+                    state["fatal"] = True
             if len(chunk) < _CHUNK:
                 return  # drained for now; let the loop breathe
 
@@ -380,9 +384,10 @@ def _watch(
 
             if ready_at is None and prepare.container and now >= next_probe:
                 next_probe = now + _PROBE_INTERVAL_S
+                base_url = endpoint_for(prepare, port)
                 if discovery.probe(
-                    endpoint_for(prepare, port), timeout_s=_PROBE_TIMEOUT_S
-                ) and _serves_on(runner, runtime, str(prepare.container), prepare.endpoint_port or port):
+                    base_url, timeout_s=_PROBE_TIMEOUT_S
+                ) and _healthy(base_url) and _serves_on(runner, runtime, str(prepare.container), prepare.endpoint_port or port):
                     # Not returned yet unless the backend is done: it may poll
                     # the same endpoint and be about to exit on its own, and
                     # cutting its pipe mid-write would break a serve that has
@@ -392,6 +397,10 @@ def _watch(
                 return finish("ready")
             if drained and prepare.container is None:
                 return finish("no-container")
+            if state["fatal"] and ready_at is None:
+                # The media server stays up, holding the chip, after its worker dies.
+                runner.capture([runtime, "stop", str(prepare.container)], tool=runtime, check=False)
+                return finish("failed")
             if state["gone"] and ready_at is None:
                 return finish("failed")
             if now >= deadline:
@@ -403,6 +412,17 @@ def _watch(
             _release(logs)
             logs.terminate()
         _release(proc)
+
+
+def _healthy(base_url: str) -> bool:
+    url = base_url.removesuffix("/v1") + "/health"
+    try:
+        with urllib.request.urlopen(url, timeout=_PROBE_TIMEOUT_S) as reply:
+            return reply.status == 200
+    except urllib.error.HTTPError as err:
+        return err.code == 404
+    except (OSError, ValueError):
+        return False
 
 
 def _serves_on(runner: Runner, runtime: str, container: str, port: int) -> bool:
@@ -490,6 +510,7 @@ _HELD_RE = re.compile(
     r"|tt device\(s\) are free"
 )
 _FLAG_RE = re.compile(r"unrecognized arguments|error: argument|no such option")
+_FATAL_RE = re.compile(r"Worker \d+ device init failed")
 _RESET_RE = re.compile(
     r"Try resetting the board|Timed out while waiting for active ethernet core"
 )
