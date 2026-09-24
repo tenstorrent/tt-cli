@@ -323,7 +323,8 @@ _REVIEW_ITEMS = {
     "tt-inference-server": [
         "Diff upstream `workflows/device_utils.py` BOARD_TYPE_COUNT_TO_DEVICE against "
         "`_BOARDS_TO_DEVICE` in backends/serving/inference_server.py.",
-        "Re-check the container mount/volume naming `tt model stop` identifies containers by.",
+        "Re-check the container name prefix and mount/volume naming `tt model stop` and "
+        "`tt model ps` identify containers by (backends/serving/inference_server.py, ps.py).",
         "Re-check the run.py argument contract (`--model`, `--workflow`, `--device`, `--service-port`, "
         "`--host-hf-cache`, `--host-volume`, `--vllm-override-args`, `--override-docker-image`, "
         "`--override-tt-config`).",
@@ -331,6 +332,10 @@ _REVIEW_ITEMS = {
         "the server looks for, so a pre-seeded ~/data/tt-cache needs a matching symlink.",
         "Act on any `model_support_overrides.toml` warnings above — a mark or fallback whose "
         "model the new spec dropped no longer does anything.",
+    ],
+    "tt-model (tt-model-manager)": [
+        "Re-check the `org.tenstorrent.tt-model` label family and `tt-model-<name>-<profile>` "
+        "container naming `tt model ps` reads (upstream src/tt_kernel/container.py).",
     ],
     "tt-sw-manifest (golden)": [
         "Re-capture the tt-smi parser fixtures after a real `tt update` if the smi version moved.",
