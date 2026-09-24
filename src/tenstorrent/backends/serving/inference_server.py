@@ -687,7 +687,9 @@ class InferenceServerBackend:
         """
         raw_log = boot.raw_log_path(self.config.paths.logs_dir, model.name)
         self.output.status(f"Serving {model.name} via tt-inference-server.")
-        self.output.status(f"Raw output: tail -f {raw_log}", style="dim", soft_wrap=True)
+        self.output.status(
+            f"Raw output: tt model logs {model.name} --follow", style="dim", soft_wrap=True
+        )
         try:
             result = boot.watch_serve(
                 runner=self.runner,

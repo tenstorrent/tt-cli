@@ -80,11 +80,7 @@ those as a live checklist instead of the server's thousands of log lines, and re
 only once the endpoint actually answers — so `tt launch` straight afterwards works.
 There is no flag for it; it is what serving looks like.
 
-The full output is never thrown away. `tt serve` prints where it is teed
-(`~/.local/share/tenstorrent/logs/serve-<model>-<timestamp>.log`) before it starts, so
-`tail -f` that file in another terminal to watch the raw boot, and `tt model logs
-<model> --follow` does the same for a server already running. A boot that fails names
-the cause and points at the same file.
+`tt serve` prints `tt model logs <model> --follow` before it starts, so that can be run in another terminal to watch the raw boot.
 
 `TT_SERVE_READY_TIMEOUT=<seconds>` raises the one-hour bound on that wait. Ctrl-C stops
 watching, not the server — the container keeps booting, and `tt model stop <model>`

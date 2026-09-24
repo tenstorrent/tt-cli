@@ -94,7 +94,7 @@ def test_serve_shows_progress_and_where_the_raw_output_went(
     where that output is — and it must be there. No flag: this is the default."""
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
     assert result.exit_code == 0, result.output
-    assert "Raw output: tail -f" in result.output
+    assert "Raw output: tt model logs Llama-3.1-8B-Instruct --follow" in result.output
     logs = sorted((isolated_dirs / "data" / "logs").glob("serve-Llama-3.1-8B-Instruct-*.log"))
     assert logs and "listening" in logs[-1].read_text()
 
@@ -105,7 +105,7 @@ def test_serve_benchmarks_keeps_the_tools_own_output(runner, docker_present, fak
     is the result, so it is streamed through untouched."""
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--workflow", "benchmarks"])
     assert result.exit_code == 0, result.output
-    assert "Raw output: tail -f" not in result.output
+    assert "Raw output:" not in result.output
 
 
 @pytest.mark.fakes_only
@@ -333,7 +333,7 @@ def test_serve_renders_a_bundle_the_same_way_as_a_catalog_model(
     both backends, so this is the one assertion that keeps them together."""
     result = runner.invoke(app, ["serve", "ns/bundle"])
     assert result.exit_code == 0, result.output
-    assert "Raw output: tail -f" in result.output
+    assert "Raw output: tt model logs ns/bundle --follow" in result.output
     logs = sorted((isolated_dirs / "data" / "logs").glob("serve-ns--bundle-*.log"))
     assert logs, "the bundle's output was not teed"
 

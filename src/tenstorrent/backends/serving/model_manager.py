@@ -122,7 +122,9 @@ class ModelManagerBackend:
             return self.runner.stream(argv, env=self._env(), tool=TOOL)
         raw_log = boot.raw_log_path(self.config.paths.logs_dir, repo_id.replace("/", "--"))
         self.output.status(f"Serving {repo_id} via tt-model.")
-        self.output.status(f"Raw output: tail -f {raw_log}", style="dim", soft_wrap=True)
+        self.output.status(
+            f"Raw output: tt model logs {repo_id} --follow", style="dim", soft_wrap=True
+        )
         prepare = ModelManagerPreparation(repo_id)
         try:
             result = boot.watch_serve(
