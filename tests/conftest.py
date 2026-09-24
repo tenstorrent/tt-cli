@@ -212,6 +212,9 @@ def isolated_dirs(request, tmp_path, monkeypatch):
     # known everywhere; tests exercising the fetch/cache/unknown paths delete it.
     # Under --hardware the override stays unset so the real fetch is exercised.
     if not request.config.getoption("--hardware"):
+        # tt serve places models on the chips under /dev/tenstorrent; the fake
+        # suite must not see the developer's own board.
+        monkeypatch.setenv("TT_DEVICE_ROOT", str(tmp_path / "dev-tenstorrent"))
         monkeypatch.setenv("TT_GOLDEN_PATH", str(FAKES_DIR / "data" / "golden.json"))
         # Redirect HOME too: tt reports on paths install.sh hardcodes under
         # ~/.local/lib, so without this the suite would describe the developer's own

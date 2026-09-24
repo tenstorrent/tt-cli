@@ -1166,3 +1166,49 @@ def test_serve_refuses_a_port_the_user_chose_that_is_taken(
     assert result.exit_code == ExitCode.USAGE, result.output
     assert "Port 20000 is already in use" in result.output
     assert not fake_server.exists() or not fake_server.read_text().strip()
+
+
+@pytest.fixture
+def four_chips(monkeypatch, tmp_path):
+    root = tmp_path / "dev-tenstorrent"
+    root.mkdir()
+    for i in range(4):
+        (root / str(i)).touch()
+    monkeypatch.setenv("TT_DEVICE_ROOT", str(root))
+
+    def held(*taken):
+        from tenstorrent.backends.serving import chips
+
+        monkeypatch.setattr(chips, "claimed", lambda runner, runtime, ids: set(taken))
+
+    return held
+
+
+@pytest.mark.fakes_only
+def test_serve_puts_a_single_chip_model_on_a_free_chip(
+    runner, docker_present, fake_server, four_chips
+):
+    four_chips(0)
+    result = runner.invoke(app, ["serve", "whisper-large-v3", "--device", "n150"])
+    assert result.exit_code == 0, result.output
+    argv = json.loads(fake_server.read_text().splitlines()[-1])
+    assert argv[argv.index("--device") + 1] == "n150"
+    assert argv[argv.index("--device-id") + 1] == "1"
+
+
+@pytest.mark.fakes_only
+def test_serve_refuses_when_every_chip_is_held(runner, docker_present, fake_server, four_chips):
+    four_chips(0, 1, 2, 3)
+    result = runner.invoke(app, ["serve", "whisper-large-v3", "--device", "n150"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert "All 4 chips are in use" in result.output
+
+
+@pytest.mark.fakes_only
+def test_serve_refuses_the_whole_board_while_a_chip_is_held(
+    runner, docker_present, fake_server, four_chips
+):
+    four_chips(2)
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert "needs the whole board" in result.output

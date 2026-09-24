@@ -22,6 +22,7 @@ from rich.text import Text
 from ..backends.device import get_device_backend
 from ..backends.serving.inference_server import (
     InferenceServerBackend,
+    choose_device,
     infer_device_config,
 )
 from ..backends.serving.model_manager import (
@@ -222,7 +223,8 @@ def serve(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     )
     if device is None:
-        device = _autodetect_device(appctx)
+        board = _autodetect_device(appctx)
+        device = choose_device(entry, board) if board else None
     # Spec device_type keys are lowercased throughout (`tt model list --hw` does
     # the same), and every per-device lookup is by that key.
     device = device.lower() if device else device

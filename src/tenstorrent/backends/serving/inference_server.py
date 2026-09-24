@@ -29,7 +29,7 @@ from ...output import OutputManager
 from ...progress import ready_panel
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
-from . import boot
+from . import boot, chips
 from .preparation import RunPyPreparation
 
 TOOL = "tt-inference-server"
@@ -55,6 +55,32 @@ _BOARDS_TO_DEVICE = {
     ("p300", 1): "p300",
     ("p300", 2): "p300x2",
 }
+
+
+# tt-studio's placement (docker_utils.infer_inference_server_device): on a
+# multi-chip board a model with a spec for the board's own chip runs on one chip.
+_BOARD_TO_CHIP = {
+    "n150x4": "n150",
+    "t3k": "n300",
+    "p150x4": "p150",
+    "p150x8": "p150",
+    "p300x2": "p150",
+}
+_WHOLE_BOARD_LLM_BOARDS = {"n150x4", "t3k"}
+_SPEECH_TYPES = {"audio", "text_to_speech"}
+_ONE_CHIP_DEVICES = {"e150", "n150", "n300", "p100", "p150"}
+
+
+def choose_device(model: ModelInfo, board: str) -> str:
+    chip = _BOARD_TO_CHIP.get(board)
+    if chip is None:
+        return board
+    if model.model_type in ("llm", "vlm") and board in _WHOLE_BOARD_LLM_BOARDS:
+        return board
+    if model.model_type in _SPEECH_TYPES and chip == "n300" and "n150" in model.devices:
+        chip = "n150"
+    spec = model.devices.get(chip)
+    return chip if spec is not None and spec.supported else board
 
 
 def infer_device_config(devices: Sequence[DeviceSnapshot]) -> str | None:
@@ -501,6 +527,7 @@ class InferenceServerBackend:
         device: str | None,
         port: int | None,
         entry: Path | None,
+        device_ids: Sequence[int] | None = None,
     ) -> list[str]:
         """The run.py command line. `entry` is None for a dry run, which has not
         resolved (and must not install) the checkout."""
@@ -556,6 +583,8 @@ class InferenceServerBackend:
                 argv += ["--override-tt-config", json.dumps(forced["override_tt_config"])]
         elif device:
             argv += ["--device", device]
+        if device_ids:
+            argv += ["--device-id", ",".join(map(str, device_ids))]
         # Always pass it explicitly: otherwise run.py falls back to its own
         # SERVICE_PORT/8000 default instead of ours.
         argv += ["--service-port", self._service_port(port)]
@@ -588,7 +617,9 @@ class InferenceServerBackend:
         # registry.ensure may clone the repo and build a venv — minutes of work
         # that now renders its own steps (see tools/installers.py).
         entry = self.registry.ensure(TOOL, offline=offline)
+        device_ids = None
         if workflow == "server":
+            device_ids = self._place(model, support, device)
             port = self._free_service_port(model, port)
         argv = self._argv(
             model,
@@ -597,6 +628,7 @@ class InferenceServerBackend:
             device=device,
             port=port,
             entry=Path(entry),
+            device_ids=device_ids,
         )
         return ServeLaunch(
             argv=argv,
@@ -668,6 +700,38 @@ class InferenceServerBackend:
                 port=port,
                 force=force,
             )
+        )
+
+    def _place(
+        self, model: ModelInfo, support: DeviceSupport | None, device: str | None
+    ) -> list[int] | None:
+        ids = chips.all_ids()
+        taken = chips.claimed(self.runner, self.container_runtime(), ids) if ids else None
+        if taken is None:
+            return None
+        sent = (support.serve_as or device) if support else device
+        if sent in _ONE_CHIP_DEVICES and len(ids) > 1:
+            free = [i for i in ids if i not in taken]
+            if not free:
+                raise self._in_use(model, f"All {len(ids)} chips are in use.")
+            self.output.status(f"Serving on chip {free[0]} ({sent}).", style="dim")
+            return free[:1]
+        if taken:
+            held = ", ".join(map(str, sorted(taken)))
+            raise self._in_use(
+                model, f"{model.name} needs the whole board, and chip(s) {held} are in use."
+            )
+        return None
+
+    @staticmethod
+    def _in_use(model: ModelInfo, what: str) -> TTError:
+        return TTError(
+            what,
+            why="Another served model holds them.",
+            next_step=f"`tt model ps` to see what is running, `tt model stop <model>` "
+            f"to free them, then re-run `tt serve {model.name}`.",
+            exit_code=ExitCode.TOOL_FAILED,
+            reason="serve.device.in_use",
         )
 
     def _free_service_port(self, model: ModelInfo, port: int | None) -> int | None:

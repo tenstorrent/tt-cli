@@ -33,6 +33,7 @@ def env(tmp_path):
         # serving an uncached model needs one; preflight refuses without it
         HF_TOKEN="hf_token_for_tests",
         TT_CACHE_DIR=str(tmp_path / "cache"),
+        TT_DEVICE_ROOT=str(tmp_path / "dev-tenstorrent"),
         TT_TOOL_BIN_TT_SMI=str(FAKES / "bin" / "tt-smi"),
         TT_TOOL_BIN_TT_INSTALLER=str(FAKES / "install.sh"),
         TT_TOOL_BIN_TT_INFERENCE_SERVER=str(FAKES / "inference-repo" / "run.py"),

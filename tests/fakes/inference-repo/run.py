@@ -15,6 +15,7 @@ def main() -> int:
     parser.add_argument("--model", required=True)
     parser.add_argument("--workflow", default="server")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--device-id", default=None)
     parser.add_argument("--docker-server", action="store_true")
     parser.add_argument("--no-auth", action="store_true")
     parser.add_argument("--host-hf-cache", default=None)
