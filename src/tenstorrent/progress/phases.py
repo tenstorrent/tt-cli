@@ -273,18 +273,17 @@ VLLM_PHASES: tuple[Phase, ...] = (
 
 MEDIA_PHASES: tuple[Phase, ...] = (
     # One row for all of the early bookkeeping — settings, Prometheus, uvicorn,
-    # the worker pool. It all happens inside the first few seconds, so splitting
-    # it up buys rows the user never sees move.
+    # the worker pool. It all happens inside the first few seconds.
     Phase(
         "service", "starting the server", "server started",
         start=_rx(r"Settings init:", r"Config lookup:", r"Settings resolved:",
                   r"Setting up Prometheus metrics", r"Started server process"),
         done=_rx(r"All workers started in sequence", r"Application startup complete"),
     ),
+    # Only lines that mean the container is actually moving bytes.
     Phase(
-        "fetch", "fetching weights", "weights ready",
-        start=_rx(r"Downloading weights for model:", r"already cached, skipping download",
-                  r"Using cached model at:", r"Loading HuggingFace model:"),
+        "fetch", "fetching weights", "weights fetched",
+        start=_rx(r"Downloading weights for model:", r"Loading HuggingFace model:"),
     ),
     Phase(
         "device", "opening the Tenstorrent device", "Tenstorrent device opened",
