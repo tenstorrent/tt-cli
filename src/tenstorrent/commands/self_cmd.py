@@ -61,7 +61,11 @@ def tools_status(
 @self_app.command("telemetry-id")
 @handle_tt_errors
 def telemetry_id(
-    ctx: typer.Context, json_mode: JsonFlag = False, quiet: QuietFlag = False
+    ctx: typer.Context,
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Print this install's anonymous telemetry id.
 
@@ -72,7 +76,7 @@ def telemetry_id(
     from ..telemetry.state import TelemetryState
 
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     appctx.output.emit(
         {"distinct_id": TelemetryState(appctx.paths).instance_id()},
         renderer=lambda data: data["distinct_id"],
