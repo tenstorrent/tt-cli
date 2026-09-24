@@ -13,7 +13,7 @@ import typer
 from rich.table import Table
 
 from ..backends.device import get_device_backend
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..models.device import SystemSnapshot
@@ -65,13 +65,15 @@ def status(
     ctx: typer.Context,
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
     raw: bool = typer.Option(
         False, "--raw", help="Dump tt-smi's own snapshot JSON (no schema promise)."
     ),
 ) -> None:
     """Show detected devices: board, temperature, power, clock, DRAM state."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     backend = get_device_backend(appctx)
     if raw:
         print(json.dumps(backend.raw_snapshot(), indent=2))
@@ -115,10 +117,12 @@ def info(
     index: list[int] = typer.Argument(None, help="Device index(es); default all."),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Show device metadata: PCI IDs, board revision, serial, firmware versions."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     snap = get_device_backend(appctx).snapshot()
     for warning in snap.warnings:
         appctx.output.warn(f"snapshot: {warning}")
@@ -148,10 +152,12 @@ def reset(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Reset one or more devices (interrupts anything running on them)."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     target = ", ".join(map(str, index)) if index else "ALL devices"
     if not yes:
         if appctx.output.json_mode or not sys.stdin.isatty():

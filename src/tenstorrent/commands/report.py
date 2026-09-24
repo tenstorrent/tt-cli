@@ -22,7 +22,7 @@ import typer
 from .. import __version__
 from .._compat import IntRange, prompt
 from ..backends.device import get_device_backend
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import AppContext, get_app_context
 from ..errors import ExitCode, TTError
 
@@ -191,6 +191,8 @@ def report_issue(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Open a prefilled GitHub issue for a Tenstorrent repo, with environment details attached.
 
@@ -198,7 +200,7 @@ def report_issue(
     a browser. --quiet suppresses the URL but still opens the browser.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
 
     if repo is None:
         if appctx.output.json_mode or appctx.output.quiet or not _stdin_isatty():
