@@ -26,7 +26,7 @@ from ...errors import ExitCode, TTError
 from ...modelhub import bundles
 from ...modelhub.hub import hf_home_dir, hf_token
 from ...output import OutputManager
-from ...progress import ready_panel
+from ...progress import format_duration, ready_panel
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
 from . import boot
@@ -166,7 +166,7 @@ class ModelManagerBackend:
                 "ready_seconds": round(result.elapsed, 1),
             },
             renderer=lambda data: ready_panel(
-                f"{data['model']} ready",
+                f"{data['model']} ready in {format_duration(data['ready_seconds'])}",
                 [
                     ("endpoint", data["endpoint"]),
                     ("models", f"curl {data['endpoint']}/models"),

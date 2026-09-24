@@ -80,7 +80,7 @@ def test_vllm_template_walks_a_real_boot():
     assert details["device"] == "4 chips · mesh (1, 4)"
     assert details["kv"] == "263,200 tokens"
     assert details["warmup"] == "145s of warmup"
-    assert details["weights"] == "16/64"  # the last layer bar seen
+    assert details["weights"] is None  # a count that never finished is not a result
 
 
 def test_a_repeated_early_marker_cannot_drag_the_checklist_backwards():

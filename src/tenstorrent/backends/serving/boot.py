@@ -61,6 +61,7 @@ _WEIGH_INTERVAL_S = 1.5
 #: exit. It polls the same endpoint, so this is a formality — but returning
 #: while it is mid-write would break its pipe for no reason.
 _EXIT_GRACE_S = 20.0
+READY_ROW = "endpoint answering"
 
 @dataclass(frozen=True)
 class BootResult:
@@ -142,6 +143,7 @@ def watch_serve(
             sink.write(line + "\n")
             output.raw(line)
 
+        view.plan([*prepare.planned, *_boot_steps(engines)])
         view.begin(prepare.label, placeholder=True)
         proc = runner.popen_piped(argv, env=env, cwd=cwd, tool=tool)
         outcome = _watch(
@@ -155,7 +157,7 @@ def watch_serve(
             _apply(view, container.finish() if container else prepare.finish())
             # The one row the endpoint proves rather than a log: /v1/models
             # answered, which is what makes `tt launch` work straight after.
-            view.instant("endpoint answering")
+            view.instant(READY_ROW)
         elif outcome == "no-container":
             # The backend named no container. Either it started none, or it
             # says so in a way we no longer recognise — so there is nothing to
@@ -251,6 +253,7 @@ def _watch(
             )
         _apply(view, prepare.finish())
         trackers["container"] = PhaseTracker(phases_for(prepare.engines() or engines))
+        view.plan(_boot_steps(prepare.engines() or engines))
         view.begin("waiting for the model server", placeholder=True)
         try:
             logs = runner.popen_piped(
@@ -423,6 +426,10 @@ def _healthy(base_url: str) -> bool:
         return err.code == 404
     except (OSError, ValueError):
         return False
+
+
+def _boot_steps(engines: Sequence[str]) -> list[str]:
+    return [phase.label for phase in phases_for(engines) if phase.planned] + [READY_ROW]
 
 
 def _serves_on(runner: Runner, runtime: str, container: str, port: int) -> bool:

@@ -26,7 +26,7 @@ from ...models.device import DeviceSnapshot
 from ...models.model import DeviceSupport, ModelInfo
 from ...modelhub.hub import hf_home_dir, hf_token, uses_host_weight_cache
 from ...output import OutputManager
-from ...progress import ready_panel
+from ...progress import format_duration, ready_panel
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
 from . import boot, chips
@@ -67,6 +67,9 @@ _BOARD_TO_CHIP = {
     "p300x2": "p150",
 }
 _WHOLE_BOARD_LLM_BOARDS = {"n150x4", "t3k"}
+# P300 cards: one chip alone is a CUSTOM cluster to tt-metal, which only boots a
+# spec that names its mesh graph (the media p150 specs do; vLLM's do not).
+_MESH_DESC_BOARDS = {"p300x2"}
 _SPEECH_TYPES = {"audio", "text_to_speech"}
 _ONE_CHIP_DEVICES = {"e150", "n150", "n300", "p100", "p150"}
 
@@ -80,7 +83,11 @@ def choose_device(model: ModelInfo, board: str) -> str:
     if model.model_type in _SPEECH_TYPES and chip == "n300" and "n150" in model.devices:
         chip = "n150"
     spec = model.devices.get(chip)
-    return chip if spec is not None and spec.supported else board
+    if spec is None or not spec.supported:
+        return board
+    if board in _MESH_DESC_BOARDS and not spec.mesh_graph_desc:
+        return board
+    return chip
 
 
 def infer_device_config(devices: Sequence[DeviceSnapshot]) -> str | None:
@@ -835,7 +842,7 @@ class InferenceServerBackend:
                 "ready_seconds": round(result.elapsed, 1),
             },
             renderer=lambda data: ready_panel(
-                f"{data['model']} ready",
+                f"{data['model']} ready in {format_duration(data['ready_seconds'])}",
                 [
                     ("endpoint", data["endpoint"]),
                     ("models", f"curl {data['endpoint']}/models"),

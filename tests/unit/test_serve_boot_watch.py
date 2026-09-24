@@ -619,3 +619,10 @@ def test_a_media_worker_that_cannot_open_its_chip_fails_the_serve(harness, monke
         )
     assert "needs a reset" in excinfo.value.what
     assert ["docker", "stop", "tt-inference-server-abc123"] in calls
+
+
+def test_a_vllm_boot_does_not_promise_an_in_container_weights_fetch():
+    """--host-hf-cache mounts the host's weights, so the container fetches none."""
+    steps = boot._boot_steps(["vLLM"])
+    assert "fetching weights into the container" not in steps
+    assert "fetching weights" in boot._boot_steps(["media"])

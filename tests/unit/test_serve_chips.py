@@ -38,17 +38,21 @@ def test_a_container_claims_what_it_was_granted(info, held):
     assert chips._claims(info, IDS) == held
 
 
-def _model(model_type, *devices):
+def _model(model_type, *devices, mesh=None):
     return ModelInfo(
         name="m", hf_repo="org/m", model_type=model_type,
-        devices={d: DeviceSupport(engines=["vLLM"], status="COMPLETE") for d in devices},
+        devices={
+            d: DeviceSupport(engines=["vLLM"], status="COMPLETE", mesh_graph_desc=mesh)
+            for d in devices
+        },
     )
 
 
 @pytest.mark.parametrize(
     "model, board, chosen",
     [
-        (_model("audio", "p150", "p300x2"), "p300x2", "p150"),
+        (_model("audio", "p150", "p300x2", mesh="p150.textproto"), "p300x2", "p150"),
+        (_model("llm", "p150", "p300x2"), "p300x2", "p300x2"),
         (_model("llm", "p150", "p150x4"), "p150x4", "p150"),
         (_model("image", "p300x2"), "p300x2", "p300x2"),
         (_model("llm", "n300", "t3k"), "t3k", "t3k"),

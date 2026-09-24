@@ -33,6 +33,8 @@ class Preparation:
 
     #: the placeholder row shown until the backend reports something of its own
     label = "preparing"
+    #: the rows it is expected to report, drawn ahead of time
+    planned: Sequence[str] = ()
 
     def __init__(self) -> None:
         self.container: str | None = None
@@ -74,6 +76,7 @@ class RunPyPreparation(Preparation):
     """
 
     label = "starting tt-inference-server"
+    planned = tuple(phase.label for phase in HOST_PHASES)
 
     # The name comes first and is the friendlier of the two, so it wins.
     _NAME_RE = re.compile(r"--name\s+(tt-inference-server-\S+)")

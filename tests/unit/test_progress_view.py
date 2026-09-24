@@ -147,3 +147,72 @@ def test_the_ready_card_names_the_endpoint_and_the_next_command():
     text = console.file.getvalue()
     assert "http://127.0.0.1:20000/v1" in text
     assert "tt model logs" in text
+
+
+def frame(view):
+    console = Console(file=io.StringIO(), width=120, color_system=None)
+    console.print(view._render())
+    return console.file.getvalue()
+
+
+def test_the_footer_counts_the_steps():
+    view = Checklist(make_output())
+    view.plan(["pulling the image", "downloading weights", "opening the device", "ready"])
+    view.begin("pulling the image")
+    text = frame(view)
+    assert "step 1 of 4" in text
+    assert "Ctrl-C stops watching" in text
+
+
+def test_a_placeholder_is_not_counted_as_a_step():
+    view = Checklist(make_output())
+    view.plan(["pulling the image", "ready"])
+    view.begin("preparing", placeholder=True)
+    assert "step 1 of 2" in frame(view)
+
+
+def test_a_step_the_run_skips_is_dropped_from_the_count():
+    view = Checklist(make_output())
+    view.plan(["pulling the image", "downloading weights", "opening the device", "ready"])
+    view.begin("pulling the image")
+    view.begin("opening the device")
+    text = frame(view)
+    assert "step 2 of 3" in text
+
+
+def test_the_live_area_stays_two_lines_however_many_steps_finish():
+    """A frame taller than the terminal cannot be redrawn in place and leaves a
+    copy of itself per refresh, so finished rows are printed, not redrawn."""
+    output = make_output(terminal=True)
+    with Checklist(output) as view:
+        view.plan([f"step {i}" for i in range(30)])
+        for i in range(30):
+            view.begin(f"step {i}")
+        assert len(frame(view).splitlines()) == 2
+    text = rendered(output)
+    assert text.count("step 0 ") >= 1 and "step 28" in text
+
+
+def test_nothing_is_left_live_once_the_checklist_closes():
+    view = Checklist(make_output())
+    view.plan(["pulling the image", "ready"])
+    view.begin("pulling the image")
+    view.close()
+    assert frame(view).strip() == ""
+
+
+def test_the_bar_moves_in_eighths():
+    view = Checklist(make_output())
+    view.begin("downloading weights")
+    view.progress(1, 96)
+    assert "▕▏" in frame(view)
+    view.progress(3, 64)
+    assert "▕▌" in frame(view)
+
+
+def test_a_settled_row_keeps_its_result_not_a_stale_bar():
+    view = Checklist(make_output())
+    view.begin("warming up the model")
+    view.progress(2, 444)
+    view.done("model warmed up")
+    assert "▕" not in frame(view) and "2/444" not in frame(view)

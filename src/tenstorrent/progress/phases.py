@@ -44,6 +44,8 @@ class Phase:
     #: output gets layer statuses and no byte counts (docker only draws the
     #: byte bars on a terminal), so layers are the honest denominator.
     layers: bool = False
+    #: drawn ahead of time as a step to come; off for one that only some boots have
+    planned: bool = True
 
 
 # -- shared line parsing ---------------------------------------------------------------
@@ -235,6 +237,7 @@ VLLM_PHASES: tuple[Phase, ...] = (
     Phase(
         "fetch", "fetching weights into the container", "weights fetched",
         start=_rx(r"Downloading weights from \S+ to", r"Fetching \d+ files"),
+        planned=False,
     ),
     Phase(
         "device", "opening the Tenstorrent device", "Tenstorrent device opened",

@@ -115,7 +115,7 @@ class PhaseTracker:
         if key in self._detail:
             return self._detail[key]
         counts = self._progress.get(key)
-        if counts and not counts.is_bytes:
+        if counts and not counts.is_bytes and counts.done >= counts.total:
             return f"{int(counts.done)}/{int(counts.total)}"
         return None
 

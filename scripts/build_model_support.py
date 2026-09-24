@@ -254,6 +254,10 @@ def build_models(spec: dict[str, Any]) -> list[dict[str, Any]]:
                 "tool_call_parser": metadata.get("tool_call_parser_name") or None,
                 "reasoning_parser": metadata.get("reasoning_parser_name") or None,
                 "override_tt_config": device_spec.get("override_tt_config") or None,
+                # Set by specs that boot on one chip of a multi-chip card
+                # (tt-metal's CUSTOM cluster), e.g. media p150 specs on a P300.
+                "mesh_graph_desc": (leaf.get("env_vars") or {}).get("TT_MESH_GRAPH_DESC_PATH")
+                or None,
             }
             leaves.append((engines[0], leaf))
         if not devices:

@@ -27,6 +27,9 @@ from ..output import OutputManager
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _BAR_WIDTH = 12
+_EIGHTHS = " ▏▎▍▌▋▊▉"
+_LABEL_WIDTH = 32
+_DETAIL_WIDTH = 42
 # Fast enough that the spinner and the elapsed seconds read as continuous, and
 # cheap: a repaint is a dozen short rows.
 _REFRESH_PER_SECOND = 12.5
@@ -75,8 +78,8 @@ class _Row:
         if self.total <= 0:
             return ""
         fraction = min(1.0, max(0.0, self.done / self.total))
-        filled = round(fraction * _BAR_WIDTH)
-        bar = "█" * filled + "░" * (_BAR_WIDTH - filled)
+        full, part = divmod(round(fraction * _BAR_WIDTH * 8), 8)
+        bar = ("█" * full + (_EIGHTHS[part] if part else "")).ljust(_BAR_WIDTH)
         if self.is_bytes:
             counts = f"{format_bytes(self.done)} / {format_bytes(self.total)}"
         else:
@@ -90,6 +93,8 @@ class Checklist:
     def __init__(self, output: OutputManager) -> None:
         self._output = output
         self._rows: list[_Row] = []
+        self._pending: list[str] = []
+        self._closed = False
         self._started = time.monotonic()
         self._live: Live | None = None
         console = output.status_console
@@ -128,6 +133,7 @@ class Checklist:
         self.close()
 
     def close(self) -> None:
+        self._closed = True
         if self._live is not None:
             self._live.refresh()  # settle the last row before the block freezes
             self._live.stop()
@@ -138,14 +144,22 @@ class Checklist:
         return time.monotonic() - self._started
 
     # -- rows -------------------------------------------------------------------------
+    def plan(self, labels: list[str]) -> None:
+        """The steps still to come, drawn dim until they start. One the run
+        skips over is dropped when a later one begins."""
+        self._pending = list(labels)
+        self._refresh()
+
     def instant(self, label: str, detail: str | None = None) -> None:
         """A step that was already true when we looked (no timing worth showing)."""
         self._settle("✓", "green")
+        self._reach(label)
         self._rows.append(_Row(label, mark="✓", style="green", detail=detail or "", elapsed=0.0))
         self._emit(self._rows[-1])
 
     def begin(self, label: str, *, placeholder: bool = False) -> None:
         self._settle("✓", "green")
+        self._reach(label)
         self._rows.append(_Row(label, placeholder=placeholder))
         self._refresh()
 
@@ -174,6 +188,10 @@ class Checklist:
         self._emit(self._rows[-1])
 
     # -- internals --------------------------------------------------------------------
+    def _reach(self, label: str) -> None:
+        if label in self._pending:
+            del self._pending[: self._pending.index(label) + 1]
+
     @property
     def _active(self) -> _Row | None:
         if self._rows and self._rows[-1].elapsed is None:
@@ -205,13 +223,20 @@ class Checklist:
         self._refresh()
 
     def _emit(self, row: _Row) -> None:
-        """Print a settled row once, for the non-animated modes."""
-        if self._animate or self._silent:
+        """Print a settled row once. On a terminal it goes above the live area,
+        which only ever holds the active row and the footer: a frame taller than
+        the terminal cannot be redrawn in place and leaves a copy per refresh."""
+        if self._silent:
+            return
+        if self._live is not None:
+            self._live.console.print(self._line(row, time.monotonic()))
+            return
+        if self._animate:
             return
         parts = [f"{row.mark} {row.label}".strip()]
         if row.detail:
             parts.append(row.detail)
-        if row.elapsed and row.elapsed >= 1:  # as in _render: sub-second is noise
+        if row.elapsed and row.elapsed >= 1:  # as in _line: sub-second is noise
             parts.append(format_duration(row.elapsed))
         self._output.status("  " + "  ".join(parts), style=row.style)
 
@@ -220,30 +245,46 @@ class Checklist:
         if self._live is not None:
             self._live.refresh()
 
-    def _render(self) -> RenderableType:
+    def _line(self, row: _Row, now: float) -> Table:
+        active = row.elapsed is None
         table = Table.grid(padding=(0, 2))
-        table.add_column(width=1)  # indent, matching the non-animated rows
-        table.add_column(width=1)  # the mark, or the spinner while active
-        table.add_column()  # label
-        table.add_column(style="dim", overflow="ellipsis")  # detail / progress
-        table.add_column(style="dim", justify="right")  # elapsed
-        now = time.monotonic()
+        table.add_column(width=1)
+        table.add_column(width=1)
+        table.add_column(width=_LABEL_WIDTH, no_wrap=True, overflow="ellipsis")
+        table.add_column(width=_DETAIL_WIDTH, style="dim", no_wrap=True, overflow="ellipsis")
+        table.add_column(width=8, style="dim", justify="right", no_wrap=True)
         frame = int(now * _SPINNER_FPS) % len(_SPINNER)
+        mark = (Text(_SPINNER[frame], style="cyan") if active
+                else Text(row.mark, style=row.style))
+        elapsed = row.elapsed if row.elapsed is not None else now - row.started
+        table.add_row(
+            "",
+            mark,
+            Text(row.label, style="" if active else "dim"),
+            (row.progress_text() if active else "") or row.detail,
+            format_duration(elapsed) if elapsed >= 1 else "",
+        )
+        return table
+
+    def _render(self) -> RenderableType:
+        if self._closed:
+            return Group()
+        now = time.monotonic()
         # A snapshot: Live's refresh thread calls this while the main thread is
         # still appending rows and filling them in.
-        for row in list(self._rows):
-            active = row.elapsed is None
-            mark = (Text(_SPINNER[frame], style="cyan") if active
-                    else Text(row.mark, style=row.style))
-            elapsed = row.elapsed if row.elapsed is not None else now - row.started
-            table.add_row(
-                "",
-                mark,
-                Text(row.label, style="" if active else "dim"),
-                row.progress_text() or row.detail,
-                format_duration(elapsed) if elapsed >= 1 else "",
-            )
-        return Group(table)
+        row = self._active
+        counted = sum(1 for r in list(self._rows) if not r.placeholder and r.mark != " ")
+        total = counted + len(self._pending)
+        current = counted if row is not None and not row.placeholder else min(counted + 1, total)
+        footer = Text.assemble(
+            ("  "),
+            (f"step {max(current, 1)} of {max(total, 1)}", "bold"),
+            (f" · {format_duration(now - self._started)}", ""),
+            (" · Ctrl-C stops watching; the server keeps starting", "dim"),
+            no_wrap=True,
+            overflow="ellipsis",
+        )
+        return Group(self._line(row, now), footer) if row is not None else footer
 
 
 def ready_panel(title: str, rows: list[tuple[str, str]], footer: str) -> Panel:
