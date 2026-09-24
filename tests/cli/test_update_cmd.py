@@ -541,3 +541,108 @@ def test_update_accepts_a_release_at_the_floor(runner, fake_uv, fake_installer):
     all exist there, so it must not be caught by the floor check."""
     result = runner.invoke(app, ["update", "3.0.0", "--dry-run"])
     assert result.exit_code == 0
+
+
+# -- phase structure, timings, and reporting honesty ---------------------------
+def test_the_phase_list_is_fixed_at_three():
+    """A drifting denominator makes `k/N` worthless, so pin the roadmap."""
+    from tenstorrent.commands.update import PHASES
+
+    assert PHASES == ["Checks", "Tools", "System"]
+
+
+def test_json_carries_timings_for_every_phase(runner, fake_uv, fake_installer):
+    from tenstorrent.commands.update import PHASES
+
+    result = runner.invoke(app, ["update", "--json"])
+    assert result.exit_code == 0, result.output
+    timings = _json(result)["timings"]
+    assert [p["title"] for p in timings["phases"]] == PHASES
+    assert timings["total_seconds"] >= 0
+    assert timings["steps"], "no steps were recorded"
+    assert all("seconds" in step for step in timings["steps"])
+
+
+def test_offline_skips_the_system_phase_without_dropping_it(runner, fake_uv):
+    """--offline must not change the phase count; it marks one skipped and says why."""
+    from tenstorrent.commands.update import PHASES
+
+    result = runner.invoke(app, ["update", "--offline", "--json"])
+    phases = {p["title"]: p for p in _json(result)["timings"]["phases"]}
+    assert set(phases) == set(PHASES)
+    assert phases["System"]["status"] == "skipped"
+    assert _json(result)["result"]["installer_ran"] is False
+
+
+def test_offline_explains_the_skip_in_human_mode(runner, fake_uv):
+    result = runner.invoke(app, ["update", "--offline"])
+    assert "System skipped" in result.output
+    assert "without --offline" in result.output
+
+
+def test_dry_run_never_enters_the_phase_flow(runner, fake_uv, fake_installer):
+    """A dry run does no work, so it reports and returns like a utility flag."""
+    result = runner.invoke(app, ["update", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "Update plan" in result.output
+    assert "Phase 1/3" not in result.output
+
+
+def test_a_failing_tool_is_explained_and_not_silently_dropped(
+    runner, fake_uv, fake_installer, monkeypatch
+):
+    """Regression: the warning sat after a `continue` inside `with ui.step(...)`,
+    so the context manager exited and the explanation was never printed — the tool
+    showed as failed in the summary with no reason given anywhere."""
+    from tenstorrent.tools.registry import ToolRegistry
+
+    real_install = ToolRegistry.install
+
+    def flaky(self, spec, *, offline=False):
+        if spec.name == "tt-flash":
+            raise TTError("git fetch failed", exit_code=ExitCode.TOOL_FAILED)
+        return real_install(self, spec, offline=offline)
+
+    monkeypatch.setattr(ToolRegistry, "install", flaky)
+    result = runner.invoke(app, ["update"])
+    assert "tt-flash was not updated" in result.output
+    assert "git fetch failed" in result.output
+
+
+def test_a_failing_tool_marks_the_phase_failed(
+    runner, fake_uv, fake_installer, monkeypatch
+):
+    """The command exits non-zero, so an all-green stepper would be dishonest."""
+    from tenstorrent.tools.registry import ToolRegistry
+
+    real_install = ToolRegistry.install
+
+    def flaky(self, spec, *, offline=False):
+        if spec.name == "tt-flash":
+            raise TTError("git fetch failed", exit_code=ExitCode.TOOL_FAILED)
+        return real_install(self, spec, offline=offline)
+
+    monkeypatch.setattr(ToolRegistry, "install", flaky)
+    result = runner.invoke(app, ["update", "--json"])
+    phases = {p["title"]: p for p in _json(result)["timings"]["phases"]}
+    assert phases["Tools"]["status"] == "failed"
+    # …and the run still converged the system stack.
+    assert _json(result)["result"]["installer_ran"] is True
+
+
+def test_plan_summary_reads_as_a_gist():
+    from tenstorrent.commands.update import _plan_summary
+
+    class Item:
+        def __init__(self, action):
+            self.action = action
+
+    class Plan:
+        def __init__(self, actions):
+            self.items = [Item(a) for a in actions]
+
+    assert _plan_summary(Plan(["upgrade", "install", "up-to-date"])) == (
+        "2 to change, 1 up to date"
+    )
+    assert _plan_summary(Plan(["up-to-date"])) == "1 up to date"
+    assert _plan_summary(Plan([])) == "nothing to do"

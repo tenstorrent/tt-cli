@@ -149,20 +149,22 @@ class InstallerBackend:
                 f"{GOLDEN_PATH_ENV} at a local golden.json.",
                 exit_code=ExitCode.OFFLINE,
             )
-        self.output.status(f"Fetching golden versions ({tag}) …")
-        blob = fetch_https(url)
-        if manifest.golden_sha256:
-            digest = hashlib.sha256(blob).hexdigest()
-            if digest != manifest.golden_sha256:
-                raise TTError(
-                    f"Checksum mismatch for golden.json downloaded from {url}.",
-                    why=f"expected sha256 {manifest.golden_sha256}, got {digest}",
-                    next_step="Re-run `tt update`; if it persists, report it.",
-                    exit_code=ExitCode.TOOL_FAILED,
-                )
-        golden = parse_golden(blob.decode("utf-8", errors="replace"), url)
-        golden_cache_write(self.paths, tag, golden)
-        self.registry.reload_manifest()  # make the fresh pins visible to plan()
+        with self.output.ui.step(f"Fetching golden versions ({tag})") as step:
+            blob = fetch_https(url)
+            if manifest.golden_sha256:
+                digest = hashlib.sha256(blob).hexdigest()
+                if digest != manifest.golden_sha256:
+                    step.fail()
+                    raise TTError(
+                        f"Checksum mismatch for golden.json downloaded from {url}.",
+                        why=f"expected sha256 {manifest.golden_sha256}, got {digest}",
+                        next_step="Re-run `tt update`; if it persists, report it.",
+                        exit_code=ExitCode.TOOL_FAILED,
+                    )
+            golden = parse_golden(blob.decode("utf-8", errors="replace"), url)
+            golden_cache_write(self.paths, tag, golden)
+            self.registry.reload_manifest()  # make the fresh pins visible to plan()
+            step.detail(tag)
 
     # -- planning -------------------------------------------------------------------
     def plan(
@@ -316,6 +318,9 @@ class InstallerBackend:
         if normalized in (None, self.registry.spec(INSTALLER_TOOL).golden_version):
             self._check_golden_tag(script)
         self.output.status("Running tt-installer (it will ask for sudo itself) …")
+        # install.sh prompts for sudo on its own and writes freely to the terminal,
+        # so it keeps stdio and we take our live rows down around it. Piping it
+        # needs a sudo pre-auth first, which is its own change.
         # --versions=release makes install.sh download the golden .ttis for the
         # running distro itself and pin every component to it. Flag spelling
         # verified against tt-installer 3.5.4 (2026-08-18); the --import-schema
@@ -357,7 +362,8 @@ class InstallerBackend:
         # there (fixed upstream; kept because `tt update <semver>` runs old scripts).
         workdir = self.paths.installer_work_dir
         workdir.mkdir(parents=True, exist_ok=True)
-        self.runner.stream(argv, tool=INSTALLER_TOOL, cwd=str(workdir))
+        with self.output.ui.prompting():
+            self.runner.stream(argv, tool=INSTALLER_TOOL, cwd=str(workdir))
         return True
 
     # Hardcoded in install.sh (install_inference_server/install_studio), not derived
@@ -392,6 +398,24 @@ class InstallerBackend:
         version: str | None = None,
         force: bool = False,
     ) -> UpdateResult:
+        """Convenience wrapper: the tools, then the system stack.
+
+        `tt update` calls the two halves separately so each can sit in its own
+        phase; this keeps a single-call entry point for everything else.
+        """
+        result = self.apply_tools(plan, offline=offline)
+        ran = self.apply_system(offline=offline, version=version, force=force)
+        return dataclasses.replace(result, installer_ran=ran)
+
+    def apply_tools(self, plan: UpdatePlan, *, offline: bool = False) -> UpdateResult:
+        """Install or upgrade the managed tools, one step per plan item.
+
+        A single tool must not sink the whole update: a git fetch can fail for
+        reasons that have nothing to do with the system stack, which is the part a
+        user most needs converged. Failures are collected and the loop carries on;
+        the command exits non-zero at the end.
+        """
+        ui = self.output.ui
         updated: list[str] = []
         up_to_date: list[str] = []
         external: list[str] = []
@@ -399,44 +423,58 @@ class InstallerBackend:
         failed: list[dict] = []
         for item in plan.items:
             if item.kind == "system":
-                continue  # the installer run below
+                continue  # apply_system handles it
             if item.action == "external":
                 external.append(item.name)
-                self.output.status(
-                    f"[dim]{item.name}: managed outside tt (override in effect), skipping[/dim]"
-                )
+                ui.note(f"{item.name}: managed outside tt (override in effect), skipping")
                 continue
             if item.action == "optional":
                 skipped.append(item.name)
-                self.output.status(
-                    f"[dim]{item.name}: optional, not installed "
-                    f"(`tt update --include-lazy` installs it)[/dim]"
+                ui.note(
+                    f"{item.name}: optional, not installed "
+                    f"(`tt update --include-lazy` installs it)"
                 )
                 continue
             if item.action == "up-to-date":
                 up_to_date.append(item.name)
+                # Routine: the phase line is the confirmation. `-v` unfolds it.
+                if ui.show_detail():
+                    ui.note(f"{item.name} {item.installed} is up to date", marker="✓")
                 continue
             spec = self.registry.spec(item.name)
-            self.output.status(f"Installing {item.name} {item.target} …")
-            try:
-                self.registry.install(spec, offline=offline)
-            except TTError as err:
-                # One tool must not sink the whole update: a git fetch can fail for
-                # reasons that have nothing to do with the system stack, which is
-                # the part a user most needs converged. Report and carry on; the
-                # command exits non-zero at the end.
-                failed.append({"tool": item.name, "error": err.what})
-                self.output.warn(f"{item.name} was not updated: {err.what}")
+            # The error is carried out of the block rather than handled inside it:
+            # a `continue` in a `with` body exits the context manager and skips
+            # everything after it, which silently swallowed this warning.
+            error: TTError | None = None
+            with ui.step(f"Installing {item.name} {item.target}") as step:
+                try:
+                    self.registry.install(spec, offline=offline)
+                except TTError as err:
+                    step.fail()
+                    error = err
+            if error is not None:
+                failed.append({"tool": item.name, "error": error.what})
+                # Actionable, so never folded — and rendered after the step
+                # collapses, not inside it.
+                self.output.warn(f"{item.name} was not updated: {error.what}")
                 continue
             updated.append(item.name)
-        installer_ran = self._run_system_installer(
-            offline=offline, version=version, force=force
-        )
         return UpdateResult(
             updated=updated,
             up_to_date=up_to_date,
             external=external,
             skipped=skipped,
             failed=failed,
-            installer_ran=installer_ran,
+        )
+
+    def apply_system(
+        self,
+        *,
+        offline: bool = False,
+        version: str | None = None,
+        force: bool = False,
+    ) -> bool:
+        """Run tt-installer. Returns whether it actually ran (--offline skips it)."""
+        return self._run_system_installer(
+            offline=offline, version=version, force=force
         )
