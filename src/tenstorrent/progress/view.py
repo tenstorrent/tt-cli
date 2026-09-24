@@ -29,7 +29,7 @@ _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _BAR_WIDTH = 12
 _EIGHTHS = " ▏▎▍▌▋▊▉"
 _LABEL_WIDTH = 32
-_DETAIL_WIDTH = 42
+_LIVE_WIDTH = 80
 # Fast enough that the spinner and the elapsed seconds read as continuous, and
 # cheap: a repaint is a dozen short rows.
 _REFRESH_PER_SECOND = 12.5
@@ -95,6 +95,7 @@ class Checklist:
         self._rows: list[_Row] = []
         self._pending: list[str] = []
         self._closed = False
+        self._drawn = 0
         self._started = time.monotonic()
         self._live: Live | None = None
         console = output.status_console
@@ -109,11 +110,7 @@ class Checklist:
     # -- lifecycle --------------------------------------------------------------------
     def __enter__(self) -> "Checklist":
         if self._animate:
-            # get_renderable, not a built renderable: Live re-renders whatever
-            # object it holds, so handing it one frame would repaint that same
-            # frame forever — a spinner frozen mid-step and an elapsed time
-            # stuck at whatever it read when the row began. A callable is
-            # re-invoked on every tick, which is what animates them.
+            self._output.status("Ctrl-C stops watching; the server keeps starting.", style="dim")
             self._live = Live(
                 get_renderable=self._render,
                 console=self._output.status_console,
@@ -229,7 +226,9 @@ class Checklist:
         if self._silent:
             return
         if self._live is not None:
-            self._live.console.print(self._line(row, time.monotonic()))
+            with self._live._lock:
+                self._unwrap()
+                self._live.console.print(self._line(row, time.monotonic()))
             return
         if self._animate:
             return
@@ -245,30 +244,26 @@ class Checklist:
         if self._live is not None:
             self._live.refresh()
 
-    def _line(self, row: _Row, now: float) -> Table:
-        active = row.elapsed is None
-        table = Table.grid(padding=(0, 2))
-        table.add_column(width=1)
-        table.add_column(width=1)
-        table.add_column(width=_LABEL_WIDTH, no_wrap=True, overflow="ellipsis")
-        table.add_column(width=_DETAIL_WIDTH, style="dim", no_wrap=True, overflow="ellipsis")
-        table.add_column(width=8, style="dim", justify="right", no_wrap=True)
-        frame = int(now * _SPINNER_FPS) % len(_SPINNER)
-        mark = (Text(_SPINNER[frame], style="cyan") if active
-                else Text(row.mark, style=row.style))
-        elapsed = row.elapsed if row.elapsed is not None else now - row.started
-        table.add_row(
-            "",
-            mark,
-            Text(row.label, style="" if active else "dim"),
-            (row.progress_text() if active else "") or row.detail,
-            format_duration(elapsed) if elapsed >= 1 else "",
-        )
-        return table
+    def _line(self, row: _Row, now: float) -> Text:
+        """A finished row: plain text, no trailing padding, so a narrower
+        terminal has nothing to re-wrap."""
+        line = Text(no_wrap=True, overflow="ellipsis")
+        line.append("   ")
+        line.append(row.mark, style=row.style)
+        line.append(f"  {row.label}".ljust(_LABEL_WIDTH + 2), style="dim")
+        if row.detail:
+            line.append(f"  {row.detail}", style="dim")
+        if row.elapsed and row.elapsed >= 1:
+            line.append(f"  {format_duration(row.elapsed)}", style="dim")
+        return line
 
     def _render(self) -> RenderableType:
+        """One short, unpadded line. A terminal made narrower re-wraps what is
+        already drawn, and Live then redraws from the wrong row, leaving a copy
+        per refresh; one line under _LIVE_WIDTH is rarely re-wrapped at all."""
+        self._unwrap()
         if self._closed:
-            return Group()
+            return Text()
         now = time.monotonic()
         # A snapshot: Live's refresh thread calls this while the main thread is
         # still appending rows and filling them in.
@@ -276,15 +271,35 @@ class Checklist:
         counted = sum(1 for r in list(self._rows) if not r.placeholder and r.mark != " ")
         total = counted + len(self._pending)
         current = counted if row is not None and not row.placeholder else min(counted + 1, total)
-        footer = Text.assemble(
-            ("  "),
-            (f"step {max(current, 1)} of {max(total, 1)}", "bold"),
-            (f" · {format_duration(now - self._started)}", ""),
-            (" · Ctrl-C stops watching; the server keeps starting", "dim"),
-            no_wrap=True,
-            overflow="ellipsis",
-        )
-        return Group(self._line(row, now), footer) if row is not None else footer
+        line = Text(no_wrap=True, overflow="ellipsis")
+        line.append("   ")
+        if row is not None:
+            line.append(_SPINNER[int(now * _SPINNER_FPS) % len(_SPINNER)], style="cyan")
+            line.append(f"  {row.label}")
+            extra = row.progress_text() or row.detail
+            if extra:
+                line.append(f"  {extra}", style="dim")
+            if now - row.started >= 1:
+                line.append(f"  {format_duration(now - row.started)}", style="dim")
+            line.append("  ·  ", style="dim")
+        line.append(f"step {max(current, 1)} of {max(total, 1)}", style="bold")
+        line.append(f" · {format_duration(now - self._started)} total", style="dim")
+        width = self._output.status_console.width
+        line.truncate(min(width, _LIVE_WIDTH), overflow="ellipsis")
+        self._drawn = line.cell_len
+        return line
+
+    def _unwrap(self) -> None:
+        """A terminal made narrower re-wraps the live line onto several rows,
+        and Live only clears the last. Clear them all, straight to the terminal
+        and before Live redraws: a control inside the live frame would be
+        replayed under every row printed above it, erasing that row."""
+        console = self._output.status_console
+        if self._drawn > console.width:
+            rows = -(-self._drawn // console.width) - 1
+            console.file.write("\r\x1b[2K" + "\x1b[1A\x1b[2K" * rows)
+            console.file.flush()
+        self._drawn = min(self._drawn, console.width)
 
 
 def ready_panel(title: str, rows: list[tuple[str, str]], footer: str) -> Panel:

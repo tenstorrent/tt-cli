@@ -160,8 +160,7 @@ def test_the_footer_counts_the_steps():
     view.plan(["pulling the image", "downloading weights", "opening the device", "ready"])
     view.begin("pulling the image")
     text = frame(view)
-    assert "step 1 of 4" in text
-    assert "Ctrl-C stops watching" in text
+    assert "step 1 of 4" in text and "total" in text
 
 
 def test_a_placeholder_is_not_counted_as_a_step():
@@ -180,7 +179,7 @@ def test_a_step_the_run_skips_is_dropped_from_the_count():
     assert "step 2 of 3" in text
 
 
-def test_the_live_area_stays_two_lines_however_many_steps_finish():
+def test_the_live_area_stays_one_line_however_many_steps_finish():
     """A frame taller than the terminal cannot be redrawn in place and leaves a
     copy of itself per refresh, so finished rows are printed, not redrawn."""
     output = make_output(terminal=True)
@@ -188,8 +187,9 @@ def test_the_live_area_stays_two_lines_however_many_steps_finish():
         view.plan([f"step {i}" for i in range(30)])
         for i in range(30):
             view.begin(f"step {i}")
-        assert len(frame(view).splitlines()) == 2
+        assert len(frame(view).splitlines()) == 1
     text = rendered(output)
+    assert "Ctrl-C stops watching" in text
     assert text.count("step 0 ") >= 1 and "step 28" in text
 
 
@@ -216,3 +216,25 @@ def test_a_settled_row_keeps_its_result_not_a_stale_bar():
     view.progress(2, 444)
     view.done("model warmed up")
     assert "▕" not in frame(view) and "2/444" not in frame(view)
+
+
+def test_the_live_line_stays_short_enough_not_to_rewrap_on_a_resize():
+    view = Checklist(make_output(terminal=True))
+    view.plan(["a", "b"])
+    view.begin("weights Qwen/Qwen-Image-2.1@790b3a1 into a very long label indeed")
+    view.progress(3.2e9, 16e9, is_bytes=True)
+    line = frame(view).rstrip("\n")
+    assert "\n" not in line and len(line) <= 80
+
+
+def test_a_line_the_terminal_rewrapped_on_a_resize_is_cleared_first():
+    output = make_output(terminal=True)
+    view = Checklist(output)
+    view.begin("opening the Tenstorrent device")
+    view._drawn = 78
+    output.status_console.width = 40
+    view._render()
+    assert rendered(output).endswith("\r\x1b[2K\x1b[1A\x1b[2K")
+    before = rendered(output)
+    view._render()
+    assert rendered(output) == before  # once per resize, not per frame
