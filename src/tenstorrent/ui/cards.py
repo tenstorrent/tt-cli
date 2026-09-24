@@ -21,7 +21,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .format import elide
+from .format import elide, tilde
 from .theme import PANEL_WIDTH
 
 
@@ -109,7 +109,7 @@ def failure_card(
 
     actions = list(diagnosis.get("actions", ()))
     if log_path and not any(str(log_path) in a for a in actions):
-        actions.append(f"tail -50 {log_path}")
+        actions.append(f"tail -50 {tilde(log_path)}")
     if actions:
         lines += ["", "[info]Try:[/info]"]
         lines += [f"[muted]  {a}[/muted]" for a in actions]

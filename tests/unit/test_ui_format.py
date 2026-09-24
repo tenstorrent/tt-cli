@@ -73,3 +73,11 @@ def test_elide_keeps_one_line_so_evidence_cannot_become_a_log_viewer():
     long = "x" * 200
     assert len(elide(long, limit=40)) == 40
     assert elide(long, limit=40).endswith("…")
+
+
+def test_tilde_shortens_a_path_under_home(monkeypatch, tmp_path):
+    from tenstorrent.ui.format import tilde
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert tilde(tmp_path / "logs" / "x.log") == "~/logs/x.log"
+    assert tilde("/etc/hosts") == "/etc/hosts"

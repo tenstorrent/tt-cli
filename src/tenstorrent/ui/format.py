@@ -64,6 +64,20 @@ def show_detail(verbose: bool, in_phase: bool) -> bool:
     return bool(verbose) or not bool(in_phase)
 
 
+def tilde(path) -> str:
+    """`~/.local/share/...` — shorter, and how people read their own paths."""
+    text = str(path)
+    try:
+        import os
+
+        home = os.path.expanduser("~")
+        if home and home != "/" and text.startswith(home):
+            return "~" + text[len(home) :]
+    except Exception:
+        pass
+    return text
+
+
 def elide(text: str, limit: int = 120) -> str:
     """One line of evidence, never a log viewer."""
     line = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
