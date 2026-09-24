@@ -213,6 +213,7 @@ def _watch(
     tail = LineSplitter()
     state: dict[str, object] = {
         "logs": None, "gone": False, "fatal": False, "next_look": 0.0, "next_weigh": 0.0,
+        "fetching": None, "hf_home": None,
     }
 
     def pump_backend(chunk: bytes) -> None:
@@ -288,6 +289,9 @@ def _watch(
                 _apply(view, trackers["container"].feed(line))
                 if _FATAL_RE.search(line):
                     state["fatal"] = True
+                fetching = _CONTAINER_FETCH_RE.search(line)
+                if fetching:
+                    state["fetching"] = fetching.group(1)
             if len(chunk) < _CHUNK:
                 return  # drained for now; let the loop breathe
 
@@ -315,6 +319,41 @@ def _watch(
             # No total from the Hub: say what has landed rather than guess at a
             # percentage of something we do not know.
             view.detail(format_bytes(done))
+
+    def show_container_weights() -> None:
+        """What has landed of a download the container makes itself, measured
+        inside it: its volume is not readable from the host. Bytes only — the
+        Hub's total counts files the server never fetches."""
+        tracker = trackers.get("container")
+        phase = tracker.current if tracker is not None else None
+        repo = state["fetching"]
+        now = time.monotonic()
+        if phase is None or phase.key != "fetch" or not repo or now < state["next_weigh"]:
+            return
+        state["next_weigh"] = now + _WEIGH_INTERVAL_S
+        try:
+            if state["hf_home"] is None:
+                env = runner.capture(
+                    [runtime, "inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}",
+                     str(prepare.container)], tool=runtime, check=False, timeout=5,
+                ).stdout.splitlines()
+                state["hf_home"] = next(
+                    (e.split("=", 1)[1] for e in env if e.startswith("HF_HOME=")), ""
+                )
+            if not state["hf_home"]:
+                state["fetching"] = None
+                return
+            path = f"{state['hf_home']}/hub/models--{str(repo).replace('/', '--')}"
+            du = runner.capture(
+                [runtime, "exec", str(prepare.container), "du", "-sb", path],
+                tool=runtime, check=False, timeout=5,
+            )
+        except TTError:
+            state["fetching"] = None
+            return
+        size = du.stdout.split()[0] if du.returncode == 0 and du.stdout.split() else ""
+        if size.isdigit() and int(size):
+            view.detail(format_bytes(int(size)))
 
     def drain() -> None:
         """Read out everything the backend said on its way out, before judging
@@ -374,6 +413,7 @@ def _watch(
 
             follow_container()
             show_weights()
+            show_container_weights()
 
             if proc.poll() is not None and not drained:
                 drain()
@@ -517,10 +557,15 @@ _HELD_RE = re.compile(
     r"|tt device\(s\) are free"
 )
 _FLAG_RE = re.compile(r"unrecognized arguments|error: argument|no such option")
-_FATAL_RE = re.compile(r"Worker \d+ device init failed")
+_CONTAINER_FETCH_RE = re.compile(
+    r"(?:Downloading weights for model|Loading HuggingFace model):\s*(\S+)"
+)
 _RESET_RE = re.compile(
     r"Try resetting the board|Timed out while waiting for active ethernet core"
 )
+# A device that will not open: servers stay up after it (the media server,
+# tt-model's image servers answering /health 500), so the log has to say so.
+_FATAL_RE = re.compile(rf"Worker \d+ device init failed|{_RESET_RE.pattern}")
 
 
 def _boot_error(

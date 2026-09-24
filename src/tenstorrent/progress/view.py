@@ -26,7 +26,7 @@ from rich.text import Text
 from ..output import OutputManager
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-_BAR_WIDTH = 12
+_BAR_WIDTH = 8
 _EIGHTHS = " ▏▎▍▌▋▊▉"
 _LABEL_WIDTH = 32
 _LIVE_WIDTH = 80
@@ -81,7 +81,9 @@ class _Row:
         full, part = divmod(round(fraction * _BAR_WIDTH * 8), 8)
         bar = ("█" * full + (_EIGHTHS[part] if part else "")).ljust(_BAR_WIDTH)
         if self.is_bytes:
-            counts = f"{format_bytes(self.done)} / {format_bytes(self.total)}"
+            done, total = format_bytes(self.done), format_bytes(self.total)
+            same_unit = done.split()[-1] == total.split()[-1]
+            counts = f"{done.split()[0]}/{total}" if same_unit else f"{done} / {total}"
         else:
             counts = f"{int(self.done)}/{int(self.total)}"
         return f"▕{bar}▏ {counts} · {fraction * 100:.0f}%"
@@ -273,17 +275,19 @@ class Checklist:
         current = counted if row is not None and not row.placeholder else min(counted + 1, total)
         line = Text(no_wrap=True, overflow="ellipsis")
         line.append("   ")
+        line.append(_SPINNER[int(now * _SPINNER_FPS) % len(_SPINNER)], style="cyan")
+        # First, so a long line is clipped in its detail and never here.
+        line.append(
+            f"  [{max(current, 1)}/{max(total, 1)} · {format_duration(now - self._started)}]",
+            style="dim",
+        )
         if row is not None:
-            line.append(_SPINNER[int(now * _SPINNER_FPS) % len(_SPINNER)], style="cyan")
             line.append(f"  {row.label}")
+            if now - row.started >= 1:
+                line.append(f"  {format_duration(now - row.started)}", style="dim")
             extra = row.progress_text() or row.detail
             if extra:
                 line.append(f"  {extra}", style="dim")
-            if now - row.started >= 1:
-                line.append(f"  {format_duration(now - row.started)}", style="dim")
-            line.append("  ·  ", style="dim")
-        line.append(f"step {max(current, 1)} of {max(total, 1)}", style="bold")
-        line.append(f" · {format_duration(now - self._started)} total", style="dim")
         width = self._output.status_console.width
         line.truncate(min(width, _LIVE_WIDTH), overflow="ellipsis")
         self._drawn = line.cell_len

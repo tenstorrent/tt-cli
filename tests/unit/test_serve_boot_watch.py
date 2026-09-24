@@ -626,3 +626,46 @@ def test_a_vllm_boot_does_not_promise_an_in_container_weights_fetch():
     steps = boot._boot_steps(["vLLM"])
     assert "fetching weights into the container" not in steps
     assert "fetching weights" in boot._boot_steps(["media"])
+
+
+def test_a_device_that_needs_a_reset_fails_a_server_that_stays_up(harness, monkeypatch):
+    """Captured from a tt-model image server: it keeps answering /health 500."""
+    body = (
+        'File "/opt/tt-metal/models/experimental/qwen_image_2_1/common/device.py", line 38\n'
+        "RuntimeError: TT_THROW @ /opt/tt-metal/tt_metal/llrt/llrt.cpp:625: tt::exception\n"
+        "Device 0: Timed out while waiting for active ethernet core 29-25 to become active "
+        "again. Try resetting the board. Minimum tt-firmware version is 18.10.0\n"
+    )
+    with pytest.raises(TTError) as excinfo:
+        harness(container_body=body, logs_linger=5.0, linger=5.0, probe_answers=(),
+                monkeypatch=monkeypatch)
+    assert "needs a reset" in excinfo.value.what
+
+
+def test_a_download_inside_the_container_shows_what_has_landed(harness, monkeypatch):
+    from tenstorrent.progress import MEDIA_PHASES
+
+    monkeypatch.setattr(boot, "phases_for", lambda engines: MEDIA_PHASES)
+    monkeypatch.setattr(boot, "_WEIGH_INTERVAL_S", 0.0)
+    monkeypatch.setenv(boot.READY_TIMEOUT_ENV, "2")
+    running = _running_on(20000)
+
+    def capture(argv, **kwargs):
+        if argv[:2] == ["docker", "exec"]:
+            path = "/cache/hub/models--microsoft--speecht5_tts"
+            assert argv[-1] == path
+            return subprocess.CompletedProcess(argv, 0, f"1171155687\t{path}\n", "")
+        if "{{range .Config.Env}}{{println .}}{{end}}" in argv:
+            return subprocess.CompletedProcess(argv, 0, "MODEL=x\nHF_HOME=/cache\n", "")
+        return running(argv, **kwargs)
+
+    output = OutputManager()
+    output.status_console = Console(file=io.StringIO(), width=120)
+    body = (
+        "INFO - Settings init: MODEL='speecht5_tts'\n"
+        "INFO - Device -1: Loading HuggingFace model: microsoft/speecht5_tts\n"
+    )
+    with pytest.raises(TTError):
+        harness(container_body=body, logs_linger=5.0, linger=5.0, capture=capture,
+                probe_answers=(), output=output, monkeypatch=monkeypatch)
+    assert "1.17 GB" in output.status_console.file.getvalue()

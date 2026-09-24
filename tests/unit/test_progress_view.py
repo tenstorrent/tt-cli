@@ -107,7 +107,7 @@ def test_a_live_run_repaints_one_block_rather_than_appending_rows():
     "done, total, is_bytes, expected",
     [
         (16, 64, False, "16/64 · 25%"),
-        (1.68e9, 4.98e9, True, "1.68 GB / 4.98 GB · 34%"),
+        (1.68e9, 4.98e9, True, "1.68/4.98 GB · 34%"),
         # The denominator grows as docker reveals layers, so the ratio can
         # briefly exceed 1; the bar clamps rather than overflowing.
         (5, 4, False, "5/4 · 100%"),
@@ -160,14 +160,14 @@ def test_the_footer_counts_the_steps():
     view.plan(["pulling the image", "downloading weights", "opening the device", "ready"])
     view.begin("pulling the image")
     text = frame(view)
-    assert "step 1 of 4" in text and "total" in text
+    assert "[1/4 · " in text
 
 
 def test_a_placeholder_is_not_counted_as_a_step():
     view = Checklist(make_output())
     view.plan(["pulling the image", "ready"])
     view.begin("preparing", placeholder=True)
-    assert "step 1 of 2" in frame(view)
+    assert "[1/2 · " in frame(view)
 
 
 def test_a_step_the_run_skips_is_dropped_from_the_count():
@@ -176,7 +176,7 @@ def test_a_step_the_run_skips_is_dropped_from_the_count():
     view.begin("pulling the image")
     view.begin("opening the device")
     text = frame(view)
-    assert "step 2 of 3" in text
+    assert "[2/3 · " in text
 
 
 def test_the_live_area_stays_one_line_however_many_steps_finish():
@@ -207,7 +207,7 @@ def test_the_bar_moves_in_eighths():
     view.progress(1, 96)
     assert "▕▏" in frame(view)
     view.progress(3, 64)
-    assert "▕▌" in frame(view)
+    assert "▕▍" in frame(view)
 
 
 def test_a_settled_row_keeps_its_result_not_a_stale_bar():
@@ -238,3 +238,15 @@ def test_a_line_the_terminal_rewrapped_on_a_resize_is_cleared_first():
     before = rendered(output)
     view._render()
     assert rendered(output) == before  # once per resize, not per frame
+
+
+def test_the_count_stays_put_and_whole_when_the_line_is_clipped():
+    view = Checklist(make_output(terminal=True))
+    long = "downloading weights into a label that is much longer than usual"
+    view.plan([long, "b", "c"])
+    view.begin(long)
+    view.progress(5.71e9, 16.1e9, is_bytes=True)
+    line = frame(view)
+    assert line.startswith("   ") and "[1/3 · 0s]" in line[:20]
+    view.done()
+    assert "[2/3 · 0s]" in frame(view)[:20]
