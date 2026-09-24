@@ -817,3 +817,57 @@ def test_serve_rejects_a_device_the_model_has_no_entry_for(runner, docker_presen
     assert "no support entry for n300" in result.output
     assert "galaxy" in result.output  # it lists what the model does have
     assert not fake_server.exists()
+
+
+# -- phase structure and the hand-off ------------------------------------------
+def test_serve_declares_two_phases_for_the_work_it_owns():
+    """Checks and Prepare are tt's work. Once run.py takes the terminal its
+    lifetime is not our phase to hold open, so the stepper completes first."""
+    from tenstorrent.commands.serve import PHASES
+
+    assert PHASES == ["Checks", "Prepare"]
+
+
+def test_prepare_and_launch_are_separable():
+    """The split is what lets the phase close before the hand-off."""
+    from tenstorrent.backends.serving.inference_server import (
+        InferenceServerBackend,
+        ServeLaunch,
+    )
+
+    assert hasattr(InferenceServerBackend, "prepare")
+    assert hasattr(InferenceServerBackend, "launch")
+    # serve() stays as the combined entry point for callers that want it.
+    assert hasattr(InferenceServerBackend, "serve")
+    assert {"argv", "env", "cwd", "workflow", "model_name"} <= set(
+        ServeLaunch.__dataclass_fields__
+    )
+
+
+def test_launch_releases_the_ui_before_the_child_takes_the_terminal(monkeypatch):
+    """A spinner thread still painting would fight run.py's own output."""
+    from tenstorrent.backends.serving.inference_server import (
+        InferenceServerBackend,
+        ServeLaunch,
+    )
+    from tenstorrent.output import OutputManager
+
+    events = []
+
+    class FakeRunner:
+        def stream(self, argv, **kwargs):
+            events.append("stream")
+            return 0
+
+    output = OutputManager()
+    monkeypatch.setattr(
+        type(output.ui), "handoff", lambda self: events.append("handoff")
+    )
+    backend = InferenceServerBackend.__new__(InferenceServerBackend)
+    backend.output = output
+    backend.runner = FakeRunner()
+    backend.launch(
+        ServeLaunch(argv=["run.py"], env={}, cwd="/tmp", workflow="server", model_name="m")
+    )
+    # Order matters: release, then hand over.
+    assert events == ["handoff", "stream"]

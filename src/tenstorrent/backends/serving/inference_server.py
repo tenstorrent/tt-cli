@@ -121,6 +121,21 @@ _VOLUME_PREFIX = "volume_id_"
 
 
 @dataclass(frozen=True)
+class ServeLaunch:
+    """A resolved, ready-to-run server invocation.
+
+    prepare() produces it and launch() consumes it, so the work we own can sit in
+    a phase and the hand-off to run.py is a separate, explicit step.
+    """
+
+    argv: list
+    env: dict
+    cwd: str
+    workflow: str
+    model_name: str
+
+
+@dataclass(frozen=True)
 class ServerContainer:
     """A running tt-inference-server container, with whatever identity we could read."""
 
@@ -462,6 +477,64 @@ class InferenceServerBackend:
         argv += ["--service-port", str(port)]
         return argv
 
+    def prepare(
+        self,
+        model: ModelInfo,
+        *,
+        workflow: str = "server",
+        device: str | None = None,
+        offline: bool = False,
+        port: int | None = None,
+        force: bool = False,
+    ) -> "ServeLaunch":
+        """Everything before the server takes the terminal: checks, the managed
+        checkout, and the argv. Split from launch() so `tt serve` can put this in
+        a phase and hand off cleanly afterwards."""
+        ui = self.output.ui
+        with ui.step(f"Checking {model.name} is servable"):
+            self._check_servable(model)
+            support = self._check_supported(model, device, force=force)
+        if support is not None and support.serve_as:
+            # A state, not an action, and worth saying out loud: the user asked for
+            # one device spec and is getting another.
+            self.output.status(
+                f"{model.name} has no {device} spec — serving it through the "
+                f"{support.serve_as} one."
+            )
+        # registry.ensure may clone the repo and build a venv — minutes of work
+        # that now renders its own steps (see tools/installers.py).
+        entry = self.registry.ensure(TOOL, offline=offline)
+        argv = self._argv(
+            model,
+            workflow=workflow,
+            support=support,
+            device=device,
+            port=port,
+            entry=Path(entry),
+        )
+        return ServeLaunch(
+            argv=argv,
+            env=self._env(model),
+            # run.py assumes CWD is the repo root (it reads Path("VERSION") etc.);
+            # the official installer's wrapper script cd's there too.
+            cwd=str(Path(entry).parent),
+            workflow=workflow,
+            model_name=model.name,
+        )
+
+    def launch(self, plan: "ServeLaunch") -> int:
+        """Hand the terminal to run.py. Its output from here on is the server's."""
+        self.output.status(
+            f"Starting tt-inference-server ({plan.workflow}) for {plan.model_name} "
+            "— Ctrl-C to stop."
+        )
+        # Release every live row first: the child owns the terminal now, and a
+        # spinner thread still painting would fight its output.
+        self.output.ui.handoff()
+        return self.runner.stream(
+            plan.argv, env=plan.env, cwd=plan.cwd, tool=TOOL
+        )
+
     def serve(
         self,
         model: ModelInfo,
@@ -472,29 +545,16 @@ class InferenceServerBackend:
         port: int | None = None,
         force: bool = False,
     ) -> int:
-        self._check_servable(model)
-        support = self._check_supported(model, device, force=force)
-        entry = self.registry.ensure(TOOL, offline=offline)
-        argv = self._argv(
-            model,
-            workflow=workflow,
-            support=support,
-            device=device,
-            port=port,
-            entry=Path(entry),
-        )
-        if support is not None and support.serve_as:
-            self.output.status(
-                f"{model.name} has no {device} spec — serving it through the "
-                f"{support.serve_as} one."
+        """prepare + launch, for callers that don't need the two separated."""
+        return self.launch(
+            self.prepare(
+                model,
+                workflow=workflow,
+                device=device,
+                offline=offline,
+                port=port,
+                force=force,
             )
-        self.output.status(
-            f"Starting tt-inference-server ({workflow}) for {model.name} — Ctrl-C to stop."
-        )
-        # run.py assumes CWD is the repo root (it reads Path("VERSION") etc.);
-        # the official installer's wrapper script cd's there too.
-        return self.runner.stream(
-            argv, env=self._env(model), cwd=str(Path(entry).parent), tool=TOOL
         )
 
     # -- artifact cleanup (`tt model rm`) --------------------------------------------
