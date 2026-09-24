@@ -16,7 +16,7 @@ from .cards import (
     notice_panel,
     ready_panel,
 )
-from .console import Activity, Phase, Step, Ui
+from .console import Activity, Phase, Step, Ui, null_ui
 from .format import elide, fmt_bytes, fmt_clock, fmt_duration, progress_bar, show_detail
 from .stream import Parser, SubStepParser, run_streamed, steps_parser
 from .theme import PANEL_WIDTH, SPINNER_FRAMES, THEME
@@ -43,6 +43,7 @@ __all__ = [
     "kept_panel",
     "merge_timings",
     "notice_panel",
+    "null_ui",
     "progress_bar",
     "ready_panel",
     "run_streamed",

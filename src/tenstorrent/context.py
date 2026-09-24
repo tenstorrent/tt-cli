@@ -66,7 +66,7 @@ class AppContext:
             from .tools.registry import ToolRegistry
 
             self._extras["registry"] = ToolRegistry(
-                self.paths, self.config, runner=self.runner
+                self.paths, self.config, runner=self.runner, ui=self.output.ui
             )
         return self._extras["registry"]
 

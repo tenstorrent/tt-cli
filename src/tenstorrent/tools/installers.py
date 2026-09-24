@@ -16,10 +16,13 @@ import shutil
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from ..config.paths import Paths
 from ..errors import ExitCode, TTError
+from ..ui.console import null_ui
+from ..ui.parsers import GitCloneProgress, UvPipProgress
+from ..ui.stream import run_streamed
 from .manifest import ToolSpec
 from .runner import Runner
 
@@ -58,10 +61,19 @@ def find_uv_bin() -> str:
 
 
 class UvToolInstaller:
-    def __init__(self, paths: Paths, runner: Runner, uv_bin: str | None = None) -> None:
+    def __init__(
+        self,
+        paths: Paths,
+        runner: Runner,
+        uv_bin: str | None = None,
+        ui: Any | None = None,
+    ) -> None:
         self.paths = paths
         self.runner = runner
         self._uv_bin = uv_bin
+        # Defaults to a silent Ui so direct construction (tests, library use)
+        # prints nothing and no call site has to branch on None.
+        self._ui = ui if ui is not None else null_ui()
 
     def _requirement(self, spec: ToolSpec) -> str:
         """What uv installs: a pinned PyPI version, or a PEP 508 direct reference
@@ -90,7 +102,19 @@ class UvToolInstaller:
         env["UV_TOOL_BIN_DIR"] = str(self.paths.tool_bin_dir)
         self.paths.tools_dir.mkdir(parents=True, exist_ok=True)
         self.paths.tool_bin_dir.mkdir(parents=True, exist_ok=True)
-        self.runner.capture(argv, env=env, tool=f"uv (installing {spec.name})")
+        # Was a silent capture(): a cold install of a big tool spent minutes with
+        # nothing on screen. uv's own "Resolved N packages" gives an exact
+        # denominator, so the row can show a real bar.
+        progress = UvPipProgress(f"Installing {spec.name} {spec.golden_version}")
+        run_streamed(
+            self.runner,
+            self._ui,
+            argv,
+            label=progress.label,
+            parser=progress,
+            env_extra={k: v for k, v in env.items() if k.startswith("UV_")},
+            tool=f"uv (installing {spec.name})",
+        )
         bin_path = self.paths.tool_bin_dir / spec.bin_name
         if not bin_path.exists():
             raise TTError(
@@ -174,10 +198,17 @@ class GitVenvInstaller:
     """Shallow-clones a repo at the golden ref and builds an isolated uv venv for
     it. Used for tools not yet on PyPI (tt-inference-server)."""
 
-    def __init__(self, paths: Paths, runner: Runner, uv_bin: str | None = None) -> None:
+    def __init__(
+        self,
+        paths: Paths,
+        runner: Runner,
+        uv_bin: str | None = None,
+        ui: Any | None = None,
+    ) -> None:
         self.paths = paths
         self.runner = runner
         self._uv_bin = uv_bin
+        self._ui = ui if ui is not None else null_ui()
 
     def _tool_dir(self, spec: ToolSpec) -> Path:
         return self.paths.tools_dir / f"{spec.name}-{spec.golden_version}"
@@ -201,10 +232,17 @@ class GitVenvInstaller:
                 exit_code=ExitCode.CONFIG,
             )
         tool_dir.mkdir(parents=True, exist_ok=True)
-        self.runner.capture(
+        # These four commands used to be silent captures, so a first `tt serve` on
+        # a fresh box sat on a dead terminal for minutes. git and uv both report
+        # exact counts, so each gets a live row with a real denominator.
+        clone = GitCloneProgress(f"Cloning {spec.name} {spec.golden_version}")
+        run_streamed(
+            self.runner,
+            self._ui,
             [
                 "git",
                 "clone",
+                "--progress",  # git only reports progress when it isn't a tty
                 "--depth",
                 "1",
                 "--branch",
@@ -212,6 +250,8 @@ class GitVenvInstaller:
                 spec.repo,
                 str(src_dir),
             ],
+            label=clone.label,
+            parser=clone,
             tool=f"git (cloning {spec.name})",
         )
         uv = self._uv_bin or find_uv_bin()
@@ -219,21 +259,34 @@ class GitVenvInstaller:
         argv = [uv, "venv", str(venv_dir)]
         if spec.python:
             argv += ["--python", spec.python]
-        self.runner.capture(argv, tool=f"uv (venv for {spec.name})")
+        with self._ui.step(f"Creating a virtualenv for {spec.name}") as step:
+            self.runner.capture(argv, tool=f"uv (venv for {spec.name})")
+            if spec.python:
+                step.detail(f"python {spec.python}")
         requirements = src_dir / "requirements.txt"
         if requirements.exists():
-            self.runner.capture(
+            deps = UvPipProgress(f"Installing {spec.name} dependencies")
+            run_streamed(
+                self.runner,
+                self._ui,
                 [uv, "pip", "install", "--python", str(venv_dir / "bin" / "python"),
                  "-r", str(requirements)],
+                label=deps.label,
+                parser=deps,
                 tool=f"uv (deps for {spec.name})",
             )
         if spec.deps:
             # Bootstrap deps the entry script imports directly, declared in the
             # manifest — for repos with no root requirements.txt (tt-inference-server
             # manages its own heavy per-workflow venvs from inside run.py).
-            self.runner.capture(
+            extra = UvPipProgress(f"Installing {spec.name} bootstrap dependencies")
+            run_streamed(
+                self.runner,
+                self._ui,
                 [uv, "pip", "install", "--python", str(venv_dir / "bin" / "python"),
                  *spec.deps],
+                label=extra.label,
+                parser=extra,
                 tool=f"uv (deps for {spec.name})",
             )
         if not entry.exists():

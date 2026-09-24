@@ -63,6 +63,15 @@ _ACTIVE_LIVE: list = []
 _SIGNALS_INSTALLED = [False]
 
 
+def null_ui() -> "Ui":
+    """A silent Ui for code constructed without an OutputManager (tests, library
+    use). Follows the NULL_SESSION idiom in telemetry/: a real object that does
+    nothing, so call sites never branch on None."""
+    from ..output import OutputManager
+
+    return OutputManager(quiet=True).ui
+
+
 def _tty() -> bool:
     """Stricter than Rich's `is_terminal`, which FORCE_COLOR flips true on a pipe.
 

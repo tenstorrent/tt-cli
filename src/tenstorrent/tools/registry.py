@@ -55,6 +55,7 @@ class ToolRegistry:
         manifest_source: ManifestSource | None = None,
         runner: Runner | None = None,
         installers: dict[str, Installer] | None = None,
+        ui: Any | None = None,
     ) -> None:
         self.paths = paths
         self.config = config
@@ -62,10 +63,12 @@ class ToolRegistry:
         self._manifest_source = manifest_source or LocalManifestSource(paths)
         self._manifest: Manifest | None = None
         self._runner = runner or Runner(sudo_command=str(config.get("tools.sudo_command")))
+        # Installing a tool is minutes of work, so the installers render progress;
+        # without a ui they fall back to a silent one and print nothing.
         self._installers = installers or {
-            "uv-tool": UvToolInstaller(paths, self._runner),
+            "uv-tool": UvToolInstaller(paths, self._runner, ui=ui),
             "script": ScriptInstaller(paths),
-            "git-venv": GitVenvInstaller(paths, self._runner),
+            "git-venv": GitVenvInstaller(paths, self._runner, ui=ui),
             "docker": DockerInstaller(),
         }
 
