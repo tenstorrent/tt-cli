@@ -56,11 +56,11 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt model profiles NAME` | A pulled bundle's serve profiles and its default |
 | `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id (bundles: `--profile`, `--detach`, `--print`, `--refresh`, `--no-update-check`, `--no-weights`) |
 | `tt model curl [PROMPT]` | Send a chat completion to the model being served; unknown options go into the request body (`--max-tokens 40`), `--print` shows the curl instead |
-| `tt model stop NAME` | Stop a running model server (`--profile` to stop only one profile of a bundle) |
+| `tt model stop NAME...` | Stop running model servers (`--profile` to stop only one profile of a bundle; `tt model stop $(tt model ps --names)` stops everything) |
 | `tt model rm NAME` | Remove a model's local artifacts, keeping its weights unless `--include-weights` (`--dry-run`, `--yes`) |
 | `tt model login` | Log in to the Hugging Face Hub for gated or private bundles and weights (`--token`) |
 | `tt model publish` / `unpublish` | List or delist your pushed bundle in the community catalog; `tt model package` / `package-thin` / `push` forward to tt-model's authoring commands unchanged |
-| `tt model ps` | Model servers running on this machine: name, backend, port, health, uptime (`--all` includes stopped containers; `--no-probe` skips the HTTP health check) |
+| `tt model ps` | Model servers running on this machine: name, backend, port, health, uptime (`--all` includes stopped containers; `--no-probe` skips the HTTP health check; `--names`/`-n` prints only the names) |
 | `tt model logs NAME` | Output of a served model: the newest tt-inference-server log file for a catalog model, or `tt-model logs` for a bundle (`--follow`; `--tail N`; `--since` needs a running container; `--profile` for bundles) |
 
 | Other | Functionality |

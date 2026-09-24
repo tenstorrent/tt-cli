@@ -2061,3 +2061,42 @@ def test_plain_text_model_verbs_refuse_json_clearly(runner, argv):
     assert result.exit_code == 2, result.output
     assert "No such option" not in result.output
     assert "Drop --json" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_stop_takes_several_names(runner, fake_docker, isolated_dirs):
+    set_containers, stop_log = fake_docker
+    set_containers([
+        _container("aaaaaaaaaaaa11", snapshot="/hf/hub/models--Qwen--Qwen3-32B/snapshots/rev"),
+        _container(
+            "bbbbbbbbbbbb22",
+            snapshot="/hf/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/rev",
+        ),
+    ])
+    result = runner.invoke(app, ["model", "stop", "Qwen3-32B", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert sorted(stop_log.read_text().split()) == ["aaaaaaaaaaaa", "bbbbbbbbbbbb"]
+
+
+@pytest.mark.fakes_only
+def test_model_stop_with_an_unknown_name_stops_nothing(runner, fake_docker, isolated_dirs):
+    set_containers, stop_log = fake_docker
+    set_containers([
+        _container("aaaaaaaaaaaa11", snapshot="/hf/hub/models--Qwen--Qwen3-32B/snapshots/rev"),
+    ])
+    result = runner.invoke(app, ["model", "stop", "Qwen3-32B", "not-a-model"])
+    assert result.exit_code != 0
+    assert not stop_log.exists()
+
+
+@pytest.mark.fakes_only
+def test_model_stop_keeps_going_past_one_it_cannot_stop(runner, fake_docker, isolated_dirs):
+    set_containers, stop_log = fake_docker
+    set_containers([
+        _container("aaaaaaaaaaaa11", snapshot="/hf/hub/models--Qwen--Qwen3-32B/snapshots/rev"),
+        _container("cccccccccccc33"),  # unidentifiable: Llama cannot be matched safely
+    ])
+    result = runner.invoke(app, ["model", "stop", "Llama-3.1-8B-Instruct", "Qwen3-32B"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert stop_log.read_text().split() == ["aaaaaaaaaaaa"]
+    assert "Could not stop Llama-3.1-8B-Instruct" in result.output
