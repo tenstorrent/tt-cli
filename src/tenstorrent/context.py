@@ -54,6 +54,9 @@ class AppContext:
             self._extras["runner"] = Runner(
                 sudo_command=str(self.config.get("tools.sudo_command")),
                 before_exec=self.run_before_exec,
+                # Streamed children tee their output here, and a failure carries
+                # the path so the error panel can point at it.
+                log_dir=self.paths.logs_dir,
             )
         return self._extras["runner"]
 
