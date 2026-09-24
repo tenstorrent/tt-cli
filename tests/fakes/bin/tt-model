@@ -23,7 +23,13 @@ def main() -> int:
     if log:
         with open(log, "a") as fh:
             fh.write(
-                json.dumps({"argv": argv, "hf_home": os.environ.get("HF_HOME")})
+                json.dumps(
+                    {
+                        "argv": argv,
+                        "hf_home": os.environ.get("HF_HOME"),
+                        "progress": os.environ.get("TT_MODEL_PROGRESS"),
+                    }
+                )
                 + "\n"
             )
     if os.environ.get("FAKE_TT_MODEL_FAIL"):
@@ -52,6 +58,13 @@ def main() -> int:
     if sub == "login":
         print("Logged in as fake-user")
         return 0
+    # The progress contract, when asked for it (docs/serve-progress-contract.md).
+    # A replay of tests/fakes/data/tt-model-progress.ndjson is the point of the
+    # fixture: the same bytes tt must render are what a real tt-model will send.
+    events = os.environ.get("FAKE_TT_MODEL_EVENTS")
+    if events and os.environ.get("TT_MODEL_PROGRESS") == "ndjson":
+        sys.stderr.write(open(events).read())
+        sys.stderr.flush()
     print("fake tt-model: serving")
     return 0
 

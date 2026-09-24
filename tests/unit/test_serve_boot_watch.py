@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""The two-stage boot watch: run.py's own output, then the container's log."""
+"""The boot watch: a backend's preparation and the container's log, together."""
 
 import io
+import re
 import subprocess
+import sys
 import textwrap
+from pathlib import Path
 import time
 
 from rich.console import Console
@@ -13,8 +16,10 @@ from rich.console import Console
 import pytest
 
 from tenstorrent.backends.serving import boot
+from tenstorrent.backends.serving.preparation import ModelManagerPreparation, RunPyPreparation
 from tenstorrent.errors import ExitCode, TTError
 from tenstorrent.output import OutputManager
+from tenstorrent.progress import Checklist, PhaseTracker, phases_for
 from tenstorrent.tools.runner import Runner
 
 CONTAINER_LOG = """\
@@ -33,10 +38,8 @@ INFO api_server.py:500] Starting vLLM API server 0 on http://0.0.0.0:8010
 # container log it hands off to, exactly where the real one does.
 FAKE_RUN_PY = textwrap.dedent(
     '''
-    import pathlib, sys, time
-    log, body, rc, linger = (
-        pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3]), float(sys.argv[4])
-    )
+    import sys, time
+    rc, linger = int(sys.argv[1]), float(sys.argv[2])
     print("INFO: TT-Inference version: 0.22.0")
     print("INFO: validating local setup completed")
     print("INFO: Setup already completed for model m.")
@@ -45,8 +48,6 @@ FAKE_RUN_PY = textwrap.dedent(
     print("INFO: Docker Image pulled successfully.")
     print("INFO: Docker run command:")
     print("  --name tt-inference-server-abc123 \\\\")
-    log.write_text(pathlib.Path(body).read_text())
-    print(f"INFO: Running docker container with log file: {log}")
     print("INFO: Created Docker container ID: deadbeef")
     # v0.22.0 blocks here polling /health, for as long as the boot takes.
     print("INFO: Waiting for inference server readiness at http://127.0.0.1:20000/health ...")
@@ -56,35 +57,62 @@ FAKE_RUN_PY = textwrap.dedent(
 )
 
 
+#: Stands in for `docker logs --follow`: replays the container's output, then
+#: stays open exactly as the real one does while the container runs.
+FAKE_DOCKER_LOGS = textwrap.dedent(
+    '''
+    import sys, time
+    sys.stdout.write(open(sys.argv[1]).read())
+    sys.stdout.flush()
+    time.sleep(float(sys.argv[2]))
+    '''
+)
+
+
 @pytest.fixture
 def harness(tmp_path):
-    """A watch_serve call wired to a scripted run.py and a scripted health probe."""
+    """A watch_serve call wired to a scripted backend and a scripted docker."""
     script = tmp_path / "run.py"
     script.write_text(FAKE_RUN_PY)
+    logs_script = tmp_path / "docker-logs.py"
+    logs_script.write_text(FAKE_DOCKER_LOGS)
     body = tmp_path / "container.log"
     body.write_text(CONTAINER_LOG)
 
-    def run(*, container_body=None, rc=0, running=True, probe_answers=(True,),
-            linger=0.0, output=None, monkeypatch=None):
-        log = tmp_path / "docker.log"
+    def run(*, container_body=None, rc=0, probe_answers=(False, False, True), linger=0.0,
+            logs_linger=0.0, prepare=None, output=None, monkeypatch=None,
+            capture=None):
         if container_body is not None:
             body.write_text(container_body)
+        # A real endpoint answers after the boot, never before it; a probe that
+        # succeeds on the first call would let a serve finish before the
+        # container had written a line. No interval between them, though — the
+        # tests should not pay for the pacing a real boot needs.
         answers = list(probe_answers)
+        monkeypatch.setattr(boot, "_PROBE_INTERVAL_S", 0.0)
         monkeypatch.setattr(
             boot.discovery, "probe",
             lambda url, timeout_s=0: ["served"] if answers and answers.pop(0) else None,
         )
+
+        def popen(argv, **kwargs):
+            # The watcher spawns `docker logs --follow <id>` for the container
+            # half; swap in a script that replays a captured boot.
+            if argv[:2] == ["docker", "logs"]:
+                argv = [sys.executable, str(logs_script), str(body), str(logs_linger)]
+            return subprocess.Popen(argv, **kwargs)
+
         runner = Runner(
-            spawn=lambda *a, **k: subprocess.CompletedProcess(
-                a[0], 0, "true\n" if running else "false\n", ""
-            )
+            popen=popen,
+            spawn=capture or (lambda *a, **k: subprocess.CompletedProcess(a[0], 0, "", "")),
         )
         return boot.watch_serve(
             runner=runner,
             output=output or OutputManager(),
-            argv=["python", str(script), str(log), str(body), str(rc), str(linger)],
-            # As the real caller does (InferenceServerBackend._env): a piped
-            # Python block-buffers its stdout, and nothing arrives until it exits.
+            prepare=prepare or RunPyPreparation(),
+            argv=[sys.executable, str(script), str(rc), str(linger)],
+            # As the real callers do: a piped Python block-buffers its stdout,
+            # and nothing arrives until it exits.
             env={"PATH": "/usr/bin:/bin", "PYTHONUNBUFFERED": "1"},
             cwd=str(tmp_path),
             tool="tt-inference-server",
@@ -96,7 +124,6 @@ def harness(tmp_path):
         )
 
     run.script, run.body, run.tmp = script, body, tmp_path
-    run.log = tmp_path / "docker.log"
     return run
 
 
@@ -104,7 +131,9 @@ def test_a_watched_serve_reaches_ready_and_tees_everything(harness, tmp_path, mo
     result = harness(monkeypatch=monkeypatch)
     assert result.ready
     assert result.endpoint == "http://127.0.0.1:20000/v1"
-    assert result.container == "deadbeef"
+    # The name, not the id: it is what `tt model ps` and `tt model stop` show,
+    # and run.py echoes it first.
+    assert result.container == "tt-inference-server-abc123"
     # The checklist replaces the wall of output on screen; it must not throw it
     # away, so both stages land in one file.
     teed = result.raw_log.read_text()
@@ -122,7 +151,8 @@ def test_a_run_py_that_names_no_container_degrades_instead_of_waiting(
     result = boot.watch_serve(
         runner=Runner(),
         output=OutputManager(),
-        argv=["python", str(script)],
+        prepare=RunPyPreparation(),
+        argv=[sys.executable, str(script)],
         env={"PATH": "/usr/bin:/bin"},
         cwd=str(tmp_path),
         tool="tt-inference-server",
@@ -159,15 +189,6 @@ def test_the_reason_comes_from_the_log_not_the_exit_status(tmp_path):
         cause=TTError("tt-inference-server exited with status 1."),
     )
     assert err.why == "AssertionError: HF_TOKEN validation failed."
-
-
-def test_a_container_that_dies_during_boot_stops_the_wait(harness, monkeypatch):
-    with pytest.raises(TTError) as excinfo:
-        harness(
-            container_body="RuntimeError: CHIP_IN_USE: device 0 is held\n",
-            running=False, probe_answers=(False,), monkeypatch=monkeypatch,
-        )
-    assert "already in use" in excinfo.value.what
 
 
 def test_ready_timeout_env_is_validated_up_front(monkeypatch):
@@ -230,33 +251,17 @@ def test_ready_is_reported_without_waiting_out_run_pys_own_poll(harness, monkeyp
     assert time.monotonic() - started < boot._EXIT_GRACE_S
 
 
-def test_a_crashed_container_is_noticed_even_though_docker_rm_removed_it(harness, monkeypatch):
-    """run.py starts the container with `--rm`, so a crash removes it and
-    `docker inspect` stops finding it. Reading that as "cannot ask, assume it
-    is alive" left a dead boot being waited on for the full hour."""
-    inspected = {"calls": 0}
-
-    def fake_inspect(*args, **kwargs):
-        inspected["calls"] += 1
-        if inspected["calls"] == 1:  # alive at the handover
-            return subprocess.CompletedProcess(args[0], 0, "true\n", "")
-        return subprocess.CompletedProcess(args[0], 1, "", "No such object: deadbeef\n")
-
-    monkeypatch.setattr(boot, "_LIVENESS_INTERVAL_S", 0.0)
-    monkeypatch.setattr(
-        boot.discovery, "probe", lambda url, timeout_s=0: None
-    )
-    runner = Runner(spawn=fake_inspect)
-    script = harness.script
+def test_a_crashed_container_is_noticed_the_moment_its_logs_end(harness, monkeypatch):
+    """`docker run --rm` removes a container the instant it exits, so there is
+    nothing left to inspect. `docker logs --follow` ending *is* the news, and
+    it arrives at once rather than on the next poll."""
     with pytest.raises(TTError) as excinfo:
-        boot.watch_serve(
-            runner=runner, output=OutputManager(),
-            argv=["python", str(script), str(harness.log), str(harness.body), "0", "5"],
-            env={"PATH": "/usr/bin:/bin", "PYTHONUNBUFFERED": "1"},
-            cwd=str(harness.tmp), tool="t", model_name="Test-Model", engines=["vLLM"],
-            port=20000, raw_log=harness.tmp / "logs" / "crash.log", runtime="docker",
+        harness(
+            container_body="RuntimeError: CHIP_IN_USE: device 0 is held\n",
+            probe_answers=(False,) * 20, linger=5.0, logs_linger=0.0,
+            monkeypatch=monkeypatch,
         )
-    assert "stopped before the server was ready" in excinfo.value.what
+    assert "already in use" in excinfo.value.what
 
 
 def test_a_mesh_that_needs_a_reset_says_so(tmp_path):
@@ -280,3 +285,254 @@ def test_a_mesh_that_needs_a_reset_says_so(tmp_path):
     )
     assert "needs a reset" in err.what
     assert "tt device reset" in err.next_step
+
+
+# -- the tt-model contract (docs/serve-progress-contract.md) ---------------------------
+CONTRACT = Path(__file__).parent.parent / "fakes" / "data" / "tt-model-progress.ndjson"
+
+
+def replay_events(lines):
+    """Feed a preparation an event stream; return (rows, prep)."""
+    prepare = ModelManagerPreparation("ns/bundle")
+    output = OutputManager()
+    output.status_console = Console(file=io.StringIO(), width=120)
+    with Checklist(output) as view:
+        for line in lines:
+            boot._apply(view, prepare.feed(line))
+        boot._apply(view, prepare.finish())
+    return output.status_console.file.getvalue(), prepare
+
+
+def test_the_published_contract_renders_as_the_shared_checklist():
+    """The fixture is the contract: these are the exact bytes tt-model has to
+    send, and this is the whole of what tt does with them."""
+    shown, prepare = replay_events(CONTRACT.read_text().splitlines())
+    # Shared keys borrow the catalog path's own wording, so the two backends
+    # cannot drift apart on a rename; an unknown key uses its own label.
+    assert "✓ host ready" in shown
+    assert "✓ weights ready" in shown
+    assert "✓ image ready" in shown
+    assert "✓ container started" in shown
+    # An unknown key uses its own labels rather than being dropped or shown raw.
+    assert "✓ bundle resolved" in shown
+    assert "qwen3-coder-30b-a3b @ p300x2" in shown
+    assert prepare.container == "tt-model-qwen3-coder-30b-a3b-p300x2"
+    assert prepare.endpoint_port == 20000
+
+
+def test_byte_progress_survives_the_round_trip():
+    shown, _ = replay_events([
+        '{"event":"step","key":"weights","state":"start"}',
+        '{"event":"progress","done":3221225472,"total":16000000000,"unit":"bytes"}',
+    ])
+    assert "3.22 GB" in shown  # bytes, not a raw count
+
+
+def test_everything_it_prints_is_kept_as_evidence_whether_or_not_it_is_a_row():
+    """Rows are the ones that look like steps; the tail a failure card quotes is
+    all of it, including the notes and whatever the tools underneath wrote."""
+    _, prepare = replay_events([
+        "  ⭻ image tt-model/qwen3:abc is missing from docker (deleted or pruned)",
+        "Error response from daemon: manifest unknown",
+        "✗ docker pull tt-model/qwen3:abc",
+    ])
+    assert "manifest unknown" in " ".join(prepare.evidence())
+    assert "missing from docker" in " ".join(prepare.evidence())
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '{"event":"step"}',                                  # no key, no state
+        '{"event":"progress","done":1,"total":0}',           # nothing to divide by
+        '{"event":"whatever-comes-next","x":1}',             # a later version
+        '{"event":"container"}',                             # nothing named
+        '{"not":"ours"}',
+        '{"event":"step","key":"weights","state":"start"',   # truncated
+        "",
+    ],
+)
+def test_a_malformed_or_unknown_event_is_ignored_not_fatal(line):
+    """The stream may outgrow this reader; it must never take a serve down."""
+    shown, _ = replay_events([line])
+    assert "Traceback" not in shown
+
+
+def test_a_backend_diagnosis_is_preferred_over_our_own_guess(tmp_path):
+    """tt-model knows things about bundles tt does not, so when it says why,
+    that is what the card shows."""
+    prepare = ModelManagerPreparation("ns/bundle")
+    prepare.feed(
+        '{"event":"error","cause":"the engine rejected a flag",'
+        '"detail":"--frobnicate was forwarded to vLLM","actions":["drop it"]}'
+    )
+    err = boot._boot_error(
+        "ns/bundle", prepare, raw_log=tmp_path / "serve.log", exited=True,
+        deadline_s=0, diagnosis=prepare.diagnosis,
+    )
+    assert "the engine rejected a flag" in err.what
+    assert "--frobnicate" in err.why
+    assert "drop it" in err.next_step
+
+
+# -- the point of all of it ------------------------------------------------------------
+_RUN_PY_OUTPUT = [
+    "INFO: TT-Inference version: 0.22.0",
+    "INFO: validating local setup completed",
+    "INFO: Setup already completed for model m.",
+    "INFO: running: docker pull ghcr.io/tenstorrent/vllm:0.22.0-abcdef",
+    "INFO: Docker Image pulled successfully.",
+    "INFO: Docker run command:",
+    "  --name tt-inference-server-abc123 \\",
+]
+
+
+def _rows(prepare, preparation_output):
+    """The checklist a serve draws, as row labels, for one backend."""
+    output = OutputManager()
+    output.status_console = Console(file=io.StringIO(), width=120)
+    container = PhaseTracker(phases_for(["vLLM"]))
+    with Checklist(output) as view:
+        view.begin(prepare.label, placeholder=True)
+        for line in preparation_output:
+            boot._apply(view, prepare.feed(line))
+        boot._apply(view, prepare.finish())
+        for line in CONTAINER_LOG.splitlines():
+            boot._apply(view, container.feed(line))
+        boot._apply(view, container.finish())
+        view.instant("endpoint answering")
+    return [
+        re.sub(r"\s{2,}.*$", "", line.strip().lstrip("✓ "))
+        for line in output.status_console.file.getvalue().splitlines()
+    ]
+
+
+def test_both_backends_draw_the_same_checklist():
+    """The one assertion that keeps them together.
+
+    Same container log through the same tracker and the same view, so the boot
+    half is identical by construction rather than by two implementations
+    agreeing. tt-model's preparation adds the one step it genuinely has that
+    tt-inference-server does not, and shares the wording for the rest.
+    """
+    catalog = _rows(RunPyPreparation(), _RUN_PY_OUTPUT)
+    bundle = _rows(ModelManagerPreparation("ns/bundle"), CONTRACT.read_text().splitlines())
+    assert catalog[0] == "host ready"
+    assert bundle == ["bundle resolved"] + catalog
+
+
+# -- the fallback, which is what today's pinned tt-model actually produces -------------
+# Captured from a real `tt-model --verbose serve` re-pulling a pruned image and
+# then fetching a 27B model's weights.
+_TT_MODEL_VERBOSE = [
+    "  ⭻ image tt-model/qwen3.8-27b-p150x4:4233a70b5f90 is missing from docker",
+    "  (deleted or pruned); re-pulling it from tt-hous/qwen3.8-27b-p150x4",
+    "docker load tt-model/qwen3.8-27b-p150x4:4233a70b5f90…",
+    "Loaded image: tt-model/qwen3.8-27b-p150x4:4233a70b5f90",
+    "✓ docker load tt-model/qwen3.8-27b-p150x4:4233a70b5f90  57.9s",
+    "  ✓ pulled tt-hous/qwen3.8-27b-p150x4",
+    "  → next:  tt-model serve tt-hous/qwen3.8-27b-p150x4",
+    "weights Qwen/Qwen3.8-27B@1d4bf0f2…",
+]
+
+
+def test_a_tt_model_without_events_still_shows_its_own_steps():
+    """Until the contract lands upstream, tt-model's `--verbose` rows are all
+    there is — and one motionless row for the ten minutes a 50 GB bundle takes
+    is not good enough. Its prose becomes rows; its prose that is not a step
+    (notes, the arrow hint, docker's own output) does not."""
+    shown, prepare = replay_events(_TT_MODEL_VERBOSE)
+    assert "✓ docker load tt-model/qwen3.8-27b-p150x4:4233a70b5f90" in shown
+    assert "✓ pulled tt-hous/qwen3.8-27b-p150x4" in shown
+    # The last step is still running, so it stays the live row.
+    assert "weights Qwen/Qwen3.8-27B@1d4bf0f2" in shown
+    assert "next:" not in shown
+    assert "Loaded image:" not in shown
+    # tt times its own rows; showing tt-model's duration too reads as two clocks.
+    assert "57.9s" not in shown
+
+
+def test_events_win_over_prose_when_both_arrive():
+    """A tt-model that speaks the contract may still print its own rows; reading
+    both would draw every step twice."""
+    shown, _ = replay_events([
+        '{"event":"step","key":"image","state":"done"}',
+        "✓ docker load tt-model/qwen3:abc  1.2s",
+    ])
+    assert "image ready" in shown
+    assert "docker load" not in shown
+
+
+# -- finding the container a bundle left behind ---------------------------------------
+_LABELS = "org.tenstorrent.tt-model"
+
+
+def _docker_ps(rows):
+    """A Runner whose `docker ps -a` returns these (id, name-label, repo-label)."""
+    body = "".join(f"{i}\t{n}\t{r}\n" for i, n, r in rows)
+    return Runner(spawn=lambda *a, **k: subprocess.CompletedProcess(a[0], 0, body, ""))
+
+
+def test_a_bundle_is_found_by_name_not_by_the_namespace_it_was_pulled_from():
+    """The repo label records the bundle's canonical home, so one pulled from a
+    fork or a personal namespace carries the original — filtering on the
+    requested id found nothing and the whole boot went unwatched."""
+    runner = _docker_ps([
+        ("73b96ef78488", "devstral-small-2-24b-instruct-2512",
+         "tenstorrent/devstral-small-2-24b-instruct-2512"),
+    ])
+    for asked in ("anirud/devstral-small-2-24b-instruct-2512",
+                  "tenstorrent/devstral-small-2-24b-instruct-2512"):
+        prepare = ModelManagerPreparation(asked)
+        assert prepare.resolve_container(runner, "docker") == "73b96ef78488"
+
+
+def test_another_bundles_container_is_not_mistaken_for_ours():
+    prepare = ModelManagerPreparation("ns/qwen3-a3b")
+    runner = _docker_ps([("aaa", "devstral-small-2-24b", "tenstorrent/devstral-small-2-24b")])
+    assert prepare.resolve_container(runner, "docker") is None
+
+
+def test_an_event_named_container_beats_asking_docker():
+    prepare = ModelManagerPreparation("ns/bundle")
+    prepare.feed('{"event":"container","id":"named-by-the-backend"}')
+    runner = _docker_ps([("aaa", "bundle", "ns/bundle")])
+    assert prepare.resolve_container(runner, "docker") == "named-by-the-backend"
+
+
+@pytest.mark.parametrize(
+    "engine, vllm",
+    [
+        ("vLLM", True),            # tt-inference-server's spec
+        ("vllm-plugin", True),     # a tt-model bundle manifest
+        ("vllm-fork", True),       # …and what it used to say
+        ("tt-dit-server", False),  # a diffusion bundle
+        ("media", False),
+        ("forge", False),
+    ],
+)
+def test_every_spelling_of_the_vllm_stack_picks_the_vllm_template(engine, vllm):
+    """Both backends boot the same engine and spell it differently; matching on
+    equality classified every bundle as media and read its log with the wrong
+    phases."""
+    from tenstorrent.progress import VLLM_PHASES
+
+    assert (phases_for([engine]) is VLLM_PHASES) is vllm
+
+
+def test_a_note_is_not_mistaken_for_a_skipped_step():
+    """Captured from a real bundle serve. tt-model marks a skipped step with ○
+    and writes ordinary notes with the same marker, so a ○ row cannot be told
+    from prose — and a note drawn as a step is worse than a step not drawn."""
+    shown, prepare = replay_events([
+        "  ↻ image tt-model/depth-anything-3-p150:88d067be2a39 is missing from docker",
+        "  (deleted or pruned); re-pulling it from changh95/depth-anything-3-p150",
+        "  ○ tt-model/depth-anything-3-p150:88d067be2a39 is loaded but is a different",
+        "  image than this package records (6bc03e655b0d vs 88d067be2a39) — reloading",
+        "docker load tt-model/depth-anything-3-p150:88d067be2a39…",
+        "✓ docker load tt-model/depth-anything-3-p150:88d067be2a39  34s",
+    ])
+    assert [row.strip() for row in shown.splitlines() if row.strip()] == [
+        "✓ docker load tt-model/depth-anything-3-p150:88d067be2a39"
+    ]
+    assert "is loaded but is a different" in " ".join(prepare.evidence())

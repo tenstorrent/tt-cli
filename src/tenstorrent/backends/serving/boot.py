@@ -1,17 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""Watching a tt-inference-server model serve.
+"""Watching a serve go from the command to ready, whichever backend is serving.
 
-The boot happens in two places at once, so both are read at once. run.py does
-the host work on its own stdout — validation, `docker pull`, `hf download`, the
-container launch — while the container's own boot goes to a separate log file
-whose path run.py prints as it starts it. One loop therefore drains run.py's
-pipe and tails that file together, feeding the host phase template and then the
-container one, until `GET /v1/models` answers.
+A serve has two halves and they are owned by different things. The backend
+prepares — bundle, image, weights — and starts a container; the *engine* then
+boots inside it, which is usually ~95% of the wall clock. Only the first half
+differs between tt-inference-server and tt-model, so only the first half is
+delegated: a `Preparation` (see preparation.py) reports its own rows and names
+the container it started, and from that point this module reads the container's
+own log and classifies it with one tracker. Both paths therefore render from
+the same code over the same bytes, which is what makes them identical rather
+than merely similar. See `docs/serve-progress-contract.md`.
 
-Every raw line, from both stages, is teed to one file under tt's own logs
-directory — the checklist replaces the wall of output on screen.
+Every raw line, from both halves, is teed to one file under tt's own logs
+directory.
 """
 
 from __future__ import annotations
@@ -29,8 +32,9 @@ from typing import Callable, Sequence
 from ...errors import ExitCode, TTError
 from ...launchers import discovery
 from ...output import OutputManager
-from ...progress import HOST_PHASES, Checklist, PhaseTracker, phases_for
+from ...progress import Checklist, PhaseTracker, WeightsProgress, format_bytes, phases_for
 from ...tools.runner import LineSplitter, Runner
+from .preparation import Preparation
 
 #: A cold boot JIT-compiles kernels and can genuinely take the best part of an
 #: hour on a large model; the wait is bounded so a hung device still ends.
@@ -44,15 +48,16 @@ _CHUNK = 8192
 #: Bounds one pass's read of the container log, so a burst of output cannot
 #: starve the health probe while still draining far faster than a boot writes.
 _MAX_CHUNKS_PER_PASS = 64
+#: How often to ask docker whether a named-but-not-yet-created container exists.
+_EXISTS_INTERVAL_S = 1.0
+#: How often to re-measure the weights cache. It walks a directory, and a
+#: download worth watching lasts minutes.
+_WEIGH_INTERVAL_S = 1.5
 #: After the endpoint answers, how long to let run.py notice that for itself and
 #: exit. It polls the same endpoint, so this is a formality — but returning
 #: while it is mid-write would break its pipe for no reason.
 _EXIT_GRACE_S = 20.0
 
-# run.py's hand-off lines. Without the log path there are no container rows to show — the serve still works, and the wait falls
-# back to polling the endpoint.
-_DOCKER_LOG_RE = re.compile(r"docker container with log file:\s*(\S+)")
-_CONTAINER_ID_RE = re.compile(r"Created Docker container ID:\s*(\S+)")
 @dataclass(frozen=True)
 class BootResult:
     """The outcome of one watched serve. `ready` is False only when tt could not
@@ -63,6 +68,12 @@ class BootResult:
     container: str | None
     raw_log: Path
     elapsed: float
+
+
+def endpoint_for(prepare: Preparation, port: int) -> str:
+    """Where to look for the server: what the container published, if the
+    backend chose the port itself, else the one we asked for."""
+    return f"http://127.0.0.1:{prepare.endpoint_port or port}/v1"
 
 
 def ready_timeout_s() -> int:
@@ -93,15 +104,18 @@ def watch_serve(
     *,
     runner: Runner,
     output: OutputManager,
+    prepare: Preparation,
     argv: Sequence[str],
     env: dict[str, str],
-    cwd: str,
+    cwd: str | None,
     tool: str,
     model_name: str,
     engines: Sequence[str],
     port: int,
     raw_log: Path,
     runtime: str,
+    weights_cache: Path | None = None,
+    hf_token: str | None = None,
 ) -> BootResult:
     """Run the serve, render it as a checklist, and wait for the server.
 
@@ -112,158 +126,238 @@ def watch_serve(
     raw_log.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     deadline = started + ready_timeout_s()
-    base_url = f"http://127.0.0.1:{port}/v1"
-    host = PhaseTracker(HOST_PHASES)
-    container = PhaseTracker(phases_for(engines))
-    handoff: dict[str, str] = {}
+    # Built at the handover, not here: a backend may only work out which stack
+    # it is launching while it prepares (a bundle's manifest arrives with it).
+    trackers: dict[str, PhaseTracker] = {}
 
     with raw_log.open("w", buffering=1) as sink, Checklist(output) as view:
         def keep(line: str) -> None:
-            """Every line, from both sources: to the tee'd file always, and to
+            """Every line, from both halves: to the tee'd file always, and to
             the screen under --verbose, where the checklist prints plainly and
             the two interleave in the order things happened."""
             sink.write(line + "\n")
             output.raw(line)
 
-        view.begin("starting tt-inference-server", placeholder=True)
+        view.begin(prepare.label, placeholder=True)
         proc = runner.popen_piped(argv, env=env, cwd=cwd, tool=tool)
         outcome = _watch(
-            view, host, container, keep,
-            proc=proc, handoff=handoff, base_url=base_url,
-            runner=runner, runtime=runtime, deadline=deadline,
+            view, prepare, trackers, engines, keep,
+            proc=proc, port=port, runner=runner, runtime=runtime, deadline=deadline,
+            weights=WeightsProgress(weights_cache, token=hf_token) if weights_cache else None,
         )
+        base_url = endpoint_for(prepare, port)
+        container = trackers.get("container")
         if outcome == "ready":
-            _apply(view, container.finish() if handoff else host.finish())
-            # The one row the endpoint proves rather than the log: /v1/models
+            _apply(view, container.finish() if container else prepare.finish())
+            # The one row the endpoint proves rather than a log: /v1/models
             # answered, which is what makes `tt launch` work straight after.
             view.instant("endpoint answering")
         elif outcome == "no-container":
-            # run.py named neither the container log nor its id. Either it
-            # started nothing, or upstream reworded both lines — so there is
-            # nothing to tail and nothing we can honestly claim about
-            # readiness. The serve itself is unaffected.
+            # The backend named no container. Either it started none, or it
+            # says so in a way we no longer recognise — so there is nothing to
+            # follow and nothing we can honestly claim about readiness. The
+            # serve itself is unaffected.
             view.note("no container to follow — see the raw output")
-            return BootResult(False, base_url, None, raw_log, time.monotonic() - started)
+            return BootResult(
+                False, endpoint_for(prepare, port), None, raw_log,
+                time.monotonic() - started,
+            )
         else:
             view.fail()
             raise _boot_error(
                 model_name,
-                container if handoff else host,
+                container or prepare,
                 raw_log=raw_log,
                 exited=outcome != "timeout",
                 deadline_s=int(deadline - started),
                 verbose=output.verbose,
+                diagnosis=getattr(prepare, "diagnosis", None),
             )
 
-    return BootResult(True, base_url, handoff.get("id"), raw_log, time.monotonic() - started)
+    return BootResult(
+        True, base_url, prepare.container, raw_log, time.monotonic() - started
+    )
 
 
 # -- the watch loop ---------------------------------------------------------------------
 def _watch(
     view: Checklist,
-    host: PhaseTracker,
-    container: PhaseTracker,
+    prepare: Preparation,
+    trackers: dict[str, PhaseTracker],
+    engines: Sequence[str],
     keep: Callable[[str], None],
     *,
     proc: subprocess.Popen,
-    handoff: dict[str, str],
-    base_url: str,
+    port: int,
     runner: Runner,
     runtime: str,
     deadline: float,
+    weights: WeightsProgress | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> str:
-    """Drain run.py and the container log together until one of them settles it.
+    """Drain the backend and the container's log together until one settles it.
 
     Returns "ready", "timeout", "no-container" or "failed". The endpoint is the
-    authority on ready — the logs only decide which row is active — and run.py's
-    own exit status is the authority on failure, since it is the one that
-    retries a boot and tears the container down.
+    authority on ready — the logs only decide which row is active — and the
+    container going away is the authority on failure.
     """
     selector = selectors.DefaultSelector()
     selector.register(proc.stdout, selectors.EVENT_READ)
-    liveness = _Liveness(runner, runtime)
-    pipe = LineSplitter()
+    backend = LineSplitter()
     tail = LineSplitter()
-    state: dict[str, object] = {"handle": None}
+    state: dict[str, object] = {
+        "logs": None, "gone": False, "next_look": 0.0, "next_weigh": 0.0,
+    }
 
-    def pump_pipe(chunk: bytes) -> None:
-        """run.py's own output. It drives the host rows until the container log
-        takes over, and after that is kept only for the tail a failure quotes —
-        its readiness polling is not a boot step."""
-        for line in pipe.feed(chunk):
+    def pump_backend(chunk: bytes) -> None:
+        """The backend's own output. It drives the preparation rows until the
+        container log takes over, and after that is kept only for the tail a
+        failure quotes — a backend still polling /health is not a boot step."""
+        for line in backend.feed(chunk):
             keep(line)
-            _note_handoff(line, handoff)
-            events = host.feed(line)
-            if state["handle"] is None:
+            events = prepare.feed(line)
+            if state["logs"] is None:
                 _apply(view, events)
 
-    def open_log() -> None:
-        """Hand the checklist over to the container's own log, once it exists."""
-        if state["handle"] is not None or "log" not in handoff:
-            return
-        path = Path(handoff["log"])
-        if path.is_file():
-            _apply(view, host.finish())
-            view.begin("waiting for the model server", placeholder=True)
-            state["handle"] = path.open("rb")
+    def follow_container() -> None:
+        """Hand the checklist over to the container's own log, once there is one.
 
-    def pump_log() -> bool:
-        """The container's log, in bounded steps so a burst of it cannot starve
-        the health probe. True while there may be more to read."""
-        handle = state["handle"]
-        if handle is None:
-            return False
+        Existence is checked first because a backend can name the container
+        before it has created one: run.py echoes the whole `docker run` command,
+        `--name` and all, and only then executes it. Following too early gets
+        "No such container", which reads as a container that has already died.
+        """
+        # `gone` as well as `logs`: once the stream has ended, following again
+        # would replay the whole boot and walk the checklist through it twice.
+        if state["logs"] is not None or state["gone"] or prepare.container is None:
+            return
+        now = time.monotonic()
+        if now < state["next_look"]:
+            return
+        state["next_look"] = now + _EXISTS_INTERVAL_S
+        exists = runner.capture(
+            [runtime, "inspect", "--format", "{{.Id}}", str(prepare.container)],
+            tool=runtime, check=False,
+        )
+        if exists.returncode != 0:
+            return
+        _apply(view, prepare.finish())
+        trackers["container"] = PhaseTracker(phases_for(prepare.engines() or engines))
+        view.begin("waiting for the model server", placeholder=True)
+        try:
+            logs = runner.popen_piped(
+                [runtime, "logs", "--follow", prepare.container], tool=runtime
+            )
+        except TTError:  # no runtime, or it will not start — probe only
+            state["gone"] = True
+            return
+        state["logs"] = logs
+        selector.register(logs.stdout, selectors.EVENT_READ)
+
+    def read_logs(stream) -> None:
+        """One bounded read of the container's log, only when it has something.
+
+        Never called speculatively: this is a pipe, so `read1` blocks until a
+        byte arrives, and a container that has finished booting and gone quiet
+        would hang the loop exactly when the health probe matters most.
+        """
         for _ in range(_MAX_CHUNKS_PER_PASS):
-            chunk = handle.read1(_CHUNK)
+            chunk = stream.read1(_CHUNK)
             if not chunk:
-                return False
+                # `docker logs --follow` ends when the container does, and
+                # `docker run --rm` means a crashed boot is removed rather than
+                # left exited — so this, not an inspect, is how we learn.
+                state["gone"] = True
+                selector.unregister(stream)
+                stream.close()
+                state["logs"] = None
+                return
             for line in tail.feed(chunk):
                 keep(line)
-                _apply(view, container.feed(line))
-        return True
+                _apply(view, trackers["container"].feed(line))
+            if len(chunk) < _CHUNK:
+                return  # drained for now; let the loop breathe
+
+    def show_weights() -> None:
+        """Measure the weights download, since neither backend reports it.
+
+        Rate-limited because it walks a directory; the row it writes to is
+        whichever step the backend said was fetching, so it stops as soon as
+        that step does.
+        """
+        if weights is None:
+            return
+        weights.track(prepare.weights_repo)
+        now = time.monotonic()
+        if prepare.weights_repo is None or now < state["next_weigh"]:
+            return
+        state["next_weigh"] = now + _WEIGH_INTERVAL_S
+        sample = weights.sample()
+        if sample is None:
+            return
+        done, total = sample
+        if total > 0:
+            view.progress(done, total, is_bytes=True)
+        elif done:
+            # No total from the Hub: say what has landed rather than guess at a
+            # percentage of something we do not know.
+            view.detail(format_bytes(done))
 
     def drain() -> None:
-        """Read out everything the tool said on its way out, before judging it.
-
-        Only once it has exited, where reading to EOF cannot block. Deciding
-        first and reading afterwards loses the container id — run.py prints it
-        last of all — and truncates the saved log at whatever we happened to
-        have seen.
-        """
+        """Read out everything the backend said on its way out, before judging
+        it. Deciding first and reading afterwards loses the container it names
+        last of all, and truncates the saved log at whatever we had seen."""
         while True:
             chunk = proc.stdout.read1(_CHUNK)
             if not chunk:
                 break
-            pump_pipe(chunk)
-        for line in pipe.flush():
+            pump_backend(chunk)
+        for line in backend.flush():
             keep(line)
-            _note_handoff(line, handoff)
-            host.feed(line)
-        open_log()
-        while pump_log():
-            pass
+            prepare.feed(line)
+        if prepare.container is None:
+            prepare.resolve_container(runner, runtime)
+        follow_container()
 
     def finish(outcome: str) -> str:
+        # Whatever the container has already written and we have not read: the
+        # endpoint answering must not cut the saved log short, and a bounded
+        # non-blocking sweep cannot hang on a container that is still talking.
+        for _ in range(_MAX_CHUNKS_PER_PASS):
+            ready = [
+                key for key, _ in selector.select(timeout=0)
+                if key.fileobj is not proc.stdout
+            ]
+            if not ready:
+                break
+            for key in ready:
+                read_logs(key.fileobj)
+        container = trackers.get("container")
         for line in tail.flush():
             keep(line)
-            _apply(view, container.feed(line))
+            if container is not None:
+                _apply(view, container.feed(line))
         return outcome
 
     drained = False
     ready_at: float | None = None
-    next_probe = next_liveness = 0.0
+    next_probe = 0.0
     try:
         while True:
-            if not drained:
-                for _ in selector.select(timeout=_TAIL_POLL_S):
+            # One select for both: the backend's pipe and the container's log.
+            # It is also what paces the loop once neither has anything to say.
+            for key, _ in selector.select(timeout=_TAIL_POLL_S):
+                if key.fileobj is proc.stdout:
                     chunk = proc.stdout.read1(_CHUNK)
                     if not chunk:
                         selector.unregister(proc.stdout)
-                        break
-                    pump_pipe(chunk)
-            open_log()
-            busy = pump_log()
+                        continue
+                    pump_backend(chunk)
+                else:
+                    read_logs(key.fileobj)
+
+            follow_container()
+            show_weights()
 
             if proc.poll() is not None and not drained:
                 drain()
@@ -273,43 +367,31 @@ def _watch(
             # Not before the container is ours to talk about: something already
             # listening on the port would otherwise be reported as this serve,
             # ready in milliseconds, with no container to name.
-            if ready_at is None and (handoff or drained) and now >= next_probe:
+            if ready_at is None and (prepare.container or drained) and now >= next_probe:
                 next_probe = now + _PROBE_INTERVAL_S
-                if discovery.probe(base_url, timeout_s=_PROBE_TIMEOUT_S):
-                    # Not returned yet unless run.py is done: it polls the same
-                    # endpoint and is about to exit on its own, and cutting its
-                    # pipe mid-write would break a serve that has succeeded.
+                if discovery.probe(endpoint_for(prepare, port), timeout_s=_PROBE_TIMEOUT_S):
+                    # Not returned yet unless the backend is done: it may poll
+                    # the same endpoint and be about to exit on its own, and
+                    # cutting its pipe mid-write would break a serve that has
+                    # already succeeded.
                     ready_at = now
             if ready_at is not None and (drained or now - ready_at > _EXIT_GRACE_S):
                 return finish("ready")
             if drained and proc.returncode != 0:
                 return finish("failed")
-            if drained and not handoff:
+            if drained and prepare.container is None:
                 return finish("no-container")
-            if state["handle"] is not None and now >= next_liveness:
-                next_liveness = now + _LIVENESS_INTERVAL_S
-                if not liveness.alive(handoff.get("id")):
-                    return finish("failed")
+            if state["gone"] and ready_at is None:
+                return finish("failed")
             if now >= deadline:
                 return finish("timeout")
-            if drained and not busy:
-                # Nothing left to block on: the pipe is closed and the log is
-                # caught up, so this is the only thing pacing the loop.
-                sleep(_TAIL_POLL_S)
     finally:
         selector.close()
-        handle = state["handle"]
-        if handle is not None:
-            handle.close()
+        logs = state["logs"]
+        if logs is not None:
+            _release(logs)
+            logs.terminate()
         _release(proc)
-
-
-def _note_handoff(line: str, handoff: dict[str, str]) -> None:
-    """Pick the container's log path and id out of run.py's output, once each."""
-    for pattern, key in ((_DOCKER_LOG_RE, "log"), (_CONTAINER_ID_RE, "id")):
-        match = pattern.search(line)
-        if match and key not in handoff:
-            handoff[key] = match.group(1)
 
 
 def _release(proc: subprocess.Popen) -> None:
@@ -322,35 +404,6 @@ def _release(proc: subprocess.Popen) -> None:
     if proc.stdout is not None:
         proc.stdout.close()
     proc.poll()
-
-
-class _Liveness:
-    """Whether the container we started is still up.
-
-    `docker run --rm` removes a container the instant it exits, so once ours has
-    been seen alive, an inspect that can no longer find it *is* the answer — the
-    earlier reading of "cannot ask, so assume yes" left a crashed boot being
-    waited on for the full hour. Before that first sighting the benefit of the
-    doubt still goes to the boot: a docker hiccup must not abort a healthy one.
-    """
-
-    def __init__(self, runner: Runner, runtime: str) -> None:
-        self._runner = runner
-        self._runtime = runtime
-        self._seen = False
-
-    def alive(self, container_id: str | None) -> bool:
-        if not container_id:
-            return True
-        result = self._runner.capture(
-            [self._runtime, "inspect", "--format", "{{.State.Running}}", container_id],
-            tool=self._runtime, check=False,
-        )
-        if result.returncode != 0:
-            return not self._seen
-        running = result.stdout.strip() == "true"
-        self._seen = self._seen or running
-        return running
 
 
 def _apply(view: Checklist, events) -> None:
@@ -367,6 +420,7 @@ def _apply(view: Checklist, events) -> None:
 
 # -- failure ---------------------------------------------------------------------------
 _HELD_RE = re.compile(r"Sysmem mapped at unexpected NOC address|CHIP_IN_USE|stale process holding")
+_FLAG_RE = re.compile(r"unrecognized arguments|error: argument|no such option")
 _RESET_RE = re.compile(
     r"Try resetting the board|Timed out while waiting for active ethernet core"
 )
@@ -374,13 +428,14 @@ _RESET_RE = re.compile(
 
 def _boot_error(
     model_name: str,
-    tracker: PhaseTracker,
+    evidence_from,
     *,
     raw_log: Path,
     exited: bool,
     deadline_s: int,
     cause: TTError | None = None,
     verbose: bool = False,
+    diagnosis: dict | None = None,
 ) -> TTError:
     """Say why the serve did not reach ready, quoting the line that explains it.
 
@@ -388,10 +443,20 @@ def _boot_error(
     error, and the one line worth reading has usually scrolled past hundreds of
     traceback lines by the time the container exits.
     """
-    evidence = tracker.evidence()
+    evidence = list(evidence_from.evidence())
     joined = "\n".join(evidence)
     # No "see the log" in next_step: the error panel prints details["log_path"]
     # under every error, and saying it twice reads as noise.
+    if diagnosis:
+        # The backend worked out why itself; it knows things we do not.
+        return TTError(
+            f"{model_name} could not start: "
+            f"{_text(diagnosis.get('cause')) or 'the boot failed'}.",
+            why=_text(diagnosis.get("detail")) or _text(diagnosis.get("evidence")) or None,
+            next_step="  ".join(str(a) for a in diagnosis.get("actions") or ()) or None,
+            exit_code=ExitCode.TOOL_FAILED,
+            details={"log_path": str(raw_log)},
+        )
     if _HELD_RE.search(joined):
         return TTError(
             f"{model_name} could not start: the Tenstorrent device is already in use.",
@@ -400,6 +465,16 @@ def _boot_error(
             next_step="`tt model ps` to see what is running, `tt model stop <model>` "
             "to free the card, then re-run.",
             exit_code=ExitCode.TOOL_FAILED,
+            details={"log_path": str(raw_log)},
+        )
+    if _FLAG_RE.search(joined):
+        return TTError(
+            f"{model_name} could not start: the engine rejected one of the arguments.",
+            why="Everything `tt serve` does not recognise is forwarded to the "
+            "engine, and it refused one of them.",
+            next_step="Drop it, or check `tt serve --help` for the flag you meant — "
+            "tt's own options must come before the model name.",
+            exit_code=ExitCode.USAGE,
             details={"log_path": str(raw_log)},
         )
     if _RESET_RE.search(joined):
@@ -455,3 +530,7 @@ def _last_meaningful(evidence: Sequence[str]) -> str | None:
         if not line.startswith(_NOISE_PREFIXES) and "Traceback" not in line:
             return line[:300]
     return None
+
+
+def _text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""

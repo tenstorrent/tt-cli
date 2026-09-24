@@ -1,0 +1,11 @@
+{"event":"step","key":"bundle","state":"start","label":"resolving the bundle"}
+{"event":"step","key":"bundle","state":"done","label":"bundle resolved","detail":"qwen3-coder-30b-a3b @ p300x2"}
+{"event":"step","key":"host","state":"done","detail":"docker 28.1 · hugepages"}
+{"event":"step","key":"weights","state":"start"}
+{"event":"progress","done":3221225472,"total":16000000000,"unit":"bytes"}
+{"event":"progress","done":16000000000,"total":16000000000,"unit":"bytes"}
+{"event":"step","key":"weights","state":"done"}
+{"event":"step","key":"image","state":"done","detail":"ghcr.io/tenstorrent/tt-model/qwen3:0.5.1"}
+{"event":"step","key":"container","state":"start"}
+{"event":"container","id":"tt-model-qwen3-coder-30b-a3b-p300x2","endpoint":"http://127.0.0.1:20000/v1"}
+{"event":"step","key":"container","state":"done"}

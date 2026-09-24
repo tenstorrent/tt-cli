@@ -24,12 +24,19 @@ from pathlib import Path
 from ...config.store import ConfigStore
 from ...errors import ExitCode, TTError
 from ...modelhub import bundles
-from ...modelhub.hub import hf_home_dir
+from ...modelhub.hub import hf_home_dir, hf_token
 from ...output import OutputManager
+from ...progress import ready_panel
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
+from . import boot
+from .preparation import ModelManagerPreparation
 
 TOOL = "tt-model"  # the distribution, the command, and the manifest key
+# tt-model's own default. Left to itself it walks up past busy ports, so this is
+# only where tt starts looking; the container says where it actually listens
+# (ModelManagerPreparation.resolve_container).
+DEFAULT_PORT = 20000
 # tt-model-manager's own container label (container.py: LABEL); every container
 # it starts carries it, and always under docker, never podman.
 _LABEL = "org.tenstorrent.tt-model"
@@ -70,7 +77,21 @@ class ModelManagerBackend:
         configured paths.hf_model_cache_directory has to reach teardown too, or tt
         would delete from the default cache and orphan the real weights.
         """
-        return {**os.environ, "HF_HOME": str(hf_home_dir(self.config))}
+        return {
+            **os.environ,
+            "HF_HOME": str(hf_home_dir(self.config)),
+            # Asked for, not required: a tt-model that predates it prints its
+            # own checklist instead and tt shows one row for the whole
+            # preparation (docs/serve-progress-contract.md). An env var rather
+            # than a flag because `tt-model serve` forwards anything it does not
+            # claim to vLLM, so an unknown flag would reach the engine.
+            "TT_MODEL_PROGRESS": "ndjson",
+            # Its output is ours to render; its own view would fight the pipe.
+            "TT_MODEL_NO_PIN": "1",
+            # As for run.py: a piped Python block-buffers its stdout, so a step
+            # that takes minutes would not be seen to start until it ended.
+            "PYTHONUNBUFFERED": "1",
+        }
 
     def serve(
         self,
@@ -94,14 +115,100 @@ class ModelManagerBackend:
             repo_id, offline=offline, port=port, serve_flags=serve_flags,
             extra_args=extra_args, entry=Path(entry),
         )
-        # Passthrough, not a piped stream: tt-model draws its own boot checklist
-        # on the terminal it inherits — image, weight bytes, device, KV cache,
-        # warmup — and capturing that to re-render it here would only replace a
-        # live view with a worse copy of it. All tt adds is the same one-line
-        # pointer to the raw output that the catalog path prints.
+        if not self._watched(serve_flags):
+            # The user asked tt-model not to wait (--detach) or not to start
+            # anything (--print): there is no boot for tt to watch, so this is a
+            # plain passthrough and tt-model's own output is the answer.
+            return self.runner.stream(argv, env=self._env(), tool=TOOL)
+        raw_log = boot.raw_log_path(self.config.paths.logs_dir, repo_id.replace("/", "--"))
         self.output.status(f"Serving {repo_id} via tt-model.")
-        self.output.status(f"Raw output: tt model logs {repo_id} --follow", style="dim")
-        return self.runner.stream(argv, env=self._env(), tool=TOOL)
+        self.output.status(f"Raw output: tail -f {raw_log}", style="dim", soft_wrap=True)
+        prepare = ModelManagerPreparation(repo_id)
+        try:
+            result = boot.watch_serve(
+                runner=self.runner,
+                output=self.output,
+                prepare=prepare,
+                argv=argv,
+                env=self._env(),
+                cwd=None,
+                tool=TOOL,
+                model_name=repo_id,
+                engines=[self._engine(repo_id)],
+                port=port or DEFAULT_PORT,
+                raw_log=raw_log,
+                weights_cache=hf_home_dir(self.config),
+                hf_token=hf_token(),
+                runtime=self._docker(),
+            )
+        except KeyboardInterrupt:
+            self.output.status(
+                f"Stopped watching — {repo_id} is still starting. "
+                f"`tt model logs {repo_id} --follow` to follow it, "
+                f"`tt model stop {repo_id}` to stop it."
+            )
+            return 0
+        if not result.ready:
+            self.output.warn(
+                f"tt could not follow {repo_id}'s boot; it may still be starting. "
+                "`tt model ps` shows what is up."
+            )
+            return 0
+        self.output.emit(
+            {
+                "model": repo_id,
+                "backend": "tt-model",
+                "endpoint": result.endpoint,
+                "container": result.container,
+                "log": str(result.raw_log),
+                "ready_seconds": round(result.elapsed, 1),
+            },
+            renderer=lambda data: ready_panel(
+                f"{data['model']} ready",
+                [
+                    ("endpoint", data["endpoint"]),
+                    ("models", f"curl {data['endpoint']}/models"),
+                    ("chat", "tt launch"),
+                ],
+                footer=f"tt model logs {data['model']} --follow"
+                f"   ·   tt model stop {data['model']}",
+            ),
+        )
+        return 0
+
+    @staticmethod
+    def _engine(repo_id: str) -> str:
+        """Which stack the bundle boots, for picking the container template.
+
+        Most bundles run the Tenstorrent vLLM plugin — the same stack the
+        catalog's vLLM models boot, so the same phases read their log — but a
+        `tt-dit-server` one is a diffusion pipeline and looks nothing like it.
+        An unpulled bundle has no manifest to ask; vLLM is the common case and
+        a template that does not match costs rows, not correctness.
+        """
+        details = bundles.serve_details(repo_id) or {}
+        return details.get("engine") or "vLLM"
+
+    def _docker(self) -> str:
+        """tt-model only ever uses docker (container.py), never podman."""
+        found = shutil.which("docker")
+        if found is None:
+            raise TTError(
+                "No container runtime found.",
+                why="tt-model serves bundles as docker containers.",
+                next_step="Install docker — e.g. https://docs.docker.com/engine/install/",
+                exit_code=ExitCode.TOOL_MISSING,
+                reason="tool.missing.docker",
+                details={"tool": "docker"},
+            )
+        return found
+
+    @staticmethod
+    def _watched(serve_flags: list[str] | None) -> bool:
+        """Whether tt watches this serve to ready. Not when the user asked
+        tt-model to detach or only to print its command: either way no boot
+        follows that tt could honestly report on."""
+        return not {"--detach", "--print"} & set(serve_flags or ())
 
     def _argv(
         self,
@@ -116,7 +223,19 @@ class ModelManagerBackend:
         """The tt-model command line. `entry` is None for a dry run, which must not
         install the tool just to describe what it would run."""
         argv = [str(entry)] if entry else ["<tt-model>"]
+        watched = self._watched(serve_flags)
+        if watched:
+            # --verbose before the subcommand: it is a global option, so it is
+            # not swept into serve's passthrough to vLLM, and it stops tt-model
+            # capturing each step's output into a buffer it then discards —
+            # which is the only way its steps are visible through a pipe at all.
+            argv.append("--verbose")
         argv += ["serve", repo_id]
+        if watched:
+            # tt watches the boot itself, from the container's own log; tt-model
+            # waiting too would mean two processes on one boot (and, on a
+            # failure, two deciding to tear it down).
+            argv.append("--detach")
         if offline:
             # tt-model would otherwise pull the bundle from the Hub.
             argv.append("--local-only")

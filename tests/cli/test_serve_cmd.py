@@ -29,6 +29,19 @@ def empty_hf_cache(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def nothing_is_serving(monkeypatch):
+    """No health probe reaches the machine running the tests.
+
+    `tt serve` waits for `GET /v1/models` on the port it asked for, so without
+    this a real server on 20000 — another test box, or a model someone left
+    up — makes a failing serve look like a successful one.
+    """
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.boot.discovery.probe", lambda url, timeout_s=0: None
+    )
+
+
+@pytest.fixture(autouse=True)
 def hf_token_present(monkeypatch):
     """The ordinary case: the machine has a Hugging Face login.
 
@@ -308,19 +321,36 @@ def test_serve_falls_back_to_tt_model_for_a_bundle_id(
     assert result.exit_code == 0, result.output
     assert "not in the model catalog" in result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "raahemnabeel/qwen3-coder-30b-a3b"]
+    assert record["argv"] == ["--verbose", "serve", "raahemnabeel/qwen3-coder-30b-a3b", "--detach"]
     assert record["hf_home"]  # HF_HOME exported for the child
 
 
 @pytest.mark.fakes_only
-def test_serve_points_a_bundle_at_its_logs_the_same_way(
+def test_serve_renders_a_bundle_the_same_way_as_a_catalog_model(
     runner, fake_model_manager, isolated_dirs
 ):
-    """tt-model draws its own boot checklist, so tt leaves it alone — but the
-    pointer to the raw output reads the same on both paths."""
+    """Same checklist, same raw-output pointer, same everything: tt renders
+    both backends, so this is the one assertion that keeps them together."""
     result = runner.invoke(app, ["serve", "ns/bundle"])
     assert result.exit_code == 0, result.output
-    assert "Raw output: tt model logs ns/bundle --follow" in result.output
+    assert "Raw output: tail -f" in result.output
+    logs = sorted((isolated_dirs / "data" / "logs").glob("serve-ns--bundle-*.log"))
+    assert logs, "the bundle's output was not teed"
+
+
+@pytest.mark.fakes_only
+def test_serve_asks_tt_model_for_events_and_not_to_watch_the_boot(
+    runner, fake_model_manager, isolated_dirs
+):
+    """--detach so only one process waits on the boot, and the env var (not a
+    flag — tt-model forwards unknown flags to vLLM) to ask for structured
+    steps. A tt-model that ignores the variable still works."""
+    result = runner.invoke(app, ["serve", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"][:2] == ["--verbose", "serve"]  # global opts precede it
+    assert "--detach" in record["argv"]
+    assert record.get("progress") == "ndjson"
 
 
 @pytest.mark.fakes_only
@@ -342,7 +372,7 @@ def test_serve_offline_makes_tt_model_use_the_local_bundle(
     result = runner.invoke(app, ["serve", "ns/bundle", "--offline"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--local-only"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--local-only"]
 
 
 def test_serve_unknown_name_that_is_not_a_bundle_id_is_usage(runner, isolated_dirs):
@@ -384,7 +414,7 @@ def test_serve_passes_unknown_flags_through_to_tt_model(
     )
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--port", "8080", "--follow"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--port", "8080", "--follow"]
 
 
 @pytest.mark.fakes_only
@@ -394,7 +424,7 @@ def test_serve_passthrough_works_without_the_separator(
     result = runner.invoke(app, ["serve", "ns/bundle", "--port", "8080"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--port", "8080"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--port", "8080"]
 
 
 @pytest.mark.fakes_only
@@ -404,7 +434,7 @@ def test_serve_offline_keeps_local_only_before_the_passthrough(
     result = runner.invoke(app, ["serve", "ns/bundle", "--offline", "--", "--port", "9"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--local-only", "--port", "9"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--local-only", "--port", "9"]
 
 
 def test_serve_rejects_passthrough_for_a_catalog_model(runner, isolated_dirs):
@@ -435,7 +465,7 @@ def test_serve_port_is_tt_models_own_flag_for_a_bundle(
     result = runner.invoke(app, ["serve", "ns/bundle", "--port", "8080"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--port", "8080"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--port", "8080"]
 
 
 @pytest.mark.fakes_only
@@ -449,7 +479,7 @@ def test_serve_passthrough_port_wins_over_the_tt_flag(
     )
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--port", "8080", "--port", "9999"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--port", "8080", "--port", "9999"]
 
 
 def test_serve_rejects_an_out_of_range_port(runner, isolated_dirs):
@@ -623,7 +653,7 @@ def test_serve_dry_run_for_a_bundle_does_not_install_tt_model(
     plan = json.loads(result.stdout)
     assert plan["backend"] == "tt-model"
     assert plan["installed"] is False
-    assert plan["argv"][:3] == ["<tt-model>", "serve", "acme/some-bundle"]
+    assert plan["argv"][:4] == ["<tt-model>", "--verbose", "serve", "acme/some-bundle"]
 
 
 def test_serve_dry_run_names_the_image_even_without_an_override(runner, fake_server):

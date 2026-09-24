@@ -197,13 +197,17 @@ def _detail_engine(line: str) -> Optional[str]:
     return f"vLLM {match.group(1)}" if match else None
 
 
+def _chips(count: str) -> str:
+    return f"{count} chip" + ("s" if count != "1" else "")
+
+
 def _detail_device(line: str) -> Optional[str]:
     match = re.search(r"multidevice with (\d+) devices? and grid \(([^)]*)\)", line)
     if match:
-        return f"{match.group(1)} chips · mesh ({match.group(2)})"
+        return f"{_chips(match.group(1))} · mesh ({match.group(2)})"
     match = re.search(r"Fabric initialized on (\d+) devices", line)
     if match:
-        return f"{match.group(1)} chips"
+        return _chips(match.group(1))
     return None
 
 
@@ -331,4 +335,7 @@ def phases_for(engines: Sequence[str]) -> tuple[Phase, ...]:
     vLLM containers boot vLLM directly; `media` and `forge` models run inside
     tt-media-server, which wraps the engine in a worker pool.
     """
-    return VLLM_PHASES if any(e.lower() == "vllm" for e in engines) else MEDIA_PHASES
+    # Substring, not equality: the same stack is called "vLLM" by
+    # tt-inference-server's spec and "vllm-plugin" (once "vllm-fork") by a
+    # tt-model bundle manifest.
+    return VLLM_PHASES if any("vllm" in e.lower() for e in engines) else MEDIA_PHASES

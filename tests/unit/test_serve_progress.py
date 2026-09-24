@@ -110,6 +110,23 @@ def test_cause_lines_survive_a_traceback_that_outruns_the_tail():
     assert "CHIP_IN_USE" in tracker.evidence()[0]
 
 
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        ("INFO worker.py:786] multidevice with 4 devices and grid (1, 4) is created",
+         "4 chips · mesh (1, 4)"),
+        ("INFO worker.py:786] multidevice with 1 devices and grid (1, 1) is created",
+         "1 chip · mesh (1, 1)"),
+        ("| Metal | Fabric initialized on 1 devices", "1 chip"),
+    ],
+)
+def test_one_chip_is_not_one_chips(line, expected):
+    tracker = PhaseTracker(VLLM_PHASES)
+    tracker.feed("2026-09-08 | info | Device | Opening user mode device driver")
+    tracker.feed(line)
+    assert tracker.detail_for("device") == expected
+
+
 def test_media_models_get_the_media_template():
     """Under tt-media-server, uvicorn is up seconds into the boot — reading its
     banner as "the API server started" would report ready minutes early."""

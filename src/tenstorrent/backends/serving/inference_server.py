@@ -30,6 +30,7 @@ from ...progress import ready_panel
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
 from . import boot
+from .preparation import RunPyPreparation
 
 TOOL = "tt-inference-server"
 WORKFLOWS = ("server", "benchmarks", "evals")
@@ -691,6 +692,7 @@ class InferenceServerBackend:
             result = boot.watch_serve(
                 runner=self.runner,
                 output=self.output,
+                prepare=RunPyPreparation(),
                 argv=argv,
                 env=env,
                 cwd=cwd,
@@ -699,6 +701,8 @@ class InferenceServerBackend:
                 engines=list(support.engines) if support else [],
                 port=port,
                 raw_log=raw_log,
+                weights_cache=hf_home_dir(self.config),
+                hf_token=hf_token(),
                 runtime=self.container_runtime(),
             )
         except KeyboardInterrupt:

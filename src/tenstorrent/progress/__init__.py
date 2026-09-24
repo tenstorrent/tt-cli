@@ -11,6 +11,7 @@ that touches a terminal. Backends drive them — see
 from .phases import HOST_PHASES, MEDIA_PHASES, VLLM_PHASES, Phase, phases_for
 from .tracker import Event, PhaseTracker
 from .view import Checklist, format_bytes, format_duration, ready_panel
+from .weights import WeightsProgress
 
 __all__ = [
     "Checklist",
@@ -20,6 +21,7 @@ __all__ = [
     "Phase",
     "PhaseTracker",
     "VLLM_PHASES",
+    "WeightsProgress",
     "format_bytes",
     "format_duration",
     "phases_for",
