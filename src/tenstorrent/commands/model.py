@@ -702,7 +702,10 @@ def logs_model(
     profile: str = typer.Option(
         None, "--profile", help="tt-model bundles: logs for this profile."
     ),
+    json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Show a served model's output.
 
@@ -711,7 +714,7 @@ def logs_model(
     tt-model bundle id passes through to `tt-model logs`.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     if appctx.output.json_mode:
         raise TTError(
             "`tt model logs` prints plain text, not JSON.",
@@ -1087,6 +1090,8 @@ def ps_models(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """List the model servers on this machine: name, backend, container, port, health, uptime.
 
@@ -1094,7 +1099,7 @@ def ps_models(
     TT-Studio model containers. Exits 0 with an empty list when nothing is served.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     runtime = InferenceServerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     ).container_runtime()
