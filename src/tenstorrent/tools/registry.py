@@ -107,6 +107,8 @@ class ToolRegistry:
                 f"Required tool {name!r} is not installed.",
                 next_step="Run `tt update` to install the latest Tenstorrent system software.",
                 exit_code=ExitCode.TOOL_MISSING,
+                # Manifest names are kebab-case; the slug grammar is snake_case.
+                reason=f"tool.missing.{name.replace('-', '_')}",
                 details={"tool": name},
             )
         return found[0]
@@ -142,12 +144,14 @@ class ToolRegistry:
                 why="The pinned golden.json has not been fetched yet.",
                 next_step="Run `tt update` once with network access.",
                 exit_code=ExitCode.CONFIG,
+                reason="tool.golden_unknown",
             )
         installer = self._installers.get(spec.kind)
         if installer is None:
             raise TTError(
                 f"Tool {spec.name} has unknown kind {spec.kind!r} in the manifest.",
                 exit_code=ExitCode.CONFIG,
+                reason="tool.unknown_kind",
             )
         result = installer.install(spec, offline=offline)
         self.state.record(spec.name, version=result.version, path=result.path)

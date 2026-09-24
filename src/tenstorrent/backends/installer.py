@@ -112,6 +112,7 @@ def _check_installer_floor(normalized: str) -> None:
         "and later. Older releases abort on the unrecognized option.",
         next_step=f"Pick {floor} or newer, or run that install.sh yourself.",
         exit_code=ExitCode.USAGE,
+        reason="installer.version_too_old",
     )
 
 
@@ -148,6 +149,7 @@ class InstallerBackend:
                 next_step="Run `tt update` once with network access, or point "
                 f"{GOLDEN_PATH_ENV} at a local golden.json.",
                 exit_code=ExitCode.OFFLINE,
+                reason="golden.offline_uncached",
             )
         with self.output.ui.step(f"Fetching golden versions ({tag})") as step:
             blob = fetch_https(url)
@@ -160,6 +162,7 @@ class InstallerBackend:
                         why=f"expected sha256 {manifest.golden_sha256}, got {digest}",
                         next_step="Re-run `tt update`; if it persists, report it.",
                         exit_code=ExitCode.TOOL_FAILED,
+                        reason="golden.checksum_mismatch",
                     )
             golden = parse_golden(blob.decode("utf-8", errors="replace"), url)
             golden_cache_write(self.paths, tag, golden)
@@ -263,6 +266,7 @@ class InstallerBackend:
                 f"Cannot fetch a specific {INSTALLER_TOOL} version.",
                 why="the manifest entry has no url_template with a {version} slot.",
                 exit_code=ExitCode.CONFIG,
+                reason="installer.no_url_template",
             )
         custom = dataclasses.replace(
             spec,
@@ -302,6 +306,7 @@ class InstallerBackend:
                 next_step="Update tt, or point TT_MANIFEST_PATH at a matching "
                 "supplement.",
                 exit_code=ExitCode.CONFIG,
+                reason="installer.golden_tag_mismatch",
             )
 
     def _run_system_installer(

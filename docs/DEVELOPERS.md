@@ -130,6 +130,14 @@ weights alone do not make a model servable.
 Telemetry has its own set of variables (`TT_TELEMETRY_*`, `DO_NOT_TRACK`) — see
 [TELEMETRY.md](../TELEMETRY.md).
 
+To see exactly what telemetry sends while developing, run `uv run scripts/posthog_sink.py`
+(a local stand-in for PostHog's `/batch/` endpoint that prints every event it receives)
+and paste the environment block it prints into the shell running `tt`. Keep
+`TT_TELEMETRY_FLUSH_MODE=sync` set there: on the shipping default nothing is uploaded
+until the local spool crosses its hand-off threshold, which reads as "telemetry is
+broken". `tt self send-telemetry` forces that upload if you want to watch the async path
+instead, and `TT_TELEMETRY_LOG_FILE=<path>` writes the same events locally with no sink.
+
 # Exit codes
 
 Exit codes are a documented contract:
@@ -146,6 +154,7 @@ Exit codes are a documented contract:
 | 7 | UNSUPPORTED | Stub / not implemented yet |
 | 8 | OFFLINE | Network needed but offline |
 | 9 | CONFIG | Invalid configuration |
+| 130 | INTERRUPTED | Stopped with Ctrl-C (shell convention: 128 + SIGINT) |
 
 # Terminal output
 

@@ -29,6 +29,7 @@ def _no_devices_error() -> TTError:
         why="The driver may not be installed, or no card is seated.",
         next_step="Run `tt update` to install the driver stack, then `tt device status` again.",
         exit_code=ExitCode.NO_DEVICES,
+        reason="device.none_detected",
     )
 
 

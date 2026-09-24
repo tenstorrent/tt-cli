@@ -28,7 +28,7 @@ class AppContext:
     offline: bool = False
     _extras: dict = field(default_factory=dict)
     # Run just before a command replaces this process (Runner.exec_tty). Anything
-    # relying on the command returning — the telemetry span, above all — has to be
+    # relying on the command returning — the telemetry event, above all — has to be
     # closed out here, or it dies with the process. @handle_tt_errors registers it.
     before_exec: list = field(default_factory=list)
 
