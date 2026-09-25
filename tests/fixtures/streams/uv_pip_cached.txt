@@ -1,0 +1,19 @@
+Using CPython 3.10.21
+Creating virtual environment at: capvenv
+Activate with: source capvenv/bin/activate
+Using Python 3.10.21 environment at: capvenv
+Resolved 13 packages in 27ms
+Installed 13 packages in 2ms
+ + anyio==4.15.1
+ + certifi==2026.7.22
+ + exceptiongroup==1.3.1
+ + h11==0.16.0
+ + httpcore==1.0.9
+ + httpx==0.28.1
+ + idna==3.19
+ + markdown-it-py==4.2.0
+ + mdurl==0.1.2
+ + packaging==26.3
+ + pygments==2.21.0
+ + rich==15.0.0
+ + typing-extensions==4.16.0

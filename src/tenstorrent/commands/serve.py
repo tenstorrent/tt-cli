@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 from enum import Enum
 
 import typer
@@ -27,7 +28,7 @@ from ..backends.serving.model_manager import (
     ModelManagerBackend,
     looks_like_bundle_id,
 )
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
@@ -40,28 +41,37 @@ class Workflow(str, Enum):
     evals = "evals"
 
 
+# Fixed roadmap for the tt-inference-server path. The bundle path hands straight
+# off to tt-model, which renders this design itself, so it declares no phases.
+PHASES = ["Checks", "Prepare"]
+
+
 def _autodetect_device(appctx) -> str | None:
     """Best-effort device config from our own tt-smi snapshot. run.py's built-in
     detection crashes on fresh checkouts (see backends/serving/inference_server.py), so serve
     passes --device explicitly whenever the host is confidently mappable."""
-    try:
-        snap = get_device_backend(appctx).snapshot()
-    except TTError as err:
-        appctx.output.warn(
-            f"device auto-detect skipped ({err.what}) — "
-            "pass --device if the server cannot infer it."
-        )
-        return None
-    device = infer_device_config(snap.devices)
+    ui = appctx.output.ui
+    with ui.step("Detecting device configuration") as step:
+        try:
+            snap = get_device_backend(appctx).snapshot()
+        except TTError as err:
+            step.skip("auto-detect unavailable")
+            appctx.output.warn(
+                f"device auto-detect skipped ({err.what}) — "
+                "pass --device if the server cannot infer it."
+            )
+            return None
+        device = infer_device_config(snap.devices)
+        if device is None:
+            step.skip("no mappable device")
+        else:
+            step.detail(f"{device} (override with --device)")
     if device is None:
         seen = ", ".join(sorted({d.board_type or "?" for d in snap.devices})) or "none"
+        # Actionable, so it is never folded, and it lands after the step collapses.
         appctx.output.warn(
             f"could not map detected boards ({seen}) to a device config — "
             "pass --device if the server cannot infer it."
-        )
-    else:
-        appctx.output.status(
-            f"Detected device configuration: {device} (override with --device)."
         )
     return device
 
@@ -104,6 +114,8 @@ def serve(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """[beta] Serve a model for inference via tt-inference-server, or via tt-model
     when the name is a bundle id the released spec does not cover.
@@ -112,7 +124,7 @@ def serve(
     its own flags and its vLLM passthrough: `tt serve ns/model -- --port 8080 --follow`.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     offline = offline or appctx.offline
     # Unrecognized options are collected rather than rejected (see the command's
     # context_settings) so tt-model's own flags — --port, --follow, --profile — and
@@ -151,15 +163,26 @@ def serve(
         )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
-    backend.preflight(entry)
-    backend.serve(
-        entry,
-        workflow=workflow.value,
-        device=device,
-        offline=offline,
-        port=port,
-        force=force,
-    )
+    # Two phases, not three: Checks and Prepare are the work tt owns. Once run.py
+    # takes the terminal its lifetime is not our phase to hold open — the stepper
+    # completes and the server's output takes over.
+    ui = appctx.output.ui
+    ui.register_phases(PHASES)
+    with ui.phase("Checks"):
+        with ui.step("Container runtime") as step:
+            backend.preflight(entry)
+            step.detail("docker" if shutil.which("docker") else "podman")
+    with ui.phase("Prepare"):
+        launch = backend.prepare(
+            entry,
+            workflow=workflow.value,
+            device=device,
+            offline=offline,
+            port=port,
+            force=force,
+        )
+    ui.final_stepper()
+    backend.launch(launch)
 
 
 def _plan_renderer(plan: dict) -> Group:

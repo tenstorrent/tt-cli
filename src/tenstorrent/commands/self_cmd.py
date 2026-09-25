@@ -10,7 +10,7 @@ import dataclasses
 import typer
 from rich.table import Table
 
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import get_app_context
 
 self_app = typer.Typer(
@@ -22,11 +22,15 @@ self_app = typer.Typer(
 @self_app.command("tools")
 @handle_tt_errors
 def tools_status(
-    ctx: typer.Context, json_mode: JsonFlag = False, quiet: QuietFlag = False
+    ctx: typer.Context,
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Show managed tools: golden pin, installed version, resolution source."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     registry = appctx.registry
     rows = registry.status()
 
@@ -57,7 +61,11 @@ def tools_status(
 @self_app.command("telemetry-id")
 @handle_tt_errors
 def telemetry_id(
-    ctx: typer.Context, json_mode: JsonFlag = False, quiet: QuietFlag = False
+    ctx: typer.Context,
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Print this install's anonymous telemetry id.
 
@@ -68,7 +76,7 @@ def telemetry_id(
     from ..telemetry.state import TelemetryState
 
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     appctx.output.emit(
         {"distinct_id": TelemetryState(appctx.paths).instance_id()},
         renderer=lambda data: data["distinct_id"],
@@ -80,7 +88,12 @@ def telemetry_id(
 # every upload and could hand off to another drainer — a feedback loop. This command is
 # the one leaf in the CLI that must stay invisible to telemetry.
 @self_app.command("send-telemetry")
-def send_telemetry(ctx: typer.Context, json_mode: JsonFlag = False) -> None:
+def send_telemetry(
+    ctx: typer.Context,
+    json_mode: JsonFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
     """Upload spooled usage events, then exit. Normally launched detached by `tt` itself.
 
     Run it by hand to force delivery (or to see why delivery is failing) — the same
@@ -89,7 +102,7 @@ def send_telemetry(ctx: typer.Context, json_mode: JsonFlag = False) -> None:
     from ..telemetry.drain import drain
 
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode)
+    appctx.output.apply_flags(json_mode=json_mode, verbose=verbose, no_color=no_color)
     result = drain(appctx.paths, appctx.config)
     appctx.output.emit(
         {"status": result.status, "events": result.events, "detail": result.detail},
@@ -115,6 +128,8 @@ def self_update(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Upgrade tt itself to the newest release. Works where tt owns its environment (a
     `uv tool` or pipx install, or a venv with nothing else in it); in a shared venv it
@@ -122,7 +137,7 @@ def self_update(
     from ..selfupdate.update import run_self_update
 
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     result = run_self_update(appctx, check_only=check, yes=yes)
 
     def render(data: dict) -> str:
@@ -145,13 +160,18 @@ def self_update(
 # it runs detached in the background, so an event for it would count a check as usage,
 # and the decorator's own after-command hook could spawn another check.
 @self_app.command("check-update")
-def check_update(ctx: typer.Context, json_mode: JsonFlag = False) -> None:
+def check_update(
+    ctx: typer.Context,
+    json_mode: JsonFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
     """Refresh the cached "newest tt release" lookup and print it. Normally launched
     detached by `tt` itself once a day; run it by hand to see what the check found."""
     from ..selfupdate.check import run_check
 
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode)
+    appctx.output.apply_flags(json_mode=json_mode, verbose=verbose, no_color=no_color)
     # skip_if_busy: several commands finishing during one slow lookup may each have
     # spawned a check; the flock lets exactly one of them do the work.
     result = run_check(appctx.paths, skip_if_busy=True)

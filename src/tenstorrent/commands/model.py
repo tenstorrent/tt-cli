@@ -30,7 +30,14 @@ from ..backends.serving.model_manager import (
 )
 from ..backends.serving.ps import human_duration, list_served
 from .._compat import confirm
-from ..cli import JsonFlag, PagedHelpGroup, QuietFlag, handle_tt_errors
+from ..cli import (
+    JsonFlag,
+    NoColorFlag,
+    PagedHelpGroup,
+    QuietFlag,
+    VerboseFlag,
+    handle_tt_errors,
+)
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..models.model import ModelInfo
@@ -258,6 +265,8 @@ def list_models(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Browse models that run on this machine: the released catalog plus
     community tt-model bundles from the Hub (default: detected hardware only).
@@ -274,7 +283,7 @@ def list_models(
     (`tt serve <namespace>/<name>` for a bundle); weights are referenced
     rather than shipped."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     if community and catalog_only:
         raise TTError(
             "--community and --catalog are opposites.",
@@ -412,6 +421,8 @@ def model_info(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Show model metadata: engines, per-device support, requirements.
 
@@ -419,7 +430,7 @@ def model_info(
     `tt-model info` when tt-model is installed, otherwise its community-catalog row.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     model, bundle = _dispatch(appctx, name)
     if bundle is not None:
         _bundle_info(appctx, bundle, json_mode=json_mode)
@@ -597,10 +608,12 @@ def pull(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Download a model: a catalog model's weights, or a tt-model bundle."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     offline = offline or appctx.offline
     if bundle and weights_only:
         raise TTError(
@@ -720,6 +733,8 @@ def compile_model(
     name: str = typer.Argument(help="Model name, e.g. Llama-3.1-8B-Instruct."),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """[stub] Pre-compile a model to a TT-optimized format servable by `tt serve`."""
     raise TTError(
@@ -777,10 +792,12 @@ def stop_model(
     profile: str = typer.Option(None, "--profile", help="Stop only this profile."),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Stop a running model server."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     model, bundle = _dispatch(appctx, name)
     if bundle is not None:
         backend = ModelManagerBackend(
@@ -854,7 +871,10 @@ def logs_model(
     profile: str = typer.Option(
         None, "--profile", help="tt-model bundles: logs for this profile."
     ),
+    json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Show a served model's output.
 
@@ -863,7 +883,7 @@ def logs_model(
     tt-model bundle id passes through to `tt-model logs`.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     if appctx.output.json_mode:
         raise TTError(
             "`tt model logs` prints plain text, not JSON.",
@@ -1050,10 +1070,12 @@ def rm_model(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Remove a model's local artifacts, keeping its weights by default."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     model, bundle = _dispatch(appctx, name)
     if bundle is not None:
         _rm_bundle(
@@ -1237,6 +1259,8 @@ def ps_models(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """List the model servers on this machine: name, backend, container, port, health, uptime.
 
@@ -1244,7 +1268,7 @@ def ps_models(
     TT-Studio model containers. Exits 0 with an empty list when nothing is served.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     runtime = InferenceServerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     ).container_runtime()
