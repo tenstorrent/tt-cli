@@ -17,11 +17,12 @@ from .apps.anythingllm import AnythingLLM
 from .apps.opencode import OpenCode
 from .apps.openwebui import OpenWebUI
 from .apps.pi import Pi
+from .apps.qwencode import QwenCode
 from .base import Launcher
 
 LAUNCHERS: dict[str, Launcher] = {
     launcher.id: launcher
-    for launcher in (OpenCode(), Pi(), Aider(), OpenWebUI(), AnythingLLM())
+    for launcher in (OpenCode(), Pi(), Aider(), QwenCode(), OpenWebUI(), AnythingLLM())
 }
 
 __all__ = ["LAUNCHERS", "Launcher"]
