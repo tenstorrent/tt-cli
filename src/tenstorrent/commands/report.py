@@ -7,6 +7,10 @@
 tt-cli repo, with an auto-collected environment section in the body. Everything
 is client-side URL building: nothing is uploaded, and the user sees (and can
 edit) every prefilled character before submitting on github.com.
+
+`tt report bundle` writes a redacted tar.gz of everything support usually asks for
+(environment, tt-smi snapshot, config, tt and inference-server logs, container
+logs) — see report_bundle.py. Nothing is uploaded either; the user shares the file.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import dataclasses
 import platform
 import urllib.parse
 import webbrowser
+from pathlib import Path
 
 import typer
 
@@ -198,6 +203,34 @@ def report_issue(
             appctx.output.warn(
                 "could not open a browser — copy the URL above into one by hand."
             )
+
+
+@report_app.command("bundle")
+@handle_tt_errors
+def report_bundle(
+    ctx: typer.Context,
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Where to write the archive (default: ./tt-report-<UTC timestamp>.tar.gz).",
+    ),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+) -> None:
+    """Write a support bundle: environment, tt-smi snapshot, config, tt and inference-server logs, container logs.
+
+    Known secrets (HF tokens, JWT_SECRET, telemetry keys) are redacted. The bundle
+    does keep hostnames and local paths, so review it before posting it publicly;
+    it is meant to be shared with Tenstorrent support. Every source that is missing
+    or broken is noted in manifest.json instead of failing the command.
+    """
+    from .report_bundle import default_output_path, write_bundle
+
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    payload = write_bundle(appctx, output or default_output_path())
+    appctx.output.emit(payload, renderer=lambda d: d["path"], soft_wrap=True)
 
 
 @report_app.command("feedback")

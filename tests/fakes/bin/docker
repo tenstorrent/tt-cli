@@ -10,8 +10,8 @@ no State at all counts as running — unless --all/-a is passed, like the real t
 that label, `--format {{.Ports}}` prints the Ports string, everything else prints
 one 12-char id per line (what tt asks for).
 FAKE_DOCKER_STOP_LOG collects stopped ids. `logs` records its full argv as one JSON
-line in FAKE_DOCKER_ARGV_LOG and prints a marker line, so tests can assert exactly
-which flags tt forwarded.
+line in FAKE_DOCKER_ARGV_LOG and prints a marker line plus a fake HF token, so tests
+can assert exactly which flags tt forwarded and that tt redacts what comes back.
 """
 
 import json
@@ -90,6 +90,7 @@ def main() -> int:
             with open(log, "a") as fh:
                 fh.write(json.dumps({"argv": args}) + "\n")
         print(f"fake docker logs {args[-1]}")
+        print("HF_TOKEN=hf_" + "x" * 30)
         return 0
     return 0
 
