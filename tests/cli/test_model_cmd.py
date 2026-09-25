@@ -1518,6 +1518,21 @@ def test_model_stop_reports_a_studio_teardown_that_fails(runner, studio_bin, mon
     assert "`run.py --stop` exited with status 1" in result.output
 
 
+@pytest.mark.fakes_only
+def test_model_stop_tears_studio_down_even_when_stop_model_fails(
+    runner, studio_bin, monkeypatch
+):
+    """A model that already died (or never finished deploying) makes
+    `--stop-model` fail; studio's stack is up regardless and must still come
+    down, and the failure is still reported."""
+    monkeypatch.setenv("FAKE_STUDIO_STOP_MODEL_FAIL", "1")
+    result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert "`run.py --stop-model Qwen3.5-9B` exited with status 1" in result.output
+    calls = [json.loads(line) for line in studio_bin.read_text().splitlines()]
+    assert calls == [["--stop-model", "Qwen3.5-9B"], ["--stop"]]
+
+
 def test_model_stop_for_studio_does_not_install_studio(runner, isolated_dirs):
     result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
     assert result.exit_code == ExitCode.TOOL_MISSING, result.output

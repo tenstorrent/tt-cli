@@ -196,8 +196,19 @@ class StudioBackend:
         entry = self._installed_entry()
         argv = [self._python_for(entry), str(entry), "--stop-model", model.name]
         self.output.status(f"Stopping {model.name} via TT-Studio …")
+        # check=False: a `--stop-model` that fails (the model already died, or
+        # never finished deploying) must not skip the teardown — the stack is
+        # still up either way, and leaving it up is the thing this command
+        # exists to prevent. The failure is raised once the stack is down.
         rc = self.runner.stream(
-            argv, env=self._env(), cwd=str(entry.parent), tool=TOOL
+            argv, env=self._env(), cwd=str(entry.parent), tool=TOOL, check=False
         )
-        self._teardown(entry, after=f"{model.name} stopped")
+        after = f"{model.name} stopped" if rc == 0 else f"stopping {model.name} failed"
+        self._teardown(entry, after=after)
+        if rc != 0:
+            raise TTError(
+                f"TT-Studio's `run.py --stop-model {model.name}` exited with status {rc}.",
+                exit_code=ExitCode.TOOL_FAILED,
+                details={"tool": TOOL, "returncode": rc},
+            )
         return rc

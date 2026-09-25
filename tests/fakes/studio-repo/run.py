@@ -6,7 +6,8 @@
 `--stop-model MODEL` and `--stop`, so an argv drift fails loudly), records argv,
 cwd and the HF_TOKEN it inherited. FAKE_STUDIO_FAIL fails the deploy only, the
 way a real one dies part-way — `--stop` still succeeds, unless
-FAKE_STUDIO_STOP_FAIL is set too."""
+FAKE_STUDIO_STOP_FAIL is set too. FAKE_STUDIO_STOP_MODEL_FAIL fails
+`--stop-model` only."""
 
 import argparse
 import json
@@ -46,6 +47,9 @@ def main() -> int:
         print("fake tt-studio: deploy failed", file=sys.stderr)
         return 1
     if args.stop_model:
+        if os.environ.get("FAKE_STUDIO_STOP_MODEL_FAIL"):
+            print(f"fake tt-studio: --stop-model {args.stop_model} failed", file=sys.stderr)
+            return 1
         print(f"fake tt-studio: stopped {args.stop_model}")
     else:
         print(f"fake tt-studio: deployed {args.model} at http://localhost:7001/v1")
