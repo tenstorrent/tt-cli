@@ -61,6 +61,34 @@ def test_model_list_shows_catalog(runner):
     assert "resnet-50" in result.output
 
 
+def _column(output: str, index: int) -> str:
+    """Every fragment of one table column, joined in order. A folded cell spans
+    several lines, so a whole value is a substring of the joined column even when
+    no single line holds it."""
+    cells = []
+    for line in output.splitlines():
+        if "│" not in line:
+            continue
+        parts = line.split("│")[1:-1]
+        if len(parts) > index:
+            cells.append(parts[index].strip())
+    return "".join(cells)
+
+
+def test_model_list_keeps_every_name_whole_on_a_narrow_terminal(runner, monkeypatch):
+    """A 40-column tmux pane used to ellipsize the widest column — the model name,
+    the one value you paste into `tt serve`. Names now fold across lines instead:
+    a narrow terminal costs height, never characters."""
+    monkeypatch.setenv("COLUMNS", "40")
+    result = runner.invoke(app, ["model", "list", "--all"])
+    assert result.exit_code == 0, result.output
+    assert "…" not in result.output
+    names = _column(result.output, 0)
+    for name in ("Llama-3.1-8B-Instruct", "Qwen3-32B", "speecht5_tts", "whisper-large-v3"):
+        assert name in names, result.output
+    assert all(len(line) <= 40 for line in result.output.splitlines()), result.output
+
+
 def test_model_list_detection_failure_warns_and_shows_all(runner):
     result = runner.invoke(app, ["model", "list", "--json"])
     assert result.exit_code == 0
@@ -636,6 +664,236 @@ def test_model_stop_without_a_container_runtime_is_tool_missing(
     assert result.exit_code == ExitCode.TOOL_MISSING
 
 
+# -- logs --------------------------------------------------------------------------
+@pytest.fixture
+def docker_argv_log(fake_docker, monkeypatch, tmp_path):
+    """Where tests/fakes/bin/docker records `docker logs` invocations."""
+    log = tmp_path / "docker-argv.jsonl"
+    monkeypatch.setenv("FAKE_DOCKER_ARGV_LOG", str(log))
+    return log
+
+
+def _docker_logs_calls(log: Path) -> list[list[str]]:
+    if not log.exists():
+        return []
+    return [json.loads(line)["argv"] for line in log.read_text().splitlines()]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_delegates_to_tt_model(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle"]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_forwards_follow_and_profile(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
+    result = runner.invoke(
+        app, ["model", "logs", "ns/bundle", "--follow", "--profile", "fast"]
+    )
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle", "--follow", "--profile", "fast"]
+
+
+def _tt_model_container(repo: str, profile: str, *, running: bool = True) -> dict:
+    return {
+        "Id": f"{abs(hash((repo, profile))):012x}"[:12],
+        "Name": f"/tt-model-{repo.split('/')[-1]}-{profile}",
+        "Config": {"Image": "tt-model/x:1"},
+        "Labels": {
+            "org.tenstorrent.tt-model": repo.split("/")[-1],
+            "org.tenstorrent.tt-model.repo": repo,
+            "org.tenstorrent.tt-model.profile": profile,
+        },
+        "State": {"Running": running},
+    }
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_names_the_running_profile(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
+    """tt-model's own default matches profile names as substrings (p150 claims the
+    p150x2 container), so tt names the profile it can see running."""
+    set_containers, _ = fake_docker
+    set_containers(
+        [
+            _tt_model_container("ns/bundle", "p150x2"),
+            _tt_model_container("ns/bundle", "p150", running=False),
+            _tt_model_container("ns/other", "p150"),
+        ]
+    )
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle", "--profile", "p150x2"]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_leaves_the_profile_to_tt_model_when_ambiguous(
+    runner, fake_model_manager, fake_docker, isolated_dirs
+):
+    set_containers, _ = fake_docker
+    set_containers(
+        [_tt_model_container("ns/bundle", "a"), _tt_model_container("ns/bundle", "b")]
+    )
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["logs", "ns/bundle"]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_reports_a_tt_model_failure(
+    runner, fake_model_manager, fake_docker, isolated_dirs, monkeypatch
+):
+    monkeypatch.setenv("FAKE_TT_MODEL_FAIL", "1")
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert "tt-model logs exited with 1" in result.output
+
+
+@pytest.mark.fakes_only
+@pytest.mark.parametrize("flag", [["--since", "10m"], ["--tail", "5"]])
+def test_model_logs_bundle_rejects_since_and_tail(
+    runner, fake_model_manager, isolated_dirs, flag
+):
+    """tt-model logs knows only --follow/--profile; say so instead of dropping the flag."""
+    result = runner.invoke(app, ["model", "logs", "ns/bundle", *flag])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "docker logs" in result.output
+    assert not fake_model_manager.exists()  # tt-model never invoked
+
+
+@pytest.mark.fakes_only
+def test_model_logs_bundle_does_not_install_tt_model(runner, uv_bin, isolated_dirs):
+    result = runner.invoke(app, ["model", "logs", "ns/bundle"])
+    assert result.exit_code == ExitCode.TOOL_MISSING
+    assert not uv_bin.exists()
+
+
+def test_model_logs_unknown_name_is_usage(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instrukt"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "Unknown model" in result.output
+
+
+def test_model_logs_rejects_json(runner, fake_checkout, isolated_dirs):
+    result = runner.invoke(app, ["--json", "model", "logs", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "plain text" in result.output
+
+
+def test_model_logs_profile_is_bundle_only(runner, fake_checkout, isolated_dirs):
+    result = runner.invoke(
+        app, ["model", "logs", "Llama-3.1-8B-Instruct", "--profile", "x"]
+    )
+    assert result.exit_code == ExitCode.USAGE
+    assert "profiles" in result.output
+
+
+@pytest.fixture
+def checkout_with_log_history(fake_checkout):
+    """fake_checkout plus an older Llama server log, a run.py log and a spec sidecar,
+    with mtimes ordered so "newest" is unambiguous."""
+    import os
+
+    logs = fake_checkout / "workflow_logs"
+    old = logs / "docker_server" / "vllm_2025-12-31_00-00-00_Llama-3.1-8B-Instruct_p300x2_server.log"
+    old.write_text("old line 1\nold line 2\n")
+    run_log = logs / "run_logs" / "run_2026-01-01_00-00-00_Llama-3.1-8B-Instruct_server_abcd1234.log"
+    run_log.parent.mkdir()
+    run_log.write_text("run.py line\n")
+    spec = logs / "runtime_model_specs" / "runtime_model_spec_2026-01-02_Llama-3.1-8B-Instruct_x.json"
+    spec.parent.mkdir()
+    spec.write_text("{}")
+    newest = logs / "docker_server" / "vllm_2026-01-01_00-00-00_Llama-3.1-8B-Instruct_p300x2_server.log"
+    newest.write_text("line 1\nline 2\nline 3\n")
+    for i, path in enumerate([old, run_log, newest, spec]):
+        os.utime(path, (1_700_000_000 + i, 1_700_000_000 + i))
+    return newest
+
+
+def test_model_logs_prints_the_newest_matching_log_file(
+    runner, checkout_with_log_history, isolated_dirs
+):
+    """Newest by mtime among *_<model>_*.log — not the newer .json sidecar, not the
+    other model's file, not an older run."""
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "line 1\nline 2\nline 3\n"
+    assert str(checkout_with_log_history) in result.output  # the "showing" line
+
+
+def test_model_logs_tail_prints_the_last_n_lines(
+    runner, checkout_with_log_history, isolated_dirs
+):
+    result = runner.invoke(
+        app, ["model", "logs", "Llama-3.1-8B-Instruct", "--tail", "2", "--quiet"]
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "line 2\nline 3\n"
+
+
+def test_model_logs_without_a_matching_file_is_an_error(
+    runner, fake_checkout, isolated_dirs
+):
+    """A model in the catalog that was never served here: say so, point at tt serve."""
+    result = runner.invoke(app, ["model", "logs", "whisper-large-v3"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "No logs for whisper-large-v3" in result.output
+    assert "tt serve whisper-large-v3" in result.output
+
+
+def test_model_logs_without_a_checkout_is_an_error(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "No logs for" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_logs_since_uses_docker_logs_on_the_running_container(
+    runner, fake_docker, docker_argv_log, fake_checkout, isolated_dirs
+):
+    set_containers, _ = fake_docker
+    set_containers([
+        _container(
+            "aaaaaaaaaaaa11",
+            snapshot="/hf/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/rev",
+        ),
+        _container("bbbbbbbbbbbb22", snapshot="/hf/hub/models--Qwen--Qwen3-32B/snapshots/rev"),
+    ])
+    result = runner.invoke(
+        app,
+        ["model", "logs", "Llama-3.1-8B-Instruct", "--since", "10m", "--tail", "5", "-f"],
+    )
+    assert result.exit_code == 0, result.output
+    assert _docker_logs_calls(docker_argv_log) == [
+        ["logs", "--since", "10m", "--tail", "5", "--follow", "aaaaaaaaaaaa"]
+    ]
+
+
+@pytest.mark.fakes_only
+def test_model_logs_since_without_a_running_container_is_usage(
+    runner, fake_docker, docker_argv_log, fake_checkout, isolated_dirs
+):
+    """The file has no time index, so --since needs the live container."""
+    set_containers, _ = fake_docker
+    set_containers([
+        _container("bbbbbbbbbbbb22", snapshot="/hf/hub/models--Qwen--Qwen3-32B/snapshots/rev"),
+    ])
+    result = runner.invoke(app, ["model", "logs", "Llama-3.1-8B-Instruct", "--since", "10m"])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--tail" in result.output
+    assert _docker_logs_calls(docker_argv_log) == []
+
+
 # -- combined catalog + community listing -------------------------------------------
 def _stub_bundles(monkeypatch, entries):
     """Replace the Hub query; the suite must stay network-free."""
@@ -688,6 +946,22 @@ def test_model_list_shows_catalog_and_community_together(
         "serving profiles",
         "weights",
     ]
+
+
+def test_model_list_keeps_every_name_whole_on_a_narrow_terminal(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [
+        {"name": "tenstorrent/Llama-3.1-70B-Instruct-vllm-bundle", "kind": "container",
+         "engine": "vLLM", "arch": ["wormhole_b0"], "hardware": ["n300"],
+         "installed": False},
+    ])
+    monkeypatch.setenv("COLUMNS", "40")
+    result = runner.invoke(app, ["model", "list", "--community", "--all"])
+    assert result.exit_code == 0, result.output
+    assert "…" not in result.output
+    assert "tenstorrent/Llama-3.1-70B-Instruct-vllm-bundle" in _column(result.output, 0)
+    assert "n300" in _column(result.output, 3)
 
 
 def test_model_list_writes_the_completion_cache(runner, monkeypatch, isolated_dirs):
@@ -1198,8 +1472,9 @@ def test_model_pull_rejects_both_direction_flags(runner, isolated_dirs):
         ["model", "pull", "ns/bundle", "--bundle"],
         ["model", "stop", "ns/bundle"],
         ["model", "rm", "ns/bundle", "--yes"],
+        ["model", "logs", "ns/bundle"],
     ],
-    ids=["serve", "pull", "stop", "rm"],
+    ids=["serve", "pull", "stop", "rm", "logs"],
 )
 def test_every_tt_model_call_gets_the_configured_hf_cache(
     runner, fake_model_manager, always_tty, isolated_dirs, tmp_path, argv
@@ -1226,3 +1501,200 @@ def test_model_pull_bundle_flag_honours_offline(
     result = runner.invoke(app, ["--offline", "model", "pull", "ns/x", "--bundle"])
     assert result.exit_code == ExitCode.OFFLINE
     assert not fake_model_manager.exists()  # tt-model never invoked
+
+
+# -- info on a tt-model bundle id --------------------------------------------------
+# `tt model info` was the one model verb that rejected an id the community listing,
+# `tt model pull` and `tt serve` all accept ("Unknown model … run tt model list").
+def _pull_bundle_to_disk(tmp_path, repo_id, manifest):
+    """What tt-model leaves behind after `pull`: its index entry and the manifest."""
+    root = Path(tmp_path) / "xdg-cache" / "tt-model"  # isolated_dirs' XDG_CACHE_HOME
+    pulled = root / "pulled" / repo_id.replace("/", "__")
+    pulled.mkdir(parents=True, exist_ok=True)
+    (pulled / "tt_kernel_manifest.json").write_text(json.dumps(manifest))
+    (root / "installed.json").write_text(
+        json.dumps({repo_id: {"repo_id": repo_id, "container": True, "arch": "blackhole"}})
+    )
+
+
+@pytest.mark.fakes_only
+def test_model_info_bundle_delegates_to_tt_model_when_installed(
+    runner, fake_model_manager, isolated_dirs
+):
+    """tt-model prints the manifest and the compatibility verdict; tt does not
+    reimplement either."""
+    result = runner.invoke(app, ["model", "info", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["info", "ns/bundle"]
+    assert record["hf_home"]  # same cache everything else uses
+
+
+@pytest.mark.fakes_only
+def test_model_info_bundle_does_not_install_tt_model(
+    runner, uv_bin, monkeypatch, isolated_dirs
+):
+    """Inspection must not clone-and-build a tool: with tt-model absent the catalog
+    row is rendered instead, and uv (which *would* succeed here) never runs."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/bundle", "kind": "container", "engine": "vllm-plugin",
+         "arch": ["blackhole"], "downloads": 7, "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "info", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    assert not uv_bin.exists()
+    assert "tt-model bundle (container)" in result.output
+    assert "blackhole" in result.output and "vllm-plugin" in result.output
+    assert "tt model pull ns/bundle" in result.output  # not installed → how to get it
+    assert "tt serve ns/bundle --dry-run" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_info_bundle_json_is_the_catalog_row_even_with_tt_model_installed(
+    runner, fake_model_manager, monkeypatch, isolated_dirs
+):
+    """tt-model's info output is a manifest followed by prose, not one JSON document,
+    so --json always carries tt's own contract."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/bundle", "kind": "container", "engine": "vllm-plugin",
+         "arch": ["blackhole"], "downloads": 7, "installed": False},
+    ])
+    result = runner.invoke(app, ["model", "info", "ns/bundle", "--json"])
+    assert result.exit_code == 0, result.output
+    assert not fake_model_manager.exists()  # tt-model never invoked
+    payload = json.loads(result.output)
+    assert payload["source"] == "tt-model-catalog"
+    assert payload["bundle"]["name"] == "ns/bundle"
+    assert payload["bundle"]["engine"] == "vllm-plugin"
+    assert payload["in_catalog"] is True
+    assert payload["serve"] is None  # not pulled: no manifest on disk
+    assert payload["tt_model_installed"] is True
+
+
+def test_model_info_bundle_matches_the_id_case_insensitively(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [{"name": "NS/Bundle", "arch": ["blackhole"]}])
+    result = runner.invoke(app, ["model", "info", "ns/bundle", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["bundle"]["name"] == "NS/Bundle"
+
+
+def test_model_info_unpulled_bundle_shows_its_catalog_hardware_tags(
+    runner, monkeypatch, isolated_dirs
+):
+    """Without a pulled manifest there are no launch settings, so the catalog's
+    hardware tags stand in (the same ones `tt model list --community` shows)."""
+    _stub_bundles(
+        monkeypatch,
+        [{"name": "ns/bundle", "arch": ["blackhole"], "hardware": ["p300x2", "p150x4"]}],
+    )
+    result = runner.invoke(app, ["model", "info", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    assert "p150x4, p300x2" in result.output
+    assert "docker image" not in result.output
+
+
+def test_model_info_pulled_bundle_shows_its_launch_settings(
+    runner, monkeypatch, tmp_path, isolated_dirs
+):
+    """Once pulled, the manifest on disk says what `tt serve` will run — the same
+    facts `tt serve --dry-run` reports — so info shows them without a Hub fetch."""
+    _pull_bundle_to_disk(tmp_path, "ns/dit", {
+        "arch": "blackhole", "device_count": 1,
+        "tt_metal_version": "0.65.2",
+        "container": {
+            "kind": "tt-dit-server",
+            "image": {"repository": "tt-model/dit", "tag": "tt-model/dit:abc"},
+            "serve": {"port": 8000},
+            "serve_profiles": [{"name": "p150"}, {"name": "p300"}],
+        },
+        "weights": {"repo_id": "org/w"},
+    })
+    _stub_bundles(monkeypatch, [])  # unpublished: the local index is the only source
+    result = runner.invoke(app, ["model", "info", "ns/dit"])
+    assert result.exit_code == 0, result.output
+    assert "installed here" in result.output
+    assert "tt-model/dit:abc" in result.output
+    assert "tt-dit-server" in result.output
+    assert "p150, p300" in result.output
+    assert "1 chip" in result.output and "1 chips" not in result.output
+    assert "org/w" in result.output
+
+
+def test_model_info_bundle_offline_reads_only_the_local_index(
+    runner, monkeypatch, tmp_path, isolated_dirs
+):
+    _pull_bundle_to_disk(tmp_path, "ns/dit", {"container": {"kind": "tt-dit-server"}})
+
+    def boom(**kw):  # pragma: no cover - must never run
+        raise AssertionError("the Hub was queried under --offline")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", boom)
+    result = runner.invoke(app, ["--offline", "model", "info", "ns/dit", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["bundle"]["source"] == "local"
+    assert payload["in_catalog"] is None  # not asked, so neither yes nor no
+    assert payload["offline"] is True
+
+
+def test_model_info_bundle_offline_and_not_installed_is_an_offline_error(
+    runner, monkeypatch, isolated_dirs
+):
+    monkeypatch.setattr(
+        "tenstorrent.modelhub.bundles.search_community",
+        lambda **kw: pytest.fail("the Hub was queried under --offline"),
+    )
+    result = runner.invoke(app, ["--offline", "model", "info", "ns/absent"])
+    assert result.exit_code == ExitCode.OFFLINE
+    assert "tt model pull ns/absent" in result.output
+
+
+def test_model_info_unlisted_published_bundle_warns_and_shows_the_id(
+    runner, monkeypatch, isolated_dirs
+):
+    """Pushed to the Hub but never `tt-model publish`ed: still a bundle, still
+    servable, so info says so rather than calling it unknown."""
+    _stub_bundles(monkeypatch, [])
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.is_bundle_repo", lambda name: True)
+    result = runner.invoke(app, ["model", "info", "someone/private", "--json"])
+    assert result.exit_code == 0, result.output
+    assert "not in the community catalog" in result.output  # the warning
+    payload = json.loads(result.output[result.output.index("{"):])
+    assert payload["bundle"]["name"] == "someone/private"
+    assert payload["in_catalog"] is False
+
+
+def test_model_info_plain_hf_repo_is_not_a_bundle(runner, no_hub_probe, monkeypatch, isolated_dirs):
+    _stub_bundles(monkeypatch, [])
+    result = runner.invoke(app, ["model", "info", "org/plain-weights"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "not a tt-model bundle" in result.output
+    assert "--weights-only" in result.output
+
+
+def test_model_info_unreachable_hub_is_not_a_usage_error(runner, monkeypatch, isolated_dirs):
+    _stub_bundles(monkeypatch, [])
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.is_bundle_repo", lambda name: None)
+    result = runner.invoke(app, ["model", "info", "org/maybe"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "Could not check" in result.output
+
+
+def test_model_info_catalog_typo_is_still_unknown_model(runner, isolated_dirs):
+    """Only a Hub-shaped name may fall through to the bundle path; a spec typo
+    keeps the catalog error it always had."""
+    result = runner.invoke(app, ["model", "info", "Llama-3.1-8B-Instrukt"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "Unknown model" in result.output and "tt model list" in result.output
+
+
+def test_model_info_spec_hf_repo_alias_still_wins_over_the_bundle_path(
+    runner, fake_model_manager, isolated_dirs
+):
+    """A spec entry's hf_repo is also namespace/name; the spec wins, as for serve."""
+    result = runner.invoke(app, ["model", "info", "meta-llama/Llama-3.1-8B-Instruct", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["name"] == "Llama-3.1-8B-Instruct"
+    assert not fake_model_manager.exists()

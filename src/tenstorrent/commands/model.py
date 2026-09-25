@@ -8,8 +8,12 @@ model is handled here, a Hub bundle id is passed through to tt-model."""
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import sys
+import time
+from pathlib import Path
+from typing import Callable
 
 import typer
 from rich.table import Table
@@ -26,20 +30,20 @@ from ..backends.serving.model_manager import (
 )
 from ..backends.serving.ps import human_duration, list_served
 from .._compat import confirm
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, PagedHelpGroup, QuietFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..models.model import ModelInfo
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub import bundles, hub
-from ..modelhub.completions import (
-    complete_catalog_model,
-    complete_local_model,
-    complete_model,
-)
+from ..modelhub.completions import complete_local_model, complete_model
 
 model_app = typer.Typer(
-    help="Model management: browse, pull, and compile models.", no_args_is_help=True
+    help="Model management: browse, pull, and compile models.",
+    no_args_is_help=True,
+    # `tt model --help` is one of the two help pages long enough to scroll off a
+    # small pane; see PagedHelpGroup.
+    cls=PagedHelpGroup,
 )
 
 
@@ -85,6 +89,18 @@ def _known_devices() -> set[str]:
     return {
         device for model in ModelCatalog().list(cached_sizes={}) for device in model.hardware
     }
+
+
+def _add_columns(table: Table, columns: tuple[str, ...]) -> None:
+    """Columns that fold rather than ellipsize on a narrow terminal.
+
+    Rich's default overflow is `ellipsis`, which trims whatever column happens to
+    be widest — on a 40-column tmux pane that was the model name, the one value
+    the user needs whole to paste into `tt serve`. Folding wraps a long cell over
+    several lines instead, so a narrow terminal costs height, never characters.
+    """
+    for column in columns:
+        table.add_column(column, overflow="fold")
 
 
 def _validate_hardware(hardware: str) -> str:
@@ -193,10 +209,7 @@ def _model_table(payload: dict, *, hardware: str | None, detected: bool) -> Tabl
         if detected:
             title += " (detected — `tt model list --all` for every device/bundle)"
     table = Table(title=title, caption=_MODEL_CAPTION, caption_justify="left")
-    # fold rather than ellipsize: the name is what you paste into `tt serve`
-    table.add_column("name", overflow="fold")
-    for column in ("source", "engine", "serving profiles", "weights"):
-        table.add_column(column)
+    _add_columns(table, ("name", "source", "engine", "serving profiles", "weights"))
     for row in payload["models"]:
         table.add_row(
             row["name"],
@@ -233,7 +246,9 @@ def list_models(
         False,
         "--community",
         help="Only community bundles (Hub + local installs) — skip the released "
-        "catalog. The opposite of --catalog.",
+        "catalog. Community bundles are models anyone has packaged with "
+        "tt-model-manager and published on the Hugging Face Hub; they are not "
+        "tested or maintained by Tenstorrent. The opposite of --catalog.",
     ),
     catalog_only: bool = typer.Option(
         False,
@@ -247,13 +262,17 @@ def list_models(
     """Browse models that run on this machine: the released catalog plus
     community tt-model bundles from the Hub (default: detected hardware only).
 
-    source: `tt-inference-server` is the released catalog; `HuggingFace` is
-    the community catalog on the Hub; `local` is installed here — a bundle
-    on both shows up twice, once per source. profiles: the board/mesh
-    target(s) a model supports, collapsed to the smallest tag per capability
-    (a bigger board that adds nothing over a smaller one is left out). Every
-    entry serves with `tt serve <name>`; weights are referenced rather than
-    shipped."""
+    source: `tt-inference-server` is the released catalog — models Tenstorrent
+    ships and tests, with known per-device support (`tt model info NAME` for
+    details); `HuggingFace` is the community catalog on the Hub — bundles
+    anyone has packaged with tt-model-manager, not tested or maintained by
+    Tenstorrent; `local` is installed here — a bundle on both shows up twice,
+    once per source. Pass --catalog or --community to see just one source.
+    profiles: the board/mesh target(s) a model supports, collapsed to the
+    smallest tag per capability (a bigger board that adds nothing over a
+    smaller one is left out). Every entry serves with `tt serve <name>`
+    (`tt serve <namespace>/<name>` for a bundle); weights are referenced
+    rather than shipped."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
     if community and catalog_only:
@@ -292,6 +311,7 @@ def list_models(
     appctx.output.emit(
         {"device": device, "scope": scope, "models": rows},
         renderer=lambda payload: _model_table(payload, hardware=device, detected=detected),
+        page=True,
     )
 
 
@@ -387,17 +407,169 @@ def _info_renderer(payload: dict) -> Table:
 def model_info(
     ctx: typer.Context,
     name: str = typer.Argument(
-        help="Model name, e.g. Llama-3.1-8B-Instruct.",
-        autocompletion=complete_catalog_model,
+        help="Model name (Llama-3.1-8B-Instruct) or a tt-model bundle id (namespace/name).",
+        autocompletion=complete_model,
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
 ) -> None:
-    """Show model metadata: engines, per-device support, requirements."""
+    """Show model metadata: engines, per-device support, requirements.
+
+    For a tt-model bundle id: the bundle's manifest and compatibility verdict via
+    `tt-model info` when tt-model is installed, otherwise its community-catalog row.
+    """
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
-    model = ModelCatalog().get(name)
+    model, bundle = _dispatch(appctx, name)
+    if bundle is not None:
+        _bundle_info(appctx, bundle, json_mode=json_mode)
+        return
     appctx.output.emit(dataclasses.asdict(model), renderer=_info_renderer)
+
+
+def _bundle_info(appctx, name: str, *, json_mode: bool) -> None:
+    """`tt model info` for a tt-model bundle id — the one model verb that used to
+    reject an id `tt model list --community`, `tt model pull` and `tt serve` all accept.
+
+    Two sources, by what is available. With tt-model installed and a human reading,
+    delegate to `tt-model info`: it prints the manifest and its compatibility verdict
+    against this machine, which tt has no business reimplementing. Otherwise render
+    the catalog row tt reads on its own — the same one the community listing shows,
+    plus the pulled manifest's launch settings. That covers: tt-model not installed
+    (info is inspection and must not clone-and-build a tool to describe a bundle,
+    the same rule as stop/rm); --json (tt-model prints a manifest followed by prose,
+    not one document); --offline (tt-model info fetches the manifest from the Hub).
+    """
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    installed_tool = backend.is_installed()
+    if installed_tool and not json_mode and not appctx.offline:
+        backend.info(name)
+        return
+    row = bundles.describe(name, config=appctx.config, offline=appctx.offline)
+    # None: not asked (--offline), so neither "listed" nor "unlisted" is honest.
+    in_catalog = None if appctx.offline else (row is not None and row.source != "local")
+    if row is None:
+        row = _unlisted_bundle(appctx, name)
+    appctx.output.emit(
+        {
+            "source": "tt-model-catalog",
+            "bundle": dataclasses.asdict(row),
+            "in_catalog": in_catalog,
+            "serve": bundles.serve_details(name),
+            "tt_model_installed": installed_tool,
+            "offline": appctx.offline,
+        },
+        renderer=_bundle_info_renderer,
+    )
+
+
+def _unlisted_bundle(appctx, name: str) -> bundles.BundleInfo:
+    """A bundle-shaped id that is neither installed here nor in the community
+    catalog. Offline there is nothing more to ask; online, the Hub says whether the
+    repo carries a manifest at all — a plain weights repo is not a bundle, and
+    telling the two apart is the difference between "pull it" and "you can't"."""
+    if appctx.offline:
+        raise TTError(
+            f"{name} is not installed on this machine.",
+            why="--offline: the community catalog lives on the Hugging Face Hub, "
+            "so only an installed bundle can be described from disk.",
+            next_step=f"Drop --offline, or install it: `tt model pull {name}`.",
+            exit_code=ExitCode.OFFLINE,
+        )
+    is_bundle = bundles.is_bundle_repo(name)
+    if is_bundle is None:
+        raise TTError(
+            f"Could not check whether {name} is a tt-model bundle.",
+            why="It is not in the community catalog or installed here, and the Hub "
+            "could not be asked (unreachable, private, or rate-limited).",
+            next_step="Check the connection or HF_TOKEN; `tt model list --community` "
+            "lists the published bundles.",
+            exit_code=ExitCode.ERROR,
+        )
+    if not is_bundle:
+        raise TTError(
+            f"{name} is not a tt-model bundle.",
+            why="It is not in the model catalog, not in the community bundle catalog, "
+            "and its Hub repo carries no bundle manifest.",
+            next_step="Run `tt model list --community` for bundle ids; a plain "
+            f"HuggingFace repo's weights fetch with `tt model pull {name} --weights-only`.",
+            exit_code=ExitCode.USAGE,
+        )
+    appctx.output.warn(
+        f"{name} is a tt-model bundle but not in the community catalog (never "
+        "published with `tt-model publish`); only the id is known until it is pulled."
+    )
+    return bundles.BundleInfo(name=name)
+
+
+def _bundle_info_renderer(payload: dict) -> Table:
+    b, serve = payload["bundle"], payload["serve"]
+    name = b["name"]
+    table = Table(title=name, show_header=False)
+    table.add_column("field", style="bold")
+    table.add_column("value")
+    table.add_row("kind", "tt-model bundle" + (f" ({b['kind']})" if b["kind"] else ""))
+    if payload["in_catalog"] is None:
+        catalog = "not checked — --offline skips the Hub"
+    elif payload["in_catalog"]:
+        catalog = "community (`tt model list --community`)"
+    elif b["installed"]:
+        catalog = "not in the community catalog — installed here"
+    else:
+        catalog = "not in the community catalog — published on the Hub"
+    table.add_row("catalog", catalog)
+    table.add_row("arch", ", ".join(b["arch"]) or "—")
+    if not serve:  # pulled bundles show the manifest's target below instead
+        table.add_row("hardware", _hardware_cell(b, None))
+    table.add_row("engine", b["engine"] or "—")
+    if b["downloads"] is not None:
+        table.add_row("downloads", str(b["downloads"]))
+    table.add_row(
+        "installed", "yes" if b["installed"] else f"no — `tt model pull {name}`"
+    )
+    if b["weights_repo"]:
+        cached = _cached_cell(_bundle_row(b))
+        state = "not in the HF cache" if cached == "—" else f"cached {cached}"
+        table.add_row("weights", f"{b['weights_repo']} — {state}")
+    else:
+        table.add_row("weights", "? (known from the manifest once the bundle is pulled)")
+    if serve:  # pulled, and its manifest is on disk
+        chips = ""
+        if serve["arch"] and serve["device_count"]:
+            count = serve["device_count"]
+            chips = f"{serve['arch']}, {count} chip{'s' if count != 1 else ''}"
+        if serve["hardware"]:
+            device = serve["hardware"] + (f"  [dim]({chips})[/dim]" if chips else "")
+        else:
+            device = chips or "—"
+        table.add_row("hardware", device)
+        table.add_row("docker image", serve["image"] or "—")
+        if serve["port"]:
+            table.add_row("port", str(serve["port"]))
+        if serve["max_model_len"]:
+            table.add_row("max model len", str(serve["max_model_len"]))
+        if serve["tt_metal_version"]:
+            table.add_row("tt-metal", serve["tt_metal_version"])
+        if serve["profiles"]:
+            table.add_row("profiles", ", ".join(serve["profiles"]))
+    table.add_row(
+        "servable", f"yes — `tt serve {name}`; preview with `tt serve {name} --dry-run`"
+    )
+    if payload["offline"] and payload["tt_model_installed"]:
+        table.add_row(
+            "manifest",
+            "[dim]skipped under --offline: `tt-model info` fetches the manifest "
+            "from the Hub[/dim]",
+        )
+    elif not payload["tt_model_installed"]:
+        table.add_row(
+            "manifest",
+            "[dim]tt-model's manifest and compatibility verdict show here once "
+            "tt-model is installed (`tt serve` installs it on first use)[/dim]",
+        )
+    return table
 
 
 @model_app.command("pull", no_args_is_help=True)
@@ -658,6 +830,198 @@ def _stop_catalog_model(appctx, model) -> None:
         },
         renderer=lambda d: f"Stopped {len(d['stopped'])} container(s) for {d['model']}.",
     )
+
+
+# -- logs --------------------------------------------------------------------------
+@model_app.command("logs", no_args_is_help=True)
+@handle_tt_errors
+def logs_model(
+    ctx: typer.Context,
+    name: str = typer.Argument(
+        help="Model name or tt-model bundle id.",
+        autocompletion=complete_local_model,
+    ),
+    follow: bool = typer.Option(
+        False, "--follow", "-f", help="Keep streaming new output until Ctrl-C."
+    ),
+    since: str = typer.Option(
+        None,
+        "--since",
+        help="Only output after this docker-style duration or timestamp (10m, 2h, "
+        "2026-09-08T12:00:00). Needs a running tt-inference-server container.",
+    ),
+    tail: int = typer.Option(None, "--tail", help="Only the last N lines."),
+    profile: str = typer.Option(
+        None, "--profile", help="tt-model bundles: logs for this profile."
+    ),
+    quiet: QuietFlag = False,
+) -> None:
+    """Show a served model's output.
+
+    A catalog model prints the newest log tt-inference-server wrote for it under
+    the checkout's workflow_logs/ (the running server keeps appending to it); a
+    tt-model bundle id passes through to `tt-model logs`.
+    """
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(quiet=quiet)
+    if appctx.output.json_mode:
+        raise TTError(
+            "`tt model logs` prints plain text, not JSON.",
+            next_step="Drop --json; `tt model ps --json` has the structured view.",
+            exit_code=ExitCode.USAGE,
+        )
+    model, bundle = _dispatch(appctx, name)
+    try:
+        if bundle is not None:
+            _logs_bundle(appctx, bundle, follow=follow, since=since, tail=tail, profile=profile)
+        else:
+            _logs_catalog_model(
+                appctx, model, follow=follow, since=since, tail=tail, profile=profile
+            )
+    except KeyboardInterrupt:
+        # Ctrl-C is how --follow ends; nothing went wrong.
+        return
+
+
+def _logs_bundle(appctx, bundle: str, *, follow: bool, since, tail, profile) -> None:
+    """Passthrough to `tt-model logs`, which knows only --follow/--profile."""
+    if since is not None or tail is not None:
+        raise TTError(
+            "tt-model logs has no --since or --tail.",
+            why="Bundle logs pass straight through to tt-model, which streams the "
+            "whole container log or follows it.",
+            next_step="`docker logs --since <when> --tail <n> <container>` — "
+            "`tt model ps` shows the container name.",
+            exit_code=ExitCode.USAGE,
+        )
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    if profile is None:
+        # tt-model's own default picks the wrong container when profile names
+        # nest (p150 vs p150x2); name the one that is actually running instead.
+        running = backend.running_profiles(bundle)
+        if len(running) == 1:
+            profile = running[0]
+    rc = backend.logs(bundle, follow=follow, profile=profile)
+    if rc not in (0, 130):  # 130 = the user's Ctrl-C on --follow
+        raise TTError(
+            f"tt-model logs exited with {rc}.",
+            why="tt-model could not show the bundle's container log; its message is "
+            "above.",
+            next_step="`tt model ps` lists the running bundles and their profiles; "
+            f"`tt model logs {bundle} --profile <name>` picks one.",
+            exit_code=ExitCode.TOOL_FAILED,
+        )
+
+
+def _logs_catalog_model(appctx, model, *, follow: bool, since, tail, profile) -> None:
+    if profile is not None:
+        raise TTError(
+            f"{model.name} is not a tt-model bundle, so it has no profiles.",
+            next_step="Drop --profile.",
+            exit_code=ExitCode.USAGE,
+        )
+    backend = InferenceServerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    if since is not None:
+        # The log file has no time index, so --since means `docker logs --since`
+        # on the live container — the same stream, seekable by time.
+        containers = backend.running_containers()
+        matched = [c for c in containers if c.matches(model)]
+        if not matched:
+            raise TTError(
+                f"No running tt-inference-server container for {model.name}.",
+                why="--since works on a live container's log; the log file on disk "
+                "has no time index to seek by.",
+                next_step=f"`tt model logs {model.name} --tail 200` for the end of "
+                "the last run, or `tt serve` it first.",
+                exit_code=ExitCode.USAGE,
+            )
+        if len(matched) > 1:
+            appctx.output.warn(
+                f"{len(matched)} containers serve {model.name}; showing "
+                f"{matched[0].name} ({matched[0].id})."
+            )
+        runtime = backend.container_runtime()
+        argv = [runtime, "logs", "--since", since]
+        if tail is not None:
+            argv += ["--tail", str(tail)]
+        if follow:
+            argv.append("--follow")
+        argv.append(matched[0].id)
+        appctx.output.status(
+            f"showing {Path(runtime).name} logs for {matched[0].name}", soft_wrap=True
+        )
+        appctx.runner.stream(argv, tool=runtime, check=False)
+        return
+    path = backend.newest_log_file(model)
+    if path is None:
+        root = backend.checkout_root()
+        where = f"{root / 'workflow_logs'}" if root else "the tt-inference-server checkout"
+        raise TTError(
+            f"No logs for {model.name}.",
+            why=f"Nothing has been served through tt-inference-server on this machine "
+            f"(no *_{model.name}_*.log under {where}).",
+            next_step=f"`tt serve {model.name}`",
+            exit_code=ExitCode.ERROR,
+        )
+    appctx.output.status(f"showing {path}", soft_wrap=True)
+    _print_log_file(path, tail=tail, follow=follow)
+
+
+def _print_log_file(
+    path: Path,
+    *,
+    tail: int | None,
+    follow: bool,
+    poll_s: float = 0.5,
+    should_stop: Callable[[], bool] | None = None,
+) -> None:
+    """cat / tail -n / tail -f for one log file, writing raw bytes to stdout.
+
+    `should_stop` is a test seam for --follow; None means run until Ctrl-C. A
+    file that shrinks (rotated or truncated) is re-read from the start rather
+    than waiting for it to grow past the old offset."""
+    out = sys.stdout.buffer if hasattr(sys.stdout, "buffer") else sys.stdout
+    try:
+        with open(path, "rb") as fh:
+            if tail is not None:
+                last = collections.deque(fh, maxlen=max(tail, 0))
+                for line in last:
+                    out.write(line)
+            else:
+                out.write(fh.read())
+            out.flush()
+            if not follow:
+                return
+            offset = fh.tell()
+            while should_stop is None or not should_stop():
+                time.sleep(poll_s)
+                size = path.stat().st_size
+                if size < offset:
+                    offset = 0
+                fh.seek(offset)
+                chunk = fh.read()
+                if chunk:
+                    out.write(chunk)
+                    out.flush()
+                    offset = fh.tell()
+    except PermissionError as exc:
+        raise TTError(
+            f"Cannot read {path}.",
+            why="It is owned by another user — container-created files are often "
+            "owned by root.",
+            next_step=f"sudo tail -f {path}",
+            exit_code=ExitCode.NEEDS_SUDO,
+        ) from exc
+    except FileNotFoundError as exc:
+        raise TTError(
+            f"{path} disappeared while reading it.",
+            next_step="Re-run `tt model logs` to pick the newest file.",
+            exit_code=ExitCode.ERROR,
+        ) from exc
 
 
 @model_app.command("rm", no_args_is_help=True)

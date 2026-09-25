@@ -168,7 +168,7 @@ def test_bundle_collects_tt_container_logs(runner, monkeypatch, tmp_path):
         lambda name: str(FAKES_DIR / "bin" / "docker") if name == "docker" else None,
     )
     argv_log = tmp_path / "docker-logs-argv.jsonl"
-    monkeypatch.setenv("FAKE_DOCKER_LOGS_LOG", str(argv_log))
+    monkeypatch.setenv("FAKE_DOCKER_ARGV_LOG", str(argv_log))
     monkeypatch.setenv(
         "FAKE_DOCKER_CONTAINERS",
         json.dumps(
@@ -195,9 +195,9 @@ def test_bundle_collects_tt_container_logs(runner, monkeypatch, tmp_path):
         "containers/tt-model-llama-n150.log",
     }
     log = members["containers/tt-inference-server-aaaa.log"].decode()
-    assert "aaaaaaaaaaaa log line" in log
+    assert "fake docker logs aaaaaaaaaaaa" in log
     assert HF not in log and "HF_TOKEN=<redacted>" in log
-    calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
+    calls = [json.loads(line)["argv"] for line in argv_log.read_text().splitlines()]
     assert calls == [
         ["logs", "--tail", "5000", "aaaaaaaaaaaa"],
         ["logs", "--tail", "5000", "bbbbbbbbbbbb"],

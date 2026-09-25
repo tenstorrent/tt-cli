@@ -8,12 +8,18 @@ The contract that keeps `tt --json ... | jq` clean:
 - *Status* (spinners, progress, warnings) goes to stderr.
 - Errors are always shown: as a Rich panel on stderr in human/quiet mode, as an
   `{"error": {...}}` object on stdout in JSON mode.
+- Long listings page (`less`) when stdout is a terminal and the output would not
+  fit on one screen; a pipe, `--json`, `--no-pager` or TT_NO_PAGER=1 never pages.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import os
+import shutil
+import subprocess
+import sys
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -24,6 +30,65 @@ from rich.text import Text
 
 if TYPE_CHECKING:  # pragma: no cover
     from .errors import TTError
+
+
+def _stdout_isatty() -> bool:
+    """Test seam: CliRunner swaps sys.stdout, so tests patch this, not isatty."""
+    try:
+        return sys.stdout.isatty()
+    except (AttributeError, ValueError):  # closed or replaced stream
+        return False
+
+
+def _terminal_lines() -> int:
+    return shutil.get_terminal_size(fallback=(80, 24)).lines
+
+
+def pager_disabled() -> bool:
+    """TT_NO_PAGER=1 is the environment form of --no-pager (git's GIT_PAGER=cat)."""
+    return os.environ.get("TT_NO_PAGER", "") not in ("", "0")
+
+
+def maybe_page(text: str, *, disabled: bool = False) -> None:
+    """Write `text` to stdout, through the user's pager when it will not fit.
+
+    Pages only when every one of these holds: stdout is a terminal, paging is not
+    switched off (`disabled`, TT_NO_PAGER, or a pager of `cat`), and the text is
+    taller than the terminal. `less` gets `-FRX` unless LESS is already set — the
+    same defaults git uses: quit if it fits, keep colour, leave the screen alone.
+    A pager that cannot be started never loses the output: it falls back to a
+    plain write.
+    """
+    if not text:
+        return
+    lines = text.count("\n") + (0 if text.endswith("\n") else 1)
+    if (
+        disabled
+        or pager_disabled()
+        or not _stdout_isatty()
+        or lines < _terminal_lines()
+    ):
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        return
+    pager = (os.environ.get("TT_PAGER") or os.environ.get("PAGER") or "less").strip()
+    if pager in ("", "cat"):
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        return
+    env = dict(os.environ)
+    if os.path.basename(pager.split()[0]) == "less":
+        env.setdefault("LESS", "-FRX")
+    sys.stdout.flush()
+    try:
+        proc = subprocess.run(pager, shell=True, input=text.encode("utf-8", "replace"), env=env)
+    except OSError:
+        proc = None
+    # 126/127 are the shell saying "cannot run that" — nothing was shown, so show
+    # it here. Any other exit is the pager's own business (`q` is 0 in less).
+    if proc is None or proc.returncode in (126, 127):
+        sys.stdout.write(text)
+        sys.stdout.flush()
 
 
 def to_jsonable(value: Any) -> Any:
@@ -48,10 +113,12 @@ class OutputManager:
         json_mode: bool = False,
         quiet: bool = False,
         verbose: bool = False,
+        no_pager: bool = False,
     ) -> None:
         self.json_mode = json_mode
         self.quiet = quiet
         self.verbose = verbose
+        self.no_pager = no_pager
         self.data_console = Console(highlight=False)
         self.status_console = Console(stderr=True, highlight=False)
 
@@ -68,10 +135,14 @@ class OutputManager:
         self.verbose = self.verbose or verbose
 
     # -- status channel (stderr) ------------------------------------------------
-    def status(self, message: str, *, style: str | None = None) -> None:
+    def status(
+        self, message: str, *, style: str | None = None, soft_wrap: bool = False
+    ) -> None:
+        """`soft_wrap` as in emit(): for a message carrying a path or command line,
+        which Rich would otherwise break mid-token at the terminal width."""
         if self.quiet or self.json_mode:
             return
-        self.status_console.print(message, style=style)
+        self.status_console.print(message, style=style, soft_wrap=soft_wrap)
 
     def warn(self, message: str) -> None:
         if self.quiet:
@@ -89,6 +160,7 @@ class OutputManager:
         renderer: Callable[[Any], RenderableType | None] | None = None,
         *,
         soft_wrap: bool = False,
+        page: bool = False,
     ) -> None:
         """Emit a command result. `data` defines the --json schema; `renderer`
         turns it into a Rich renderable for human mode.
@@ -96,6 +168,9 @@ class OutputManager:
         `soft_wrap` disables Rich's word wrapping for renderers whose layout is
         column-aligned: wrapping would break the alignment mid-line and, worse, Rich
         may crop rather than fold. The terminal wraps instead, so nothing is lost.
+
+        `page` sends a listing through the pager when it is taller than the
+        terminal (see `maybe_page`). JSON mode is never paged: it is for pipes.
         """
         if self.json_mode:
             # Plain print, not Rich: Rich wraps at terminal width, which would
@@ -104,12 +179,22 @@ class OutputManager:
             return
         if self.quiet:
             return
+        renderable: Any
         if renderer is not None:
             renderable = renderer(data)
-            if renderable is not None:
-                self.data_console.print(renderable, soft_wrap=soft_wrap)
+            if renderable is None:
+                return
         else:
-            self.data_console.print(to_jsonable(data))
+            renderable = to_jsonable(data)
+        if not page:
+            self.data_console.print(renderable, soft_wrap=soft_wrap)
+            return
+        # Render to a string first: the pager needs the whole listing, and Rich
+        # keeps the colour codes when stdout is a terminal, so `less -R` shows the
+        # table exactly as a direct print would.
+        with self.data_console.capture() as capture:
+            self.data_console.print(renderable, soft_wrap=soft_wrap)
+        maybe_page(capture.get(), disabled=self.no_pager)
 
     # -- errors (always shown) --------------------------------------------------
     def emit_error(self, err: "TTError") -> None:

@@ -169,6 +169,30 @@ class ModelManagerBackend:
         }
         return sorted(ports)
 
+    def running_profiles(self, repo_id: str) -> list[str]:
+        """Profiles of `repo_id`'s containers that are running right now.
+
+        tt-model names a container `tt-model-<name>-<profile>` and, when asked for
+        logs without a profile, picks the first profile whose name is a *substring*
+        of a running container — so `p150` claims the `p150x2` container and docker
+        then reports it missing. Its labels say exactly which profile is up, so tt
+        reads them and asks for that one. Best effort: no docker → nothing."""
+        docker = shutil.which("docker")
+        if docker is None:
+            return []
+        try:
+            listed = self.runner.capture(
+                [
+                    docker, "ps",
+                    "--filter", f"label={_LABEL}.repo={repo_id}",
+                    "--format", f'{{{{.Label "{_LABEL}.profile"}}}}',
+                ],
+                tool="docker",
+            )
+        except TTError:
+            return []
+        return [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+
     def unsupported_workflow(self, workflow: str) -> TTError:
         return TTError(
             f"tt-model cannot run the {workflow!r} workflow.",
@@ -199,6 +223,22 @@ class ModelManagerBackend:
             )
         return Path(found[0])
 
+    def is_installed(self) -> bool:
+        """Whether tt-model is already on this machine, without installing it."""
+        return self.registry._resolve_or_none(TOOL) is not None
+
+    def info(self, repo_id: str) -> int:
+        """Stream `tt-model info <repo_id>`: the bundle's manifest and tt-model's
+        compatibility verdict against this machine.
+
+        Inspection, not a launch, so like stop/rm it uses the tool only when it is
+        already installed — `tt model info` must not clone and build a tool just to
+        describe a bundle. Callers check is_installed() and fall back to the
+        catalog row tt can read on its own (modelhub.bundles.describe)."""
+        entry = self._installed_entry()
+        self.output.status(f"Inspecting {repo_id} via tt-model …")
+        return self.runner.stream([str(entry), "info", repo_id], env=self._env(), tool=TOOL)
+
     def stop(self, repo_id: str, *, profile: str | None = None) -> int:
         """Stop a running container package via `tt-model stop`.
 
@@ -211,6 +251,24 @@ class ModelManagerBackend:
             argv += ["--profile", profile]
         self.output.status(f"Stopping {repo_id} via tt-model …")
         return self.runner.stream(argv, env=self._env(), tool=TOOL)
+
+    def logs(
+        self, repo_id: str, *, follow: bool = False, profile: str | None = None
+    ) -> int:
+        """Show a running container package's output via `tt-model logs`.
+
+        tt-model resolves the running container for the bundle (and profile) and
+        runs `docker logs [--follow]` on it. Read-only, so like stop/rm it never
+        installs the tool. check=False: Ctrl-C on --follow ends the child with 130,
+        which is the user stopping, not the tool failing."""
+        entry = self._installed_entry()
+        argv = [str(entry), "logs", repo_id]
+        if follow:
+            argv.append("--follow")
+        if profile:
+            argv += ["--profile", profile]
+        self.output.status(f"Showing {repo_id} logs via tt-model …")
+        return self.runner.stream(argv, env=self._env(), tool=TOOL, check=False)
 
     def rm_argv(
         self, entry: Path, repo_id: str, *, include_weights: bool, keep_cache: bool

@@ -6,15 +6,17 @@ Id/Name/Config.Image/Config.Labels/Mounts/State/HostConfig.PortBindings/
 NetworkSettings.Ports/Labels/Ports — the last a raw `docker ps --format {{.Ports}}`
 string, e.g. "0.0.0.0:20000->20000/tcp". `ps` lists running records only — one with
 no State at all counts as running — unless --all/-a is passed, like the real thing;
---filter label=… narrows by top-level Labels, `--format {{.Ports}}` prints the Ports
-string, everything else prints one 12-char id per line (what tt asks for).
-FAKE_DOCKER_STOP_LOG collects stopped ids. `logs` prints two canned lines (one of
-them a fake HF token, so redaction can be checked) and records its argv as JSON
-lines in FAKE_DOCKER_LOGS_LOG.
+--filter label=k[=v] narrows by top-level Labels, `--format {{.Label "k"}}` prints
+that label, `--format {{.Ports}}` prints the Ports string, everything else prints
+one 12-char id per line (what tt asks for).
+FAKE_DOCKER_STOP_LOG collects stopped ids. `logs` records its full argv as one JSON
+line in FAKE_DOCKER_ARGV_LOG and prints a marker line plus a fake HF token, so tests
+can assert exactly which flags tt forwarded and that tt redacts what comes back.
 """
 
 import json
 import os
+import re
 import sys
 
 
@@ -29,6 +31,15 @@ def _label_filter(args: list) -> str | None:
     return None
 
 
+def _label_format(args: list) -> str | None:
+    """`--format {{.Label "k"}}` → k."""
+    for a in args:
+        m = re.fullmatch(r'\{\{\.Label "([^"]+)"\}\}', a)
+        if m:
+            return m.group(1)
+    return None
+
+
 def main() -> int:
     args = sys.argv[1:]
     if args[:1] == ["ps"]:
@@ -36,12 +47,22 @@ def main() -> int:
         show_all = bool({"--all", "-a"} & set(args[1:]))
         entries = _containers()
         if label is not None:
-            entries = [e for e in entries if label in (e.get("Labels") or {})]
+            key, _, value = label.partition("=")
+            entries = [
+                e for e in entries
+                if key in (e.get("Labels") or {})
+                and (not value or (e.get("Labels") or {}).get(key) == value)
+            ]
         if not show_all:
             entries = [
                 e for e in entries
                 if e.get("State") is None or e["State"].get("Running")
             ]
+        wanted_label = _label_format(args)
+        if wanted_label is not None:
+            for entry in entries:
+                print((entry.get("Labels") or {}).get(wanted_label, ""))
+            return 0
         if "{{.Ports}}" in args:
             for entry in entries:
                 print(entry.get("Ports", ""))
@@ -56,21 +77,20 @@ def main() -> int:
             if str(entry.get("Id", ""))[:12] in wanted:
                 print(json.dumps(entry))
         return 0
-    if args[:1] == ["logs"]:
-        log = os.environ.get("FAKE_DOCKER_LOGS_LOG")
-        if log:
-            with open(log, "a") as fh:
-                fh.write(json.dumps(args) + "\n")
-        target = args[-1]
-        print(f"[fake] {target} log line")
-        print("HF_TOKEN=hf_" + "x" * 30)
-        return 0
     if args[:1] == ["stop"]:
         log = os.environ.get("FAKE_DOCKER_STOP_LOG")
         if log:
             with open(log, "a") as fh:
                 for target in args[1:]:
                     fh.write(target + "\n")
+        return 0
+    if args[:1] == ["logs"]:
+        log = os.environ.get("FAKE_DOCKER_ARGV_LOG")
+        if log:
+            with open(log, "a") as fh:
+                fh.write(json.dumps({"argv": args}) + "\n")
+        print(f"fake docker logs {args[-1]}")
+        print("HF_TOKEN=hf_" + "x" * 30)
         return 0
     return 0
 
