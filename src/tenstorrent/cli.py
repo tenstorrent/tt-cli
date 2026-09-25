@@ -12,15 +12,18 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import io
+import sys
 from typing import Annotated, Callable, TypeVar
 
 import typer
+from typer.core import TyperGroup
 
 from . import __version__
 from ._compat import Abort, click
 from .context import AppContext
 from .errors import ExitCode, TTError, render_error
-from .output import OutputManager
+from .output import OutputManager, _stdout_isatty, maybe_page
 from .telemetry import NULL_SESSION
 
 F = TypeVar("F", bound=Callable)
@@ -131,12 +134,46 @@ def handle_tt_errors(fn: F) -> F:
     return wrapper  # type: ignore[return-value]
 
 
+class _TtyMirror(io.StringIO):
+    """A capture buffer that reports the real stdout's terminal-ness, so Rich keeps
+    colour and width when help is rendered into it instead of straight to the tty."""
+
+    def __init__(self, isatty: bool) -> None:
+        super().__init__()
+        self._isatty = isatty
+
+    def isatty(self) -> bool:
+        return self._isatty
+
+
+class PagedHelpGroup(TyperGroup):
+    """A command group whose `--help` goes through the pager when it will not fit.
+
+    Typer renders help with a Rich console of its own, writing to sys.stdout as it
+    goes, so the only way to page it is to capture stdout for the duration. The
+    capture mirrors the terminal's isatty() and Rich reads the width from the real
+    file descriptor, so the captured text is byte-for-byte what a direct render
+    would have shown. Off a terminal (pipes, CliRunner) `maybe_page` writes it
+    straight back out, so nothing changes for scripts or tests.
+
+    `--no-pager` is checked on argv: `--help` is eager and fires before the root
+    callback has parsed any flag.
+    """
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        buffer = _TtyMirror(_stdout_isatty())
+        with contextlib.redirect_stdout(buffer):
+            super().format_help(ctx, formatter)
+        maybe_page(buffer.getvalue(), disabled="--no-pager" in sys.argv[1:])
+
+
 app = typer.Typer(
     name="tt",
     help="Tenstorrent CLI: the single entry point to the Tenstorrent software stack.",
     no_args_is_help=True,
     rich_markup_mode="rich",
     context_settings={"help_option_names": ["-h", "--help"]},
+    cls=PagedHelpGroup,
 )
 
 # Bare `tt` / `tt <group>` must behave exactly like `-h`: print help, exit 0.
@@ -174,6 +211,14 @@ def root(
             rich_help_panel=PANEL_GLOBAL,
         ),
     ] = False,
+    no_pager: Annotated[
+        bool,
+        typer.Option(
+            "--no-pager",
+            help="Never page long output (listings, --help); TT_NO_PAGER=1 does the same.",
+            rich_help_panel=PANEL_OUTPUT,
+        ),
+    ] = False,
     version: Annotated[
         bool,
         typer.Option(
@@ -186,7 +231,11 @@ def root(
     ] = False,
 ) -> None:
     ctx.obj = AppContext.create(
-        json_mode=json_mode, quiet=quiet, verbose=verbose, offline=offline
+        json_mode=json_mode,
+        quiet=quiet,
+        verbose=verbose,
+        offline=offline,
+        no_pager=no_pager,
     )
 
 

@@ -81,9 +81,12 @@ class AppContext:
         quiet: bool = False,
         verbose: bool = False,
         offline: bool = False,
+        no_pager: bool = False,
     ) -> "AppContext":
         paths = get_paths()
-        output = OutputManager(json_mode=json_mode, quiet=quiet, verbose=verbose)
+        output = OutputManager(
+            json_mode=json_mode, quiet=quiet, verbose=verbose, no_pager=no_pager
+        )
         return cls(
             paths=paths,
             # on_warning: settings the file declares but this version can't act on are
