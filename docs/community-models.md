@@ -141,6 +141,14 @@ tt report issue
 
 This prompts for what matters, works out *which repo* the issue belongs to, and opens a prefilled GitHub issue with environment details and repo-specific debug output auto-collected (`--no-browser` to just print the URL). The "please run these six commands and paste the output" round-trip — the one that adds two days to every bug — is gone. `tt report feedback` handles the fuzzier stuff, routed to the product team.
 
+When the logs themselves are needed — or the problem is not something for a public issue — there is the private route:
+
+```bash
+tt report bundle
+```
+
+This asks for a one-line subject, collects everything support usually asks for (environment, tt-smi snapshot, config, tt and inference-server logs, container logs, with known secrets redacted) into `tt-report-<reference>.tar.gz`, and opens a pre-filled email to support@tenstorrent.com in your mail client with the archive already attached — review it, add what happened, and send. The support inbox turns it into a ticket for the DX team and replies come back to your own address. Where no desktop mail client is available it falls back to a `mailto:` draft (attach the archive by hand), and `--no-open` just writes the two files so you can send them however you like.
+
 ## Scope and limitations
 
 In the spirit of every good bring-up log, the caveats up front rather than discovered later:

@@ -279,12 +279,13 @@ COLLECTORS = (
 
 
 # -- archive ------------------------------------------------------------------------------
-def default_output_path(now: datetime | None = None) -> Path:
-    now = now or datetime.now(timezone.utc)
-    return Path.cwd() / f"tt-report-{now:%Y%m%dT%H%M%SZ}.tar.gz"
+def default_output_path(ref: str) -> Path:
+    """`./tt-report-<ref>.tar.gz`: the reference in the name ties the file to the
+    support ticket that quotes it. The creation time lives in manifest.json."""
+    return Path.cwd() / f"tt-report-{ref}.tar.gz"
 
 
-def write_bundle(appctx: AppContext, output: Path) -> dict:
+def write_bundle(appctx: AppContext, output: Path, *, ref: str) -> dict:
     """Run every collector and write the tar.gz. The only hard failure is not being
     able to write `output`; everything else degrades into manifest notes."""
     now = datetime.now(timezone.utc)
@@ -296,6 +297,7 @@ def write_bundle(appctx: AppContext, output: Path) -> dict:
         except Exception as exc:  # a collector bug must never cost the user the bundle
             notes.append(f"{collector.__name__}: failed ({type(exc).__name__}: {exc})")
     manifest = {
+        "ref": ref,
         "created": now.isoformat(timespec="seconds"),
         "tt_version": __version__,
         "files": [
@@ -323,6 +325,7 @@ def write_bundle(appctx: AppContext, output: Path) -> dict:
             exit_code=ExitCode.ERROR,
         ) from exc
     return {
+        "ref": ref,
         "path": str(output),
         "files": [e.name for e in entries],
         "size_bytes": output.stat().st_size,
