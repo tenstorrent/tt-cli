@@ -84,13 +84,15 @@ health = ["--version"]
 # app/backend/shared_config/models_from_inference_server.json on a bump). tt
 # delegates the whole lifecycle to the checkout's run.py: `run <model>` deploys,
 # `--stop-model <model>` stops it, `--stop` takes the stack down (after a stop or a
-# failed deploy). The first two exist only on the dev branch (tt-studio #1073,
-# 2026-09-04; not in v2.10.1), hence the branch pin. A branch moves, and
-# registry.ensure() only reinstalls when the pin *string* changes, so the studio
-# backend does a best-effort `git pull --ff-only` before each run (skipped with
-# --offline). Catalog copy taken from dev@f96ec8c7 on 2026-09-22.
+# failed deploy). The first two landed in tt-studio #1073 (2026-09-04) and reach
+# main with the v2.11.0 release (rc PR #1338); v2.10.1's main has only --stop, so
+# studio deploys need that release merged. Pinned to the main branch rather than
+# a tag so tt follows studio's releases. A branch moves, and registry.ensure()
+# only reinstalls when the pin *string* changes, so the studio backend does a
+# best-effort `git pull --ff-only` before each run (skipped with --offline).
+# Catalog copy taken from dev@f96ec8c7 on 2026-09-22.
 kind = "git-venv"
-golden_version = "dev"
+golden_version = "main"
 repo = "https://github.com/tenstorrent/tt-studio"
 entry = "run.py"
 python = "3.12"
