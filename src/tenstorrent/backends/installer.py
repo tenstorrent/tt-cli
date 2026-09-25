@@ -444,7 +444,7 @@ class InstallerBackend:
                 up_to_date.append(item.name)
                 # Routine: the phase line is the confirmation. `-v` unfolds it.
                 if ui.show_detail():
-                    ui.note(f"{item.name} {item.installed} is up to date", marker="✓")
+                    ui.note(f"{item.name} {item.current} is up to date", marker="✓")
                 continue
             spec = self.registry.spec(item.name)
             # The error is carried out of the block rather than handled inside it:
