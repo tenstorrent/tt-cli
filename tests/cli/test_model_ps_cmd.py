@@ -204,6 +204,28 @@ def test_ps_names_an_unmatched_inference_server_by_its_weights(runner, fake_dock
 
 
 @pytest.mark.fakes_only
+def test_ps_recognises_a_studio_deploy_of_an_inference_server_model(runner, fake_docker):
+    """`tt serve Llama-3.1-8B-Instruct --studio` runs tt-inference-server's own
+    image, so the studio_images prefix says nothing; the container being named
+    exactly after the catalog model is the tell."""
+    set_containers, _ = fake_docker
+    set_containers([
+        _record(
+            "5" * 64, "Llama-3.1-8B-Instruct",
+            image="ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release:0.19.0",
+            port=7000,
+        ),
+        _record("6" * 64, "llama-3.1-8b-instruct-mine", image="something:latest", port=7100),
+    ])
+    result = runner.invoke(app, ["model", "ps", "--no-probe", "--json"])
+    assert result.exit_code == 0, result.output
+    rows = _served(result)["served"]
+    assert [(r["name"], r["backend"], r["port"]) for r in rows] == [
+        ("Llama-3.1-8B-Instruct", "studio", 7000),
+    ]
+
+
+@pytest.mark.fakes_only
 def test_ps_excludes_studio_infra_and_unrelated_containers(runner, fake_docker):
     set_containers, _ = fake_docker
     set_containers([

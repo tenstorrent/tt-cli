@@ -53,6 +53,30 @@ def hf_home_dir(config: ConfigStore) -> Path:
     return Path.home() / ".cache" / "huggingface"
 
 
+def hf_token(config: ConfigStore | None) -> tuple[str, str] | None:
+    """(token, source) for the Hugging Face token a serving tool should inherit,
+    or None. Sources, first wins: the shell's HF_TOKEN ("env"), then the login
+    store written by `hf auth login` / `huggingface-cli login` ("hf-login":
+    HF_TOKEN_PATH, else <hf_home>/token). The value itself is never printed."""
+    env_token = os.environ.get("HF_TOKEN", "").strip()
+    if env_token:
+        return env_token, "env"
+    candidates = []
+    token_path = os.environ.get("HF_TOKEN_PATH", "").strip()
+    if token_path:
+        candidates.append(Path(token_path).expanduser())
+    if config is not None:
+        candidates.append(hf_home_dir(config) / "token")
+    for path in candidates:
+        try:
+            stored = path.read_text().strip()
+        except OSError:
+            continue
+        if stored:
+            return stored, "hf-login"
+    return None
+
+
 def hf_cache_dir(config: ConfigStore) -> str | None:
     """snapshot_download cache_dir for the resolved root; None defers to HF's
     own defaults/env when nothing is configured (identical outcome, but keeps

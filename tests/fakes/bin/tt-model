@@ -12,7 +12,13 @@ def main() -> int:
     if log:
         with open(log, "a") as fh:
             fh.write(
-                json.dumps({"argv": sys.argv[1:], "hf_home": os.environ.get("HF_HOME")})
+                json.dumps(
+                    {
+                        "argv": sys.argv[1:],
+                        "hf_home": os.environ.get("HF_HOME"),
+                        "hf_token": os.environ.get("HF_TOKEN"),
+                    }
+                )
                 + "\n"
             )
     if os.environ.get("FAKE_TT_MODEL_FAIL"):

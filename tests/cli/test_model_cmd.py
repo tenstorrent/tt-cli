@@ -27,6 +27,9 @@ def empty_hf_cache(monkeypatch):
 SMALL_SUPPORT = (
     Path(__file__).parent.parent / "fakes" / "data" / "model_support_small.json"
 )
+SMALL_STUDIO = (
+    Path(__file__).parent.parent / "fakes" / "data" / "studio_models_small.json"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +37,7 @@ def small_spec(monkeypatch):
     """Pin the catalog to the 4-model fixture so exact assertions stay stable when
     the shipped model_support.json is regenerated."""
     monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(SMALL_SUPPORT))
+    monkeypatch.setenv("TT_STUDIO_MODELS_PATH", str(SMALL_STUDIO))
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +100,8 @@ def test_model_list_detection_failure_warns_and_shows_all(runner):
     payload_start = result.output.index("{")
     payload = json.loads(result.output[payload_start:])
     assert payload["device"] is None
-    assert len(payload["models"]) == 5
+    # 5 from the support list + the 2 the studio fixture alone knows
+    assert len(payload["models"]) == 7
 
 
 @pytest.mark.fakes_only
@@ -105,8 +110,9 @@ def test_model_list_detection_failure_warns_and_shows_all(runner):
     [
         ("normal", "p300", ["Llama-3.1-8B-Instruct"]),
         # whisper is marked broken on p300x2 in the fixture, so it is hidden
-        # there while staying listed on n150 — see the test below.
-        ("multi", "p300x2", ["Llama-3.1-8B-Instruct"]),
+        # there while staying listed on n150 — see the test below. Qwen3.5-9B is
+        # a single-chip P150 model studio runs on one chip of a P300 board.
+        ("multi", "p300x2", ["Llama-3.1-8B-Instruct", "Qwen3.5-9B", "Qwen3.8-27B"]),
     ],
 )
 def test_model_list_filters_to_detected_device(
@@ -920,8 +926,11 @@ def _json_payload(output: str) -> dict:
     return json.loads(output[output.index("{"):])
 
 
+_CATALOG_SOURCES = ("tt-inference-server", "tt-studio")
+
+
 def _community_names(payload: dict) -> set[str]:
-    return {m["name"] for m in payload["models"] if m["source"] != "tt-inference-server"}
+    return {m["name"] for m in payload["models"] if m["source"] not in _CATALOG_SOURCES}
 
 
 def test_model_list_shows_catalog_and_community_together(
@@ -944,6 +953,7 @@ def test_model_list_shows_catalog_and_community_together(
         "source",
         "engine",
         "serving profiles",
+        "via",
         "weights",
     ]
 
@@ -1039,7 +1049,7 @@ def test_model_list_cached_filters_community_to_installed(
     result = runner.invoke(app, ["model", "list", "--all", "--cached", "--json"])
     payload = _json_payload(result.output)
     community = [
-        (m["name"], m["source"]) for m in payload["models"] if m["source"] != "tt-inference-server"
+        (m["name"], m["source"]) for m in payload["models"] if m["source"] not in _CATALOG_SOURCES
     ]
     assert community == [("ns/alpha", "local")]
 
@@ -1130,7 +1140,7 @@ def _hardware_cell_by_name(output: str) -> dict[str, str]:
     for line in output.splitlines():
         if line.startswith("│") and "ns/" in line:
             cells = [c.strip() for c in line.strip("│").split("│")]
-            rows[cells[0]] = cells[-2]  # profiles is second-to-last column
+            rows[cells[0]] = cells[-3]  # profiles sits before via and weights
     return rows
 
 
@@ -1306,7 +1316,7 @@ def test_model_list_includes_unpublished_local_bundles(
     assert result.exit_code == 0, result.output
     payload = _json_payload(result.output)
     rows = {
-        m["name"]: m["source"] for m in payload["models"] if m["source"] != "tt-inference-server"
+        m["name"]: m["source"] for m in payload["models"] if m["source"] not in _CATALOG_SOURCES
     }
     assert rows == {"ns/published": "HuggingFace", "someone/private": "local"}
 
@@ -1501,6 +1511,121 @@ def test_model_pull_bundle_flag_honours_offline(
     result = runner.invoke(app, ["--offline", "model", "pull", "ns/x", "--bundle"])
     assert result.exit_code == ExitCode.OFFLINE
     assert not fake_model_manager.exists()  # tt-model never invoked
+
+
+# -- studio models in the listing -----------------------------------------------------
+
+
+def test_model_list_shows_which_backend_serves_each_model(runner):
+    result = runner.invoke(app, ["model", "list", "--hw", "p300x2", "--json"])
+    assert result.exit_code == 0, result.output
+    by_name = {m["name"]: m for m in json.loads(result.output)["models"]}
+    assert by_name["Qwen3.5-9B"]["backends"] == ["studio"]
+    # in both catalogs: tt-inference-server is the default, studio is offered too
+    assert by_name["Llama-3.1-8B-Instruct"]["backends"] == ["inference-server", "studio"]
+    table = runner.invoke(app, ["model", "list", "--hw", "p300x2"]).output
+    assert "via" in table
+    assert "inference-server, studio" in table
+
+
+def test_model_list_offers_single_chip_studio_models_on_bigger_boards(runner):
+    result = runner.invoke(app, ["model", "list", "--hw", "p150x4", "--type", "llm", "--json"])
+    assert result.exit_code == 0, result.output
+    names = [m["name"] for m in json.loads(result.output)["models"]]
+    assert "Qwen3.5-9B" in names  # a P150 model, run on one chip of the mesh
+    assert "Qwen3.8-27B" not in names  # P300x2 only
+
+
+def test_model_info_for_a_studio_only_model(runner):
+    result = runner.invoke(app, ["model", "info", "Qwen3.5-9B"])
+    assert result.exit_code == 0, result.output
+    assert "studio" in result.output
+    assert "tt serve Qwen3.5-9B" in result.output
+    assert "one chip" in result.output  # the widened p300x2 row explains itself
+
+
+@pytest.mark.fakes_only
+def test_model_stop_routes_a_studio_only_model_to_studio(runner, studio_bin, fakes_dir):
+    """Stopping a studio model stops the model (resetting its chips) and then
+    studio's own containers and services, so nothing of studio's is left up."""
+    result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
+    assert result.exit_code == 0, result.output
+    calls = [json.loads(line) for line in studio_bin.read_text().splitlines()]
+    assert calls == [["--stop-model", "Qwen3.5-9B"], ["--stop"]]
+
+
+@pytest.mark.fakes_only
+def test_model_stop_reports_a_studio_teardown_that_fails(runner, studio_bin, monkeypatch):
+    monkeypatch.setenv("FAKE_STUDIO_STOP_FAIL", "1")
+    result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
+    assert result.exit_code == 0, result.output  # the model itself did stop
+    assert "`run.py --stop` exited with status 1" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_stop_tears_studio_down_even_when_stop_model_fails(
+    runner, studio_bin, monkeypatch
+):
+    """A model that already died (or never finished deploying) makes
+    `--stop-model` fail; studio's stack is up regardless and must still come
+    down, and the failure is still reported."""
+    monkeypatch.setenv("FAKE_STUDIO_STOP_MODEL_FAIL", "1")
+    result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert "`run.py --stop-model Qwen3.5-9B` exited with status 1" in result.output
+    calls = [json.loads(line) for line in studio_bin.read_text().splitlines()]
+    assert calls == [["--stop-model", "Qwen3.5-9B"], ["--stop"]]
+
+
+def test_model_stop_for_studio_does_not_install_studio(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
+    assert result.exit_code == ExitCode.TOOL_MISSING, result.output
+    assert not (isolated_dirs / "data" / "tools").exists()
+
+
+def test_model_info_for_a_model_both_paths_offer(runner):
+    result = runner.invoke(app, ["model", "info", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert "inference-server, studio" in result.output
+    assert "--studio" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_stop_asks_studio_when_studio_deployed_a_shared_model(
+    runner, studio_bin, fake_docker
+):
+    """`tt serve Llama-3.1-8B-Instruct --studio` leaves a container named after
+    the model that is not tt-inference-server's; its owner stops it."""
+    set_containers, stop_log = fake_docker
+    set_containers([
+        _container(
+            "cccccccccccc33",
+            name="Llama-3.1-8B-Instruct",
+            image="ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release:0.19.0",
+        ),
+    ])
+    result = runner.invoke(app, ["model", "stop", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    calls = [json.loads(line) for line in studio_bin.read_text().splitlines()]
+    assert calls == [["--stop-model", "Llama-3.1-8B-Instruct"], ["--stop"]]
+    assert not stop_log.exists()  # docker stop was not used
+
+
+@pytest.mark.fakes_only
+def test_model_stop_keeps_the_inference_server_path_when_studio_is_not_involved(
+    runner, studio_bin, fake_docker
+):
+    set_containers, stop_log = fake_docker
+    set_containers([
+        _container(
+            "dddddddddddd44",
+            snapshot="/hf/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/rev",
+        ),
+    ])
+    result = runner.invoke(app, ["model", "stop", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert stop_log.read_text().split() == ["dddddddddddd"]
+    assert not studio_bin.exists()
 
 
 # -- info on a tt-model bundle id --------------------------------------------------

@@ -23,7 +23,7 @@ from pathlib import Path
 from ...config.store import ConfigStore
 from ...errors import ExitCode, TTError
 from ...modelhub import bundles
-from ...modelhub.hub import hf_home_dir
+from ...modelhub.hub import hf_home_dir, hf_token
 from ...output import OutputManager
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
@@ -67,9 +67,15 @@ class ModelManagerBackend:
         pinned on **every** subcommand, not just the ones that download: `rm
         --include-weights` deletes from whatever cache its process resolves, so a
         configured paths.hf_model_cache_directory has to reach teardown too, or tt
-        would delete from the default cache and orphan the real weights.
+        would delete from the default cache and orphan the real weights. HF_TOKEN
+        is seeded from the HF login store when the shell has none, like the other
+        backends.
         """
-        return {**os.environ, "HF_HOME": str(hf_home_dir(self.config))}
+        env = {**os.environ, "HF_HOME": str(hf_home_dir(self.config))}
+        token = hf_token(self.config)
+        if token:
+            env.setdefault("HF_TOKEN", token[0])
+        return env
 
     def serve(
         self,
