@@ -61,6 +61,34 @@ def test_model_list_shows_catalog(runner):
     assert "resnet-50" in result.output
 
 
+def _column(output: str, index: int) -> str:
+    """Every fragment of one table column, joined in order. A folded cell spans
+    several lines, so a whole value is a substring of the joined column even when
+    no single line holds it."""
+    cells = []
+    for line in output.splitlines():
+        if "│" not in line:
+            continue
+        parts = line.split("│")[1:-1]
+        if len(parts) > index:
+            cells.append(parts[index].strip())
+    return "".join(cells)
+
+
+def test_model_list_keeps_every_name_whole_on_a_narrow_terminal(runner, monkeypatch):
+    """A 40-column tmux pane used to ellipsize the widest column — the model name,
+    the one value you paste into `tt serve`. Names now fold across lines instead:
+    a narrow terminal costs height, never characters."""
+    monkeypatch.setenv("COLUMNS", "40")
+    result = runner.invoke(app, ["model", "list", "--all"])
+    assert result.exit_code == 0, result.output
+    assert "…" not in result.output
+    names = _column(result.output, 0)
+    for name in ("Llama-3.1-8B-Instruct", "Qwen3-32B", "speecht5_tts", "whisper-large-v3"):
+        assert name in names, result.output
+    assert all(len(line) <= 40 for line in result.output.splitlines()), result.output
+
+
 def test_model_list_detection_failure_warns_and_shows_all(runner):
     result = runner.invoke(app, ["model", "list", "--json"])
     assert result.exit_code == 0
@@ -918,6 +946,22 @@ def test_model_list_shows_catalog_and_community_together(
         "serving profiles",
         "weights",
     ]
+
+
+def test_model_list_keeps_every_name_whole_on_a_narrow_terminal(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [
+        {"name": "tenstorrent/Llama-3.1-70B-Instruct-vllm-bundle", "kind": "container",
+         "engine": "vLLM", "arch": ["wormhole_b0"], "hardware": ["n300"],
+         "installed": False},
+    ])
+    monkeypatch.setenv("COLUMNS", "40")
+    result = runner.invoke(app, ["model", "list", "--community", "--all"])
+    assert result.exit_code == 0, result.output
+    assert "…" not in result.output
+    assert "tenstorrent/Llama-3.1-70B-Instruct-vllm-bundle" in _column(result.output, 0)
+    assert "n300" in _column(result.output, 3)
 
 
 def test_model_list_writes_the_completion_cache(runner, monkeypatch, isolated_dirs):

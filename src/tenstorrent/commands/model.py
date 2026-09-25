@@ -30,7 +30,7 @@ from ..backends.serving.model_manager import (
 )
 from ..backends.serving.ps import human_duration, list_served
 from .._compat import confirm
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, PagedHelpGroup, QuietFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..models.model import ModelInfo
@@ -39,7 +39,11 @@ from ..modelhub import bundles, hub
 from ..modelhub.completions import complete_local_model, complete_model
 
 model_app = typer.Typer(
-    help="Model management: browse, pull, and compile models.", no_args_is_help=True
+    help="Model management: browse, pull, and compile models.",
+    no_args_is_help=True,
+    # `tt model --help` is one of the two help pages long enough to scroll off a
+    # small pane; see PagedHelpGroup.
+    cls=PagedHelpGroup,
 )
 
 
@@ -85,6 +89,18 @@ def _known_devices() -> set[str]:
     return {
         device for model in ModelCatalog().list(cached_sizes={}) for device in model.hardware
     }
+
+
+def _add_columns(table: Table, columns: tuple[str, ...]) -> None:
+    """Columns that fold rather than ellipsize on a narrow terminal.
+
+    Rich's default overflow is `ellipsis`, which trims whatever column happens to
+    be widest — on a 40-column tmux pane that was the model name, the one value
+    the user needs whole to paste into `tt serve`. Folding wraps a long cell over
+    several lines instead, so a narrow terminal costs height, never characters.
+    """
+    for column in columns:
+        table.add_column(column, overflow="fold")
 
 
 def _validate_hardware(hardware: str) -> str:
@@ -193,10 +209,7 @@ def _model_table(payload: dict, *, hardware: str | None, detected: bool) -> Tabl
         if detected:
             title += " (detected — `tt model list --all` for every device/bundle)"
     table = Table(title=title, caption=_MODEL_CAPTION, caption_justify="left")
-    # fold rather than ellipsize: the name is what you paste into `tt serve`
-    table.add_column("name", overflow="fold")
-    for column in ("source", "engine", "serving profiles", "weights"):
-        table.add_column(column)
+    _add_columns(table, ("name", "source", "engine", "serving profiles", "weights"))
     for row in payload["models"]:
         table.add_row(
             row["name"],
@@ -298,6 +311,7 @@ def list_models(
     appctx.output.emit(
         {"device": device, "scope": scope, "models": rows},
         renderer=lambda payload: _model_table(payload, hardware=device, detected=detected),
+        page=True,
     )
 
 
