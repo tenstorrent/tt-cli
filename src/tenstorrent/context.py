@@ -91,10 +91,15 @@ class AppContext:
         verbose: bool = False,
         no_color: bool = False,
         offline: bool = False,
+        no_pager: bool = False,
     ) -> "AppContext":
         paths = get_paths()
         output = OutputManager(
-            json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color
+            json_mode=json_mode,
+            quiet=quiet,
+            verbose=verbose,
+            no_color=no_color,
+            no_pager=no_pager,
         )
         return cls(
             paths=paths,
