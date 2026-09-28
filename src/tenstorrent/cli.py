@@ -12,16 +12,20 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import io
+import sys
 from typing import Annotated, Callable, TypeVar
 
 import typer
+from typer.core import TyperGroup
 
 from . import __version__
-from ._compat import Abort, click
+from ._compat import EXIT_EXCEPTIONS, Abort, click
 from .context import AppContext
 from .errors import ExitCode, TTError, render_error
-from .output import OutputManager
+from .output import OutputManager, _stdout_isatty, maybe_page
 from .telemetry import NULL_SESSION
+from .ui import failure_card, interrupted_panel
 
 F = TypeVar("F", bound=Callable)
 
@@ -53,6 +57,26 @@ QuietFlag = Annotated[
         "--quiet",
         "-q",
         help="Suppress everything except errors.",
+        rich_help_panel=PANEL_OUTPUT,
+    ),
+]
+# Declared per-leaf for the same reason as --json/-q: Typer's leaf parser rejects
+# an unknown short option, so `tt update -v` needs the alias here — sniffing argv
+# in the root callback is too late.
+VerboseFlag = Annotated[
+    bool,
+    typer.Option(
+        "--verbose",
+        "-v",
+        help="Show the detail a normal run folds away.",
+        rich_help_panel=PANEL_OUTPUT,
+    ),
+]
+NoColorFlag = Annotated[
+    bool,
+    typer.Option(
+        "--no-color",
+        help="Disable colour and styling (also honours NO_COLOR).",
         rich_help_panel=PANEL_OUTPUT,
     ),
 ]
@@ -131,12 +155,51 @@ def handle_tt_errors(fn: F) -> F:
     return wrapper  # type: ignore[return-value]
 
 
+class _TtyMirror(io.StringIO):
+    """A capture buffer that reports the real stdout's terminal-ness, so Rich keeps
+    colour and width when help is rendered into it instead of straight to the tty."""
+
+    def __init__(self, isatty: bool) -> None:
+        super().__init__()
+        self._isatty = isatty
+
+    def isatty(self) -> bool:
+        return self._isatty
+
+
+class PagedHelpGroup(TyperGroup):
+    """A command group whose `--help` goes through the pager when it will not fit.
+
+    Typer renders help with a Rich console of its own, writing to sys.stdout as it
+    goes, so the only way to page it is to capture stdout for the duration. The
+    capture mirrors the terminal's isatty() and Rich reads the width from the real
+    file descriptor, so the captured text is byte-for-byte what a direct render
+    would have shown. Off a terminal (pipes, CliRunner) `maybe_page` writes it
+    straight back out, so nothing changes for scripts or tests.
+
+    `--no-pager` is checked on argv: `--help` is eager and fires before the root
+    callback has parsed any flag.
+    """
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        buffer = _TtyMirror(_stdout_isatty())
+        with contextlib.redirect_stdout(buffer):
+            super().format_help(ctx, formatter)
+        maybe_page(buffer.getvalue(), disabled="--no-pager" in sys.argv[1:])
+
+
 app = typer.Typer(
     name="tt",
     help="Tenstorrent CLI: the single entry point to the Tenstorrent software stack.",
     no_args_is_help=True,
     rich_markup_mode="rich",
+    # A traceback is not a user-facing error message, and Typer's pretty version
+    # renders local variables — which here can include environment values and
+    # tokens. main() turns an unexpected exception into a card and writes the
+    # traceback to a log instead; -v prints it.
+    pretty_exceptions_enable=False,
     context_settings={"help_option_names": ["-h", "--help"]},
+    cls=PagedHelpGroup,
 )
 
 # Bare `tt` / `tt <group>` must behave exactly like `-h`: print help, exit 0.
@@ -157,21 +220,22 @@ def root(
     ctx: typer.Context,
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
-    verbose: Annotated[
-        bool,
-        typer.Option(
-            "--verbose",
-            "-v",
-            help="Extra diagnostics on stderr.",
-            rich_help_panel=PANEL_OUTPUT,
-        ),
-    ] = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
     offline: Annotated[
         bool,
         typer.Option(
             "--offline",
             help="Never touch the network; fail with guidance instead.",
             rich_help_panel=PANEL_GLOBAL,
+        ),
+    ] = False,
+    no_pager: Annotated[
+        bool,
+        typer.Option(
+            "--no-pager",
+            help="Never page long output (listings, --help); TT_NO_PAGER=1 does the same.",
+            rich_help_panel=PANEL_OUTPUT,
         ),
     ] = False,
     version: Annotated[
@@ -186,7 +250,12 @@ def root(
     ] = False,
 ) -> None:
     ctx.obj = AppContext.create(
-        json_mode=json_mode, quiet=quiet, verbose=verbose, offline=offline
+        json_mode=json_mode,
+        quiet=quiet,
+        verbose=verbose,
+        no_color=no_color,
+        offline=offline,
+        no_pager=no_pager,
     )
 
 
@@ -235,6 +304,63 @@ def _register_commands() -> None:
 _register_commands()
 
 
+def _argv_verbose() -> bool:
+    """Whether -v/--verbose was asked for, read straight from argv.
+
+    main() runs outside any command, so there is no AppContext to consult — and
+    this is exactly the moment (an unexpected crash) when we most need to know.
+    """
+    return any(arg in ("-v", "--verbose") for arg in sys.argv[1:])
+
+
+def _resume_command() -> str:
+    """Reconstruct the command so an interrupt card can offer to resume it."""
+    args = [arg for arg in sys.argv[1:] if arg not in ("-v", "--verbose")]
+    return "tt " + " ".join(args) if args else "tt"
+
+
+def _report_unexpected(exc: BaseException) -> None:
+    """Render an unexpected exception as a card, and keep the traceback on disk.
+
+    The traceback is evidence, not UI: it goes to a log the card points at, and
+    only reaches the terminal under -v.
+    """
+    import traceback
+
+    output = OutputManager()
+    detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    log_path = None
+    try:
+        from .config.paths import get_paths
+        from .tools.runlog import open_run_log
+
+        run_log = open_run_log(get_paths().logs_dir, "crash", sys.argv)
+        if run_log is not None:
+            run_log.write(detail)
+            run_log.close()
+            log_path = run_log.path
+    except Exception:
+        pass
+
+    actions = [f"tt {' '.join(sys.argv[1:])} -v" if len(sys.argv) > 1 else "tt -v"]
+    actions.append("tt report issue")
+    output.ui.card(
+        failure_card(
+            "tt hit an unexpected error",
+            {
+                "cause": type(exc).__name__,
+                "detail": str(exc) or "No message was attached to the exception.",
+                "evidence": detail.strip().splitlines()[-1] if detail.strip() else "",
+                "actions": actions,
+            },
+            log_path=log_path,
+            consequence="Nothing further was attempted; the command stopped here.",
+        )
+    )
+    if _argv_verbose():
+        output.status_console.print(detail, style="muted")
+
+
 def main() -> None:
     """Console entry point: run the app, mapping every failure to a documented exit code."""
     try:
@@ -253,4 +379,20 @@ def main() -> None:
     except Abort:
         click.echo("Aborted.", err=True)
         code = 130
+    except KeyboardInterrupt:
+        # Ctrl-C is never a cliff: say how to pick up where we left off. Until now
+        # this fell through to a raw traceback.
+        OutputManager().ui.card(interrupted_panel(_resume_command()))
+        code = 130
+    except EXIT_EXCEPTIONS as exit_exc:
+        # A deliberate exit carrying a documented code — `raise typer.Exit(
+        # ExitCode.TOOL_FAILED)` is how commands report a partial failure. It must
+        # be honoured, NOT reported as a crash: typer.Exit subclasses RuntimeError,
+        # so it reaches `except Exception` below and would otherwise be turned into
+        # a card and exit 1, silently breaking the exit-code contract. CliRunner
+        # handles Exit itself, which is why no test caught this.
+        code = getattr(exit_exc, "exit_code", 0) or 0
+    except Exception as exc:
+        _report_unexpected(exc)
+        code = int(ExitCode.ERROR)
     raise SystemExit(code)

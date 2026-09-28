@@ -568,6 +568,29 @@ def test_aider_passes_the_endpoint_in_the_environment(
 
 
 @pytest.mark.fakes_only
+def test_qwencode_passes_the_endpoint_as_cli_arguments(
+    runner, served, fake_client_named, execed
+):
+    exe = fake_client_named("qwencode")
+    base = served("Qwen/Qwen3-32B")
+    result = runner.invoke(app, ["launch", "qwencode", "--url", base])
+    assert result.exit_code == 0, result.output
+    assert execed == [
+        [
+            str(exe),
+            "--auth-type",
+            "openai",
+            "--openai-api-key",
+            "tt-local",
+            "--openai-base-url",
+            base,
+            "--model",
+            "Qwen/Qwen3-32B",
+        ]
+    ]
+
+
+@pytest.mark.fakes_only
 def test_pi_refuses_a_model_without_tool_calling(runner, served, fake_client_named):
     fake_client_named("pi")
     base = served("mistralai/Mistral-7B-Instruct-v0.3")
@@ -580,7 +603,7 @@ def test_pi_refuses_a_model_without_tool_calling(runner, served, fake_client_nam
 def test_group_help_lists_every_client(runner):
     result = runner.invoke(app, ["launch", "--help"])
     assert result.exit_code == 0
-    for tool in ("opencode", "pi", "aider", "openwebui", "anythingllm"):
+    for tool in ("opencode", "pi", "aider", "qwencode", "openwebui", "anythingllm"):
         assert tool in result.output
     for subcommand in ("list", "stop", "disconnect"):
         assert subcommand in result.output
@@ -594,7 +617,7 @@ def test_list_shows_every_client_without_a_server(runner, monkeypatch):
     monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(app, ["launch", "list"])
     assert result.exit_code == 0, result.output
-    for tool in ("opencode", "pi", "aider", "openwebui", "anythingllm"):
+    for tool in ("opencode", "pi", "aider", "qwencode", "openwebui", "anythingllm"):
         assert tool in result.output
     # Rich wraps the column, so match on a fragment rather than the whole phrase.
     assert "needs docker" in result.output.replace("\n", " ")

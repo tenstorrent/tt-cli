@@ -93,6 +93,14 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+def _model_glob(model: ModelInfo, suffix: str) -> str:
+    """Filename glob for one model's workflow_logs entries. Names embed the model
+    between underscores, so the underscore-delimited pattern cannot confuse
+    Llama-3.1-8B with Llama-3.1-8B-Instruct. Shared by rm and logs so they agree
+    on what "this model's files" means."""
+    return f"*_{model.name}_{suffix}"
+
+
 def _size_of(path: Path) -> int:
     try:
         return _dir_size(path) if path.is_dir() else path.stat().st_size
@@ -119,6 +127,21 @@ _HF_SNAPSHOT_RE = re.compile(r"models--([^/]+?)--([^/]+?)[/\\]snapshots")
 # impl_id itself contains hyphens ("tt-transformers", "forge-vllm-plugin"), so
 # the name is kept whole and matched against a model rather than split.
 _VOLUME_PREFIX = "volume_id_"
+
+
+@dataclass(frozen=True)
+class ServeLaunch:
+    """A resolved, ready-to-run server invocation.
+
+    prepare() produces it and launch() consumes it, so the work we own can sit in
+    a phase and the hand-off to run.py is a separate, explicit step.
+    """
+
+    argv: list
+    env: dict
+    cwd: str
+    workflow: str
+    model_name: str
 
 
 @dataclass(frozen=True)
@@ -472,6 +495,64 @@ class InferenceServerBackend:
         argv += ["--service-port", str(port)]
         return argv
 
+    def prepare(
+        self,
+        model: ModelInfo,
+        *,
+        workflow: str = "server",
+        device: str | None = None,
+        offline: bool = False,
+        port: int | None = None,
+        force: bool = False,
+    ) -> "ServeLaunch":
+        """Everything before the server takes the terminal: checks, the managed
+        checkout, and the argv. Split from launch() so `tt serve` can put this in
+        a phase and hand off cleanly afterwards."""
+        ui = self.output.ui
+        with ui.step(f"Checking {model.name} is servable"):
+            self._check_servable(model)
+            support = self._check_supported(model, device, force=force)
+        if support is not None and support.serve_as:
+            # A state, not an action, and worth saying out loud: the user asked for
+            # one device spec and is getting another.
+            self.output.status(
+                f"{model.name} has no {device} spec — serving it through the "
+                f"{support.serve_as} one."
+            )
+        # registry.ensure may clone the repo and build a venv — minutes of work
+        # that now renders its own steps (see tools/installers.py).
+        entry = self.registry.ensure(TOOL, offline=offline)
+        argv = self._argv(
+            model,
+            workflow=workflow,
+            support=support,
+            device=device,
+            port=port,
+            entry=Path(entry),
+        )
+        return ServeLaunch(
+            argv=argv,
+            env=self._env(model),
+            # run.py assumes CWD is the repo root (it reads Path("VERSION") etc.);
+            # the official installer's wrapper script cd's there too.
+            cwd=str(Path(entry).parent),
+            workflow=workflow,
+            model_name=model.name,
+        )
+
+    def launch(self, plan: "ServeLaunch") -> int:
+        """Hand the terminal to run.py. Its output from here on is the server's."""
+        self.output.status(
+            f"Starting tt-inference-server ({plan.workflow}) for {plan.model_name} "
+            "— Ctrl-C to stop."
+        )
+        # Release every live row first: the child owns the terminal now, and a
+        # spinner thread still painting would fight its output.
+        self.output.ui.handoff()
+        return self.runner.stream(
+            plan.argv, env=plan.env, cwd=plan.cwd, tool=TOOL
+        )
+
     def serve(
         self,
         model: ModelInfo,
@@ -482,29 +563,16 @@ class InferenceServerBackend:
         port: int | None = None,
         force: bool = False,
     ) -> int:
-        self._check_servable(model)
-        support = self._check_supported(model, device, force=force)
-        entry = self.registry.ensure(TOOL, offline=offline)
-        argv = self._argv(
-            model,
-            workflow=workflow,
-            support=support,
-            device=device,
-            port=port,
-            entry=Path(entry),
-        )
-        if support is not None and support.serve_as:
-            self.output.status(
-                f"{model.name} has no {device} spec — serving it through the "
-                f"{support.serve_as} one."
+        """prepare + launch, for callers that don't need the two separated."""
+        return self.launch(
+            self.prepare(
+                model,
+                workflow=workflow,
+                device=device,
+                offline=offline,
+                port=port,
+                force=force,
             )
-        self.output.status(
-            f"Starting tt-inference-server ({workflow}) for {model.name} — Ctrl-C to stop."
-        )
-        # run.py assumes CWD is the repo root (it reads Path("VERSION") etc.);
-        # the official installer's wrapper script cd's there too.
-        return self.runner.stream(
-            argv, env=self._env(model), cwd=str(Path(entry).parent), tool=TOOL
         )
 
     # -- artifact cleanup (`tt model rm`) --------------------------------------------
@@ -538,7 +606,7 @@ class InferenceServerBackend:
         # cannot confuse Llama-3.1-8B with Llama-3.1-8B-Instruct.
         logs_dir = root / "workflow_logs"
         if logs_dir.is_dir():
-            for path in sorted(logs_dir.rglob(f"*_{model.name}_*")):
+            for path in sorted(logs_dir.rglob(_model_glob(model, "*"))):
                 found.append(Artifact("logs", path, _size_of(path)))
         # persistent_volume/volume_id_<impl>-<model>-v<version>/ — only created when
         # run.py is given --host-volume (tt serve passes --host-hf-cache instead), so
@@ -548,6 +616,29 @@ class InferenceServerBackend:
             for path in sorted(volumes.glob(f"volume_id_*-{model.name}-v*")):
                 found.append(Artifact("volume", path, _size_of(path)))
         return found
+
+    def log_files(self, model: ModelInfo) -> list[Path]:
+        """This model's log files under the checkout's workflow_logs/, oldest first.
+
+        run.py writes its own log to run_logs/run_<ts>_<model>_<workflow>_<id>.log
+        and streams the server container's output to
+        docker_server/{vllm|media|multihost}_<ts>_<model>_<device>_<workflow>.log
+        (v0.18.0; re-check on a pin bump). The `.log` suffix keeps the
+        runtime_model_specs/*.json sidecars out."""
+        root = self.checkout_root()
+        if root is None:
+            return []
+        logs_dir = root / "workflow_logs"
+        if not logs_dir.is_dir():
+            return []
+        files = [p for p in logs_dir.rglob(_model_glob(model, "*.log")) if p.is_file()]
+        return sorted(files, key=lambda p: (p.stat().st_mtime, p.name))
+
+    def newest_log_file(self, model: ModelInfo) -> Path | None:
+        """The log most recently written to — the live server's, when one is running:
+        run.py's foreground `docker run` keeps appending container output to it."""
+        files = self.log_files(model)
+        return files[-1] if files else None
 
     def remove_artifacts(self, artifacts: Sequence[Artifact]) -> int:
         """Delete the given artifacts; returns the bytes reclaimed."""

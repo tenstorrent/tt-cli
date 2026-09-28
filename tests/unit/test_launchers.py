@@ -431,6 +431,33 @@ def test_aider_configures_by_environment_and_writes_nothing(tmp_path, monkeypatc
     assert list(home.iterdir()) == []
 
 
+def test_qwencode_passes_everything_on_the_command_line_and_writes_nothing(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "qwencode-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    launcher = LAUNCHERS["qwencode"]
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    assert prep.config is None
+    assert prep.env == {}
+    assert prep.steps == [
+        [
+            "qwen",
+            "--auth-type",
+            "openai",
+            "--openai-api-key",
+            "tt-local",
+            "--openai-base-url",
+            "http://127.0.0.1:8000/v1",
+            "--model",
+            "Qwen/Qwen3-32B",
+        ]
+    ]
+    assert list(home.iterdir()) == []
+
+
 def test_anythingllm_pins_the_model_because_it_has_no_discovery():
     launcher = LAUNCHERS["anythingllm"]
     model = RunningModel(

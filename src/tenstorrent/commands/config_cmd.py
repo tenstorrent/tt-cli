@@ -19,7 +19,7 @@ from typing import Annotated
 
 import typer
 
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..config.store import (
     SOURCE_DEFAULT,
     SOURCE_FILE,
@@ -101,6 +101,8 @@ def list_config(
     ctx: typer.Context,
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
     sources: Annotated[
         bool,
         typer.Option("--sources", help="In JSON mode, report where each value comes from."),
@@ -108,7 +110,7 @@ def list_config(
 ) -> None:
     """Show all effective config values (defaults overlaid with your file)."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     entries = appctx.config.list_entries()
 
     def render(_: object) -> str:
@@ -145,10 +147,12 @@ def get_config(
     key: str = typer.Argument(help="Dotted key, e.g. telemetry.enabled"),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Print a single config value."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     value = appctx.config.get(key)
     # Human output stays the bare value — scripts parse it. Provenance is additive on
     # the JSON side only; a stray key in the file is reported via the warning instead.
@@ -166,10 +170,12 @@ def set_config(
     value: str = typer.Argument(help="New value (bool/int/float/string inferred)"),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Set a single config value (comments in the file are preserved)."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     typed = coerce_value(value)
     appctx.config.set(key, typed)
     appctx.output.status(f"{key} = {_fmt_toml_scalar(typed)}")
@@ -186,6 +192,8 @@ def sync_config(
     ] = False,
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Add settings introduced by newer tt versions to your config file.
 
@@ -194,7 +202,7 @@ def sync_config(
     editable, with the explanatory comments that ship in the template.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     added = appctx.config.sync(dry_run=dry_run)
 
     def render(data: dict) -> str:
@@ -223,10 +231,12 @@ def reset_config(
     ] = False,
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Replace the config file with a fresh, fully commented default template."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     path = appctx.config.paths.config_file
     if not yes and path.exists():
         # Same contract as `tt device reset`: no silent destruction, and non-interactive
@@ -251,11 +261,15 @@ def reset_config(
 @config_app.command("path")
 @handle_tt_errors
 def config_path(
-    ctx: typer.Context, json_mode: JsonFlag = False, quiet: QuietFlag = False
+    ctx: typer.Context,
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Print the config file location."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     appctx.output.emit(
         {"path": str(appctx.config.paths.config_file)},
         renderer=lambda d: d["path"],
