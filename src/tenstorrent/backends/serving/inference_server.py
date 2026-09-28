@@ -26,7 +26,6 @@ from ...models.device import DeviceSnapshot
 from ...models.model import DeviceSupport, ModelInfo
 from ...modelhub.hub import hf_home_dir, hf_token, uses_host_weight_cache
 from ...output import OutputManager
-from .progress import format_duration, ready_panel
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
 from . import boot, chips
@@ -163,6 +162,11 @@ _HF_SNAPSHOT_RE = re.compile(r"models--([^/]+?)--([^/]+?)[/\\]snapshots")
 # impl_id itself contains hyphens ("tt-transformers", "forge-vllm-plugin"), so
 # the name is kept whole and matched against a model rather than split.
 _VOLUME_PREFIX = "volume_id_"
+
+
+# The phase `tt serve` gives the boot: the wait for the endpoint is tt's own work,
+# so it gets a phase like Checks and Prepare (commands/serve.py registers all three).
+START_PHASE = "Start"
 
 
 @dataclass(frozen=True)
@@ -651,11 +655,9 @@ class InferenceServerBackend:
         )
 
     def launch(self, plan: "ServeLaunch") -> int:
-        """Run run.py. `--workflow server` is watched to ready (see
-        _serve_watched); anything else hands it the terminal."""
-        # Release every live row first: the child owns the terminal now, and a
-        # spinner thread still painting would fight its output.
-        self.output.ui.handoff()
+        """Run run.py. `--workflow server` is watched to ready as the Start phase
+        (see _serve_watched); anything else hands it the terminal."""
+        ui = self.output.ui
         if plan.workflow == "server" and plan.model is not None and plan.port.isdigit():
             return self._serve_watched(
                 plan.model,
@@ -666,11 +668,23 @@ class InferenceServerBackend:
                 port=int(plan.port),
             )
         # Benchmarks and evals are long client-side runs whose own output is the
-        # point, and a port we cannot parse leaves nothing to poll.
+        # point, and a port we cannot parse leaves nothing to poll — so there is
+        # no boot for tt to watch, and Start is skipped rather than held open
+        # across the hand-off.
+        ui.skip_phase(
+            START_PHASE,
+            f"run.py runs {plan.workflow} in the foreground"
+            if plan.workflow != "server"
+            else f"SERVICE_PORT={plan.port!r} is not a port tt can watch",
+        )
+        ui.final_stepper()
         self.output.status(
             f"Starting tt-inference-server ({plan.workflow}) for {plan.model_name} "
             "— Ctrl-C to stop."
         )
+        # Release every live row first: the child owns the terminal now, and a
+        # spinner thread still painting would fight its output.
+        ui.handoff()
         return self.runner.stream(
             plan.argv, env=plan.env, cwd=plan.cwd, tool=TOOL
         )
@@ -721,7 +735,7 @@ class InferenceServerBackend:
             free = [i for i in ids if i not in taken]
             if not free:
                 raise self._in_use(model, f"All {len(ids)} chips are in use.")
-            self.output.status(f"Serving on chip {free[0]} ({sent}).", style="dim")
+            self.output.ui.note(f"Serving on chip {free[0]} ({sent}).")
             return free[:1]
         if taken:
             held = ", ".join(map(str, sorted(taken)))
@@ -773,7 +787,7 @@ class InferenceServerBackend:
                 exit_code=ExitCode.USAGE,
                 reason="serve.port.in_use",
             )
-        self.output.status(f"Port {wanted} is in use; serving on {chosen} instead.", style="dim")
+        self.output.ui.note(f"Port {wanted} is in use; serving on {chosen} instead.")
         return chosen
 
     def _serve_watched(
@@ -788,18 +802,21 @@ class InferenceServerBackend:
     ) -> int:
         """`--workflow server`: render the boot as a checklist and wait it out.
 
+        The checklist is the Start phase's body; the ready card follows once
+        the stepper is complete.
+
         run.py returns as soon as the container is *listed*, which is minutes
         before a large model has finished loading — so waiting here is what makes
         `tt serve` mean "the endpoint is up", which is what `tt launch` straight
         afterwards needs it to mean.
         """
         raw_log = boot.raw_log_path(self.config.paths.logs_dir, model.name)
-        self.output.status(f"Serving {model.name} via tt-inference-server.")
-        self.output.status(
-            f"Raw output: tt model logs {model.name} --follow", style="dim", soft_wrap=True
-        )
-        try:
-            result = boot.watch_serve(
+        return boot.report_watched(
+            self.output,
+            name=model.name,
+            backend="tt-inference-server",
+            phase=START_PHASE,
+            watch=lambda: boot.watch_serve(
                 runner=self.runner,
                 output=self.output,
                 prepare=RunPyPreparation(),
@@ -814,45 +831,8 @@ class InferenceServerBackend:
                 weights_cache=hf_home_dir(self.config),
                 hf_token=hf_token(),
                 runtime=self.container_runtime(),
-            )
-        except KeyboardInterrupt:
-            # Swallowed, not re-raised: the container outlives run.py and so
-            # outlives us, so Ctrl-C here stopped the watching, not the serve.
-            # Say so, rather than leaving the user to guess whether it was torn
-            # down — and report it as the success it is.
-            self.output.status(
-                f"Stopped watching — {model.name} is still starting. "
-                f"`tt model logs {model.name} --follow` to follow it, "
-                f"`tt model stop {model.name}` to stop it."
-            )
-            return 0
-        if not result.ready:
-            self.output.warn(
-                f"tt could not follow {model.name}'s boot; it may still be starting. "
-                f"`tt model ps` shows what is up."
-            )
-            return 0
-        self.output.emit(
-            {
-                "model": model.name,
-                "backend": "tt-inference-server",
-                "endpoint": result.endpoint,
-                "container": result.container,
-                "log": str(result.raw_log),
-                "ready_seconds": round(result.elapsed, 1),
-            },
-            renderer=lambda data: ready_panel(
-                f"{data['model']} ready in {format_duration(data['ready_seconds'])}",
-                [
-                    ("endpoint", data["endpoint"]),
-                    ("models", f"curl {data['endpoint']}/models"),
-                    ("chat", "tt launch"),
-                ],
-                footer=f"tt model logs {data['model']} --follow"
-                f"   ·   tt model stop {data['model']}",
             ),
         )
-        return 0
 
     # -- artifact cleanup (`tt model rm`) --------------------------------------------
     def checkout_root(self) -> Path | None:

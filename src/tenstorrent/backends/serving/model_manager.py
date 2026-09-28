@@ -26,7 +26,6 @@ from ...errors import ExitCode, TTError
 from ...modelhub import bundles
 from ...modelhub.hub import hf_home_dir, hf_token
 from ...output import OutputManager
-from .progress import format_duration, ready_panel
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
 from . import boot
@@ -119,18 +118,18 @@ class ModelManagerBackend:
             # The user asked tt-model not to wait (--detach) or not to start
             # anything (--print): there is no boot for tt to watch, so this is a
             # plain passthrough and tt-model's own output is the answer.
+            self.output.status(f"Serving {repo_id} via tt-model …")
             return self.runner.stream(argv, env=self._env(), tool=TOOL)
         raw_log = boot.raw_log_path(self.config.paths.logs_dir, repo_id.replace("/", "--"))
-        self.output.status(f"Serving {repo_id} via tt-model.")
-        self.output.status(
-            f"Raw output: tt model logs {repo_id} --follow", style="dim", soft_wrap=True
-        )
-        prepare = ModelManagerPreparation(repo_id)
-        try:
-            result = boot.watch_serve(
+        self.output.ui.note(f"Serving {repo_id} via tt-model.")
+        return boot.report_watched(
+            self.output,
+            name=repo_id,
+            backend="tt-model",
+            watch=lambda: boot.watch_serve(
                 runner=self.runner,
                 output=self.output,
-                prepare=prepare,
+                prepare=ModelManagerPreparation(repo_id),
                 argv=argv,
                 env=self._env(),
                 cwd=None,
@@ -142,41 +141,8 @@ class ModelManagerBackend:
                 weights_cache=hf_home_dir(self.config),
                 hf_token=hf_token(),
                 runtime=self._docker(),
-            )
-        except KeyboardInterrupt:
-            self.output.status(
-                f"Stopped watching — {repo_id} is still starting. "
-                f"`tt model logs {repo_id} --follow` to follow it, "
-                f"`tt model stop {repo_id}` to stop it."
-            )
-            return 0
-        if not result.ready:
-            self.output.warn(
-                f"tt could not follow {repo_id}'s boot; it may still be starting. "
-                "`tt model ps` shows what is up."
-            )
-            return 0
-        self.output.emit(
-            {
-                "model": repo_id,
-                "backend": "tt-model",
-                "endpoint": result.endpoint,
-                "container": result.container,
-                "log": str(result.raw_log),
-                "ready_seconds": round(result.elapsed, 1),
-            },
-            renderer=lambda data: ready_panel(
-                f"{data['model']} ready in {format_duration(data['ready_seconds'])}",
-                [
-                    ("endpoint", data["endpoint"]),
-                    ("models", f"curl {data['endpoint']}/models"),
-                    ("chat", "tt launch"),
-                ],
-                footer=f"tt model logs {data['model']} --follow"
-                f"   ·   tt model stop {data['model']}",
             ),
         )
-        return 0
 
     @staticmethod
     def _engine(repo_id: str) -> str:

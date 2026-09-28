@@ -21,6 +21,7 @@ from rich.text import Text
 
 from ..backends.device import get_device_backend
 from ..backends.serving.inference_server import (
+    START_PHASE,
     InferenceServerBackend,
     choose_device,
     infer_device_config,
@@ -45,9 +46,11 @@ class Workflow(str, Enum):
     evals = "evals"
 
 
-# Fixed roadmap for the tt-inference-server path. The bundle path hands straight
-# off to tt-model, which renders this design itself, so it declares no phases.
-PHASES = ["Checks", "Prepare"]
+# Fixed roadmap for the tt-inference-server path: Start is the watched boot, and
+# is skipped (not dropped) for benchmarks and evals, which run.py runs in the
+# foreground. The bundle path declares none: tt-model prepares and starts the
+# container in one step, so its checklist is the whole run.
+PHASES = ["Checks", "Prepare", START_PHASE]
 
 
 def _autodetect_device(appctx) -> str | None:
@@ -236,9 +239,9 @@ def serve(
         )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
-    # Two phases, not three: Checks and Prepare are the work tt owns. Once run.py
-    # takes the terminal its lifetime is not our phase to hold open — the stepper
-    # completes and the server's output takes over.
+    # Checks and Prepare, then Start: tt watches the boot until the endpoint
+    # answers, so that wait is tt's work too. launch() owns Start, and skips it
+    # when run.py takes the terminal instead (benchmarks, evals).
     ui = appctx.output.ui
     ui.register_phases(PHASES)
     with ui.phase("Checks"):
@@ -254,7 +257,6 @@ def serve(
             port=port,
             force=force,
         )
-    ui.final_stepper()
     backend.launch(launch)
 
 

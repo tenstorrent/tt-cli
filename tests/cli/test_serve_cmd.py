@@ -1008,12 +1008,36 @@ def test_serve_help_documents_the_bundle_options(runner):
 
 
 # -- phase structure and the hand-off ------------------------------------------
-def test_serve_declares_two_phases_for_the_work_it_owns():
-    """Checks and Prepare are tt's work. Once run.py takes the terminal its
-    lifetime is not our phase to hold open, so the stepper completes first."""
+def test_serve_declares_three_phases_for_the_work_it_owns():
+    """Checks and Prepare are tt's work, and so is Start: tt watches the boot
+    until the endpoint answers rather than handing run.py the terminal."""
     from tenstorrent.commands.serve import PHASES
 
-    assert PHASES == ["Checks", "Prepare"]
+    assert PHASES == ["Checks", "Prepare", "Start"]
+
+
+def test_a_foreground_workflow_skips_start_instead_of_holding_it_open(monkeypatch):
+    """Benchmarks own the terminal, so Start is skipped (the count stays 3) and
+    the stepper completes before the hand-off."""
+    from tenstorrent.backends.serving.inference_server import (
+        InferenceServerBackend,
+        ServeLaunch,
+    )
+    from tenstorrent.output import OutputManager
+
+    class FakeRunner:
+        def stream(self, argv, **kwargs):
+            return 0
+
+    output = OutputManager()
+    output.ui.register_phases(["Checks", "Prepare", "Start"])
+    backend = InferenceServerBackend.__new__(InferenceServerBackend)
+    backend.output = output
+    backend.runner = FakeRunner()
+    backend.launch(
+        ServeLaunch(argv=["run.py"], env={}, cwd="/tmp", workflow="benchmarks", model_name="m")
+    )
+    assert [p["status"] for p in output.ui._phases] == ["pending", "pending", "skipped"]
 
 
 def test_prepare_and_launch_are_separable():

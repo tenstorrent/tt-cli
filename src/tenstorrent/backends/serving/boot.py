@@ -19,6 +19,7 @@ directory.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -36,9 +37,11 @@ from typing import Callable, Sequence
 from ...errors import ExitCode, TTError
 from ...launchers import discovery
 from ...output import OutputManager
-from .progress import Checklist, PhaseTracker, WeightsProgress, format_bytes, phases_for
 from ...tools.runner import LineSplitter, Runner
+from ...ui.cards import interrupted_panel, ready_panel
+from ...ui.format import fmt_bytes, fmt_duration
 from .preparation import Preparation
+from .progress import Checklist, PhaseTracker, WeightsProgress, phases_for
 
 #: A cold boot JIT-compiles kernels and can genuinely take the best part of an
 #: hour on a large model; the wait is bounded so a hung device still ends.
@@ -73,6 +76,78 @@ class BootResult:
     container: str | None
     raw_log: Path
     elapsed: float
+
+
+def report_watched(
+    output: OutputManager,
+    *,
+    name: str,
+    backend: str,
+    watch: Callable[[], BootResult],
+    phase: str | None = None,
+) -> int:
+    """Run `watch` and say how it ended, the same way for either backend.
+
+    With `phase`, the boot is that phase's body — tt owns the wait, so it is a
+    phase like any other — and the stepper is completed before the card, which
+    is drawn after the phase collapses, never inside it.
+    """
+    ui = output.ui
+    try:
+        with ui.phase(phase) if phase else contextlib.nullcontext():
+            ui.note(f"Raw output: tt model logs {name} --follow")
+            result = watch()
+    except KeyboardInterrupt:
+        # Swallowed, not re-raised: the container outlives the backend and so
+        # outlives us, so Ctrl-C stopped the watching, not the serve. Say so,
+        # rather than leaving the user to guess whether it was torn down — and
+        # report it as the success it is.
+        ui.note(f"Stopped watching — {name} is still starting.")
+        ui.card(
+            interrupted_panel(
+                f"tt model logs {name} --follow", cleanup=f"tt model stop {name}"
+            )
+        )
+        return 0
+    if phase:
+        ui.final_stepper()
+    if not result.ready:
+        output.warn(
+            f"tt could not follow {name}'s boot; it may still be starting. "
+            "`tt model ps` shows what is up."
+        )
+        return 0
+    output.emit(
+        {
+            "model": name,
+            "backend": backend,
+            "endpoint": result.endpoint,
+            "container": result.container,
+            "log": str(result.raw_log),
+            "ready_seconds": round(result.elapsed, 1),
+            "timings": ui.timings.to_dict(),
+        },
+        renderer=_ready_card,
+    )
+    return 0
+
+
+def _ready_card(data: dict):
+    """The end-of-serve card: where the server is, and what to do with it next."""
+    name = data["model"]
+    return ready_panel(
+        f"{name} ready",
+        [
+            ("endpoint", data["endpoint"]),
+            ("models", f"curl {data['endpoint']}/models"),
+            ("chat", "tt launch"),
+        ],
+        footer_lines=[
+            f"[muted]Ready in {fmt_duration(data['ready_seconds'])} · via {data['backend']}[/muted]",
+            f"[muted]Logs · tt model logs {name} --follow[/muted]",
+            f"[muted]Stop · tt model stop {name}[/muted]",
+        ],
+    )
 
 
 def endpoint_for(prepare: Preparation, port: int) -> str:
@@ -318,7 +393,7 @@ def _watch(
         elif done:
             # No total from the Hub: say what has landed rather than guess at a
             # percentage of something we do not know.
-            view.detail(format_bytes(done))
+            view.detail(fmt_bytes(done))
 
     def show_container_weights() -> None:
         """What has landed of a download the container makes itself, measured
@@ -353,7 +428,7 @@ def _watch(
             return
         size = du.stdout.split()[0] if du.returncode == 0 and du.stdout.split() else ""
         if size.isdigit() and int(size):
-            view.detail(format_bytes(int(size)))
+            view.detail(fmt_bytes(int(size)))
 
     def drain() -> None:
         """Read out everything the backend said on its way out, before judging

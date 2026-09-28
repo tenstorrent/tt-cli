@@ -10,7 +10,7 @@ that touches a terminal. Backends drive them — see
 
 from .phases import HOST_PHASES, MEDIA_PHASES, VLLM_PHASES, Phase, phases_for
 from .tracker import Event, PhaseTracker
-from .view import Checklist, format_bytes, format_duration, ready_panel
+from .view import Checklist
 from .weights import WeightsProgress
 
 __all__ = [
@@ -22,8 +22,5 @@ __all__ = [
     "PhaseTracker",
     "VLLM_PHASES",
     "WeightsProgress",
-    "format_bytes",
-    "format_duration",
     "phases_for",
-    "ready_panel",
 ]

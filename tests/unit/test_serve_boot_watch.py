@@ -333,7 +333,7 @@ def test_byte_progress_survives_the_round_trip():
         '{"event":"step","key":"weights","state":"start"}',
         '{"event":"progress","done":3221225472,"total":16000000000,"unit":"bytes"}',
     ])
-    assert "3.22 GB" in shown  # bytes, not a raw count
+    assert "3.2 GB" in shown  # bytes, not a raw count
 
 
 def test_everything_it_prints_is_kept_as_evidence_whether_or_not_it_is_a_row():
@@ -668,4 +668,4 @@ def test_a_download_inside_the_container_shows_what_has_landed(harness, monkeypa
     with pytest.raises(TTError):
         harness(container_body=body, logs_linger=5.0, linger=5.0, capture=capture,
                 probe_answers=(), output=output, monkeypatch=monkeypatch)
-    assert "1.17 GB" in output.status_console.file.getvalue()
+    assert "1.2 GB" in output.status_console.file.getvalue()

@@ -104,13 +104,19 @@ message is the run that never needs it.
 | Command | Phases | Notes |
 |---|---|---|
 | `tt update` | `Checks · Tools · System` | `--offline` **skips** System (count stays 3); `--dry-run` enters no phase |
-| `tt serve` (inference-server) | `Checks · Prepare` | the server's own lifetime is not a phase; the stepper completes, then run.py takes the terminal |
-| `tt serve` (bundle id) | none | hands off to tt-model, which renders this design itself |
+| `tt serve` (inference-server) | `Checks · Prepare · Start` | Start is the watched boot (a checklist until the endpoint answers, then the ready card); benchmarks/evals **skip** it and run.py takes the terminal |
+| `tt serve` (bundle id) | none | tt-model prepares and starts the container in one step, so the boot checklist is the whole run; `--detach`/`--print` hand off to tt-model unchanged |
+
+The serve checklist (`backends/serving/progress/view.py`) is the one live display
+outside `ui.*`: a boot needs a step counter, a bar and a detail on its live line.
+It follows everything here anyway — theme names, glyphs, `fmt_*`, the body
+gutter, `Ui.live` for motion, the `_ACTIVE_LIVE` slot, no durations when piped.
 
 Two rules those encode:
 
 - **Don't invent a phase for someone else's work.** `tt serve` has no Pull phase
-  because the image pull happens inside run.py.
+  because the image pull happens inside run.py — it is a row of the Start
+  checklist, which tt reads from the container rather than owning.
 - **Don't hold a phase open across a hand-off.** Call `ui.handoff()` and let the
   child own the terminal.
 
