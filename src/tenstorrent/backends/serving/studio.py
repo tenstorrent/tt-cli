@@ -73,27 +73,6 @@ class StudioBackend:
         argv = [self._python_for(entry), str(entry)] if entry else ["<run.py>"]
         return argv + ["run", model.name]
 
-    def _refresh_checkout(self, root: Path, *, offline: bool) -> None:
-        """Best-effort `git pull` of the branch-pinned checkout.
-
-        The pin is a branch (see supplement.toml), and registry.ensure() only
-        reinstalls when the pin string changes, so without this the checkout would
-        stay at whatever the branch pointed to the day it was cloned. Failure is a
-        warning, not an error: an unreachable GitHub must not stop a deploy that
-        needs nothing new."""
-        if offline or not (root / ".git").exists():
-            return
-        result = self.runner.capture(
-            ["git", "-C", str(root), "pull", "--ff-only", "--quiet"],
-            check=False,
-            tool="git (updating tt-studio)",
-        )
-        if result.returncode != 0:
-            self.output.warn(
-                "could not update the tt-studio checkout; serving with the version "
-                "already on disk."
-            )
-
     def serve(
         self,
         model: ModelInfo,
@@ -108,9 +87,6 @@ class StudioBackend:
                 "chips and ports itself (its own `--device-id` picks chips)."
             )
         entry = Path(self.registry.ensure(TOOL, offline=offline))
-        found = self.registry._resolve_or_none(TOOL)
-        if found is not None and found[1] == "installed":
-            self._refresh_checkout(entry.parent, offline=offline)
         self.output.status(
             f"Starting TT-Studio and deploying {model.name} — Ctrl-C stops watching, "
             f"`tt model stop {model.name}` stops the model and studio."

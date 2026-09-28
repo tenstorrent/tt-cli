@@ -49,6 +49,11 @@ kind = "uv-tool"
 package = "tt-model"
 repo = "https://github.com/tenstorrent/tt-model-manager"
 golden_version = "0000000000000000000000000000000000000000"
+
+[tools.tt-studio]
+kind = "git-venv"
+golden_version = "v2.11.0"
+repo = "https://github.com/tenstorrent/tt-studio"
 """
 
 TESTS_YML = "      - uses: tenstorrent/tt-installer@v3.5.4\n"
@@ -117,6 +122,7 @@ def gh(tmp_path, monkeypatch) -> FakeGitHub:
     fake.add_release("tenstorrent/tt-installer", "v3.5.4", {"install.sh": _script("v1.0.0")}, latest=True)
     fake.add_release("tenstorrent/tt-sw-manifest", "v1.0.0", {"golden.json": GOLDEN_V1}, latest=True)
     fake.add_release("tenstorrent/tt-inference-server", "v0.18.0", {}, latest=True)
+    fake.add_release("tenstorrent/tt-studio", "v2.11.0", {}, latest=True)
     # The bundled spec, and the support list generated from it — the script
     # rebuilds the second whenever it re-bundles the first, and compares model
     # counts against it.
@@ -270,6 +276,18 @@ def test_inference_server_bump_is_refused_when_the_spec_cannot_be_bundled(gh, sp
 
     assert not plan.changed
     assert any(reason in n and "left at v0.18.0" in n for n in plan.notes)
+
+
+def test_studio_bump_follows_the_latest_release(gh):
+    gh.add_release("tenstorrent/tt-studio", "v2.12.0", {}, latest=True)
+
+    plan = _plan(gh)
+
+    (change,) = plan.changes
+    assert (change.component, change.old, change.new) == ("tt-studio", "v2.11.0", "v2.12.0")
+    doc = tomlkit.parse(plan.files[bump_pins.SUPPLEMENT].decode())
+    assert doc["tools"]["tt-studio"]["golden_version"] == "v2.12.0"
+    assert "run.py's" in bump_pins.render_summary(plan)
 
 
 def test_model_manager_tracks_the_default_branch_head(gh):
