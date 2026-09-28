@@ -61,9 +61,10 @@ FAKE_RUN_PY = textwrap.dedent(
 #: stays open exactly as the real one does while the container runs.
 FAKE_DOCKER_LOGS = textwrap.dedent(
     '''
-    import sys, time
+    import pathlib, sys, time
     sys.stdout.write(open(sys.argv[1]).read())
     sys.stdout.flush()
+    pathlib.Path(sys.argv[3]).touch()
     time.sleep(float(sys.argv[2]))
     '''
 )
@@ -99,18 +100,28 @@ def harness(tmp_path):
         # container had written a line. No interval between them, though — the
         # tests should not pay for the pacing a real boot needs.
         answers = list(probe_answers)
+        replayed = tmp_path / "container-log-replayed"
+        replayed.unlink(missing_ok=True)
+        followed = []
+
+        def probe(url, timeout_s=0):
+            # Not before the replayed log is out: a slow runner can start the
+            # logs script after the probe would otherwise have answered.
+            if followed and not replayed.exists():
+                return None
+            return ["served"] if answers and answers.pop(0) else None
+
         monkeypatch.setattr(boot, "_PROBE_INTERVAL_S", 0.0)
         monkeypatch.setattr(boot, "_healthy", lambda url: True)
-        monkeypatch.setattr(
-            boot.discovery, "probe",
-            lambda url, timeout_s=0: ["served"] if answers and answers.pop(0) else None,
-        )
+        monkeypatch.setattr(boot.discovery, "probe", probe)
 
         def popen(argv, **kwargs):
             # The watcher spawns `docker logs --follow <id>` for the container
             # half; swap in a script that replays a captured boot.
             if argv[:2] == ["docker", "logs"]:
-                argv = [sys.executable, str(logs_script), str(body), str(logs_linger)]
+                followed.append(True)
+                argv = [sys.executable, str(logs_script), str(body), str(logs_linger),
+                        str(replayed)]
             return subprocess.Popen(argv, **kwargs)
 
         runner = Runner(popen=popen, spawn=capture or _running_on(20000))
@@ -136,7 +147,8 @@ def harness(tmp_path):
 
 
 def test_a_watched_serve_reaches_ready_and_tees_everything(harness, tmp_path, monkeypatch):
-    result = harness(monkeypatch=monkeypatch)
+    # A healthy container keeps its log open past ready.
+    result = harness(monkeypatch=monkeypatch, logs_linger=5.0)
     assert result.ready
     assert result.endpoint == "http://127.0.0.1:20000/v1"
     # The name, not the id: it is what `tt model ps` and `tt model stop` show,
