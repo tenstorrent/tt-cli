@@ -101,11 +101,14 @@ class AppContext:
             no_color=no_color,
             no_pager=no_pager,
         )
+        # on_warning: settings the file declares but this version can't act on are
+        # reported on stderr wherever config is read, not only under `tt config`.
+        config = ConfigStore(paths, on_warning=output.warn)
+        # Read lazily: only a listing that is about to page consults the setting.
+        output.pager_enabled = lambda: bool(config.get("output.pager"))
         return cls(
             paths=paths,
-            # on_warning: settings the file declares but this version can't act on are
-            # reported on stderr wherever config is read, not only under `tt config`.
-            config=ConfigStore(paths, on_warning=output.warn),
+            config=config,
             output=output,
             offline=offline,
         )

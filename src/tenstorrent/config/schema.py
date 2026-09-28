@@ -46,6 +46,11 @@ DEFAULTS: dict[str, Any] = {
         # and mention it on the next interactive run. Off: never look.
         "check": True,
     },
+    "output": {
+        # Page listings taller than the terminal through less. Off: print them
+        # straight out, like --no-pager / TT_NO_PAGER=1 on every run.
+        "pager": True,
+    },
 }
 
 TEMPLATE = """\
@@ -114,6 +119,12 @@ backend = "smi"
 # next interactive run. `tt self update` applies it where tt owns its environment.
 # false = never look. Per-run: TT_NO_UPDATE_CHECK=1; --offline also skips it.
 check = true
+
+[output]
+# Listings taller than the terminal (e.g. `tt model list`) open in less; press q to
+# quit (Ctrl+C works too). false = always print straight out. Per-run: --no-pager or
+# TT_NO_PAGER=1. Pick another pager with TT_PAGER or PAGER.
+pager = true
 """
 
 
