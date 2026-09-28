@@ -274,6 +274,7 @@ def test_maybe_page_gives_less_its_defaults_only_when_unset(monkeypatch):
     # the -P prompt runs to the end of the string, so it has to be last.
     assert output.LESS_DEFAULTS.startswith("-FRXK ")
     assert output.LESS_DEFAULTS.split(" -")[-1].startswith("Ps")
+    assert "Enter/Space for more" in output.LESS_DEFAULTS
     assert output.LESS_DEFAULTS.endswith("q to quit")
 
 

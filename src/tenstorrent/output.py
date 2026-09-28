@@ -53,9 +53,10 @@ def pager_disabled() -> bool:
 
 # git's -FRX (quit if it fits, keep colour, leave the screen alone) plus K, so Ctrl+C
 # quits less cleanly (systemd's default carries K for the same reason), and a prompt
-# that says how to leave: "lines 1-40  q to quit", "... of 200  (END)  q to quit".
-# The -P prompt runs to the end of the string, so it must stay the last option.
-LESS_DEFAULTS = "-FRXK -Pslines %lt-%lb?L of %L.  ?e(END)  .q to quit"
+# that says how to move and how to leave: "lines 1-40  Enter/Space for more, q to
+# quit", and at the end "... of 200  (END)  q to quit". The -P prompt runs to the end
+# of the string, so it must stay the last option.
+LESS_DEFAULTS = "-FRXK -Pslines %lt-%lb?L of %L.  ?e(END)  :Enter/Space for more, .q to quit"
 
 
 def _run_pager(pager: str, data: bytes, env: dict[str, str]) -> int | None:
