@@ -269,13 +269,15 @@ def test_maybe_page_gives_less_its_defaults_only_when_unset(monkeypatch):
     monkeypatch.setenv("PAGER", "more")
     output.maybe_page(TALL)  # not less: nothing injected
     assert [s["cmd"] for s in fake.launches] == ["less", "less", "more"]
-    assert [s["LESS"] for s in fake.launches] == [output.LESS_DEFAULTS, "-S", None]
-    # git's FRX, K so Ctrl+C quits less cleanly, and a prompt saying how to leave;
-    # the -P prompt runs to the end of the string, so it has to be last.
-    assert output.LESS_DEFAULTS.startswith("-FRXK ")
-    assert output.LESS_DEFAULTS.split(" -")[-1].startswith("Ps")
-    assert "Enter/Space for more" in output.LESS_DEFAULTS
-    assert output.LESS_DEFAULTS.endswith("q to quit")
+    assert [s["LESS"] for s in fake.launches] == [output.less_defaults(20), "-S", None]
+    # git's FRX, K so Ctrl+C quits less cleanly, and a prompt saying where you are and
+    # how to leave; the -P prompt runs to the end of the string, so it has to be last.
+    defaults = output.less_defaults(20)
+    assert defaults.startswith("-FRXK ")
+    assert defaults.split(" -")[-1].startswith("Ps")
+    assert "of 20 " in defaults  # tt knows the total; less would not until the end
+    assert "Enter/Space for more" in defaults
+    assert defaults.endswith("q to quit")
 
 
 def test_ctrl_c_at_the_pager_waits_for_it_instead_of_killing_it(monkeypatch, capsys):

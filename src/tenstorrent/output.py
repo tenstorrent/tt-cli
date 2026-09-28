@@ -51,12 +51,18 @@ def pager_disabled() -> bool:
     return os.environ.get("TT_NO_PAGER", "") not in ("", "0")
 
 
-# git's -FRX (quit if it fits, keep colour, leave the screen alone) plus K, so Ctrl+C
-# quits less cleanly (systemd's default carries K for the same reason), and a prompt
-# that says how to move and how to leave: "lines 1-40  Enter/Space for more, q to
-# quit", and at the end "... of 200  (END)  q to quit". The -P prompt runs to the end
-# of the string, so it must stay the last option.
-LESS_DEFAULTS = "-FRXK -Pslines %lt-%lb?L of %L.  ?e(END)  :Enter/Space for more, .q to quit"
+def less_defaults(total_lines: int) -> str:
+    """LESS for tt's pager: git's -FRX (quit if it fits, keep colour, leave the screen
+    alone) plus K, so Ctrl+C quits less cleanly (systemd's default carries K for the
+    same reason), and a prompt that says where you are, how to move and how to leave:
+    "lines 1-40 of 200  Enter/Space for more, q to quit", and at the end
+    "lines 161-200 of 200  (END)  q to quit".
+
+    tt supplies the total because less reads a pipe lazily and does not know it until
+    the end. The -P prompt runs to the end of the string, so it must stay last."""
+    return (
+        f"-FRXK -Pslines %lt-%lb of {total_lines}  ?e(END)  :Enter/Space for more, .q to quit"
+    )
 
 
 def _run_pager(pager: str, data: bytes, env: dict[str, str]) -> int | None:
@@ -91,7 +97,7 @@ def maybe_page(text: str, *, disabled: bool = False) -> None:
 
     Pages only when every one of these holds: stdout is a terminal, paging is not
     switched off (`disabled`, TT_NO_PAGER, or a pager of `cat`), and the text is
-    taller than the terminal. `less` gets LESS_DEFAULTS unless LESS is already set:
+    taller than the terminal. `less` gets less_defaults() unless LESS is already set:
     the user's own settings always win. A pager that cannot be started never loses
     the output: it falls back to a plain write.
     """
@@ -114,7 +120,7 @@ def maybe_page(text: str, *, disabled: bool = False) -> None:
         return
     env = dict(os.environ)
     if os.path.basename(pager.split()[0]) == "less":
-        env.setdefault("LESS", LESS_DEFAULTS)
+        env.setdefault("LESS", less_defaults(lines))
     sys.stdout.flush()
     returncode = _run_pager(pager, text.encode("utf-8", "replace"), env)
     # 126/127 are the shell saying "cannot run that" — nothing was shown, so show
