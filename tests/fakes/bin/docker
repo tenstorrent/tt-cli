@@ -73,10 +73,11 @@ def main() -> int:
     if args[:1] == ["inspect"]:
         # `--format {{json .}}` is an option value, so only bare ids are targets
         wanted = [a for a in args[1:] if not a.startswith("-") and not a.startswith("{{")]
-        for entry in _containers():
-            if str(entry.get("Id", ""))[:12] in wanted:
-                print(json.dumps(entry))
-        return 0
+        found = [e for e in _containers() if str(e.get("Id", ""))[:12] in wanted]
+        for entry in found:
+            print(json.dumps(entry))
+        # Like docker: an unknown target is an error.
+        return 0 if len(found) == len(wanted) else 1
     if args[:1] == ["stop"]:
         log = os.environ.get("FAKE_DOCKER_STOP_LOG")
         if log:

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from typing import Sequence
 
 from .progress import HOST_PHASES, Event, PhaseTracker
@@ -256,9 +255,7 @@ class ModelManagerPreparation(Preparation):
         """
         if self.container is not None:
             return self.container
-        docker = shutil.which("docker")
-        if docker is None:
-            return None
+        docker = runtime
         listed = runner.capture(
             [docker, "ps", "-a", "--filter", f"label={self.LABEL}", "--format",
              '{{.ID}}\t{{.Label "%s"}}\t{{.Label "%s.repo"}}' % (self.LABEL, self.LABEL)],

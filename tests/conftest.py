@@ -284,6 +284,18 @@ def fake_bin():
     return FAKE_BIN
 
 
+@pytest.fixture(autouse=True)
+def bundle_docker_is_fake(hardware_mode, monkeypatch):
+    """Bundle serves find docker through ModelManagerBackend._docker; in fake mode
+    that is the fake, so no test depends on this machine's real containers."""
+    if hardware_mode:
+        return
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.model_manager.ModelManagerBackend._docker",
+        lambda self: str(FAKE_BIN / "docker"),
+    )
+
+
 @pytest.fixture
 def fake_docker(monkeypatch, tmp_path):
     """Point the serving backends' runtime lookup at tests/fakes/bin/docker.
