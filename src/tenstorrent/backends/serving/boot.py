@@ -66,6 +66,9 @@ _WEIGH_INTERVAL_S = 1.5
 _EXIT_GRACE_S = 20.0
 READY_ROW = "endpoint answering"
 
+# The watched boot's phase, for either backend.
+START_PHASE = "Start"
+
 @dataclass(frozen=True)
 class BootResult:
     """The outcome of one watched serve. `ready` is False only when tt could not
@@ -86,22 +89,14 @@ def report_watched(
     watch: Callable[[], BootResult],
     phase: str | None = None,
 ) -> int:
-    """Run `watch` and say how it ended, the same way for either backend.
-
-    With `phase`, the boot is that phase's body — tt owns the wait, so it is a
-    phase like any other — and the stepper is completed before the card, which
-    is drawn after the phase collapses, never inside it.
-    """
+    """Run `watch` as `phase`, then draw the ready card after it collapses."""
     ui = output.ui
     try:
         with ui.phase(phase) if phase else contextlib.nullcontext():
             ui.note(f"Raw output: tt model logs {name} --follow")
             result = watch()
     except KeyboardInterrupt:
-        # Swallowed, not re-raised: the container outlives the backend and so
-        # outlives us, so Ctrl-C stopped the watching, not the serve. Say so,
-        # rather than leaving the user to guess whether it was torn down — and
-        # report it as the success it is.
+        # Ctrl-C stops the watching, not the container.
         ui.note(f"Stopped watching — {name} is still starting.")
         ui.card(
             interrupted_panel(

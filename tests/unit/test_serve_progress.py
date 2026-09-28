@@ -207,3 +207,36 @@ def test_the_download_total_grows_as_the_worker_pool_picks_up_more_files():
 )
 def test_docker_pull_layer_lines(line, expected):
     assert parse_pull_layer(line) == expected
+
+
+def test_a_fetch_after_the_device_opens_gets_its_own_row():
+    log = """\
+INFO 08-21 23:47:00 core.py:98] Initializing a V1 LLM engine (v0.1) with config
+(EngineCore pid=99) INFO 08-21 23:47:18 tt/worker.py:739] Attempting to open mesh device with grid shape (1, 4)
+(EngineCore pid=99) INFO 08-21 23:47:25 tt/worker.py:752] multidevice with 4 devices and grid (1, 4) is created
+Fetching 28 files:   7%|▋         | 2/28 [00:00<00:01, 18.83it/s]
+(EngineCore pid=99) INFO 08-21 23:57:40 kv_cache_utils.py:2146] GPU KV cache size: 264,192 tokens
+(EngineCore pid=99) 2026-08-21 23:58:21.128 | INFO | generator_vllm:warmup_model_prefill:512 - Prefill warmup done
+"""
+    reached, _ = drive(PhaseTracker(VLLM_PHASES), log)
+    assert reached == ["engine", "device", "fetch_late", "kv", "warmup"]
+
+
+def test_an_early_fetch_restating_itself_does_not_skip_the_device():
+    log = """\
+INFO 08-21 00:25:50 core.py:98] Initializing a V1 LLM engine (v0.1) with config
+INFO 08-21 00:25:51 Downloading weights from Qwen/Qwen3-Coder-30B-A3B-Instruct to /cache
+Fetching 28 files:   0%|          | 0/28 [00:00<?, ?it/s]
+2026-08-21 00:31:07.921 | info | Device | Opening user mode device driver (tt_cluster.cpp:228)
+"""
+    reached, _ = drive(PhaseTracker(VLLM_PHASES), log)
+    assert reached == ["engine", "fetch", "device"]
+
+
+def test_warmup_names_the_prefill_length_while_it_runs():
+    tracker = PhaseTracker(VLLM_PHASES)
+    events = tracker.feed(
+        "2026-07-18 05:13:18.574 | INFO | generator:warmup_model_prefill:192 - "
+        "Warming up prefill for sequence length: 2048"
+    )
+    assert any(e.kind == "detail" and e.detail == "prefill 2048" for e in events)

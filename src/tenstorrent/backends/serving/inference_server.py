@@ -164,9 +164,7 @@ _HF_SNAPSHOT_RE = re.compile(r"models--([^/]+?)--([^/]+?)[/\\]snapshots")
 _VOLUME_PREFIX = "volume_id_"
 
 
-# The phase `tt serve` gives the boot: the wait for the endpoint is tt's own work,
-# so it gets a phase like Checks and Prepare (commands/serve.py registers all three).
-START_PHASE = "Start"
+START_PHASE = boot.START_PHASE
 
 
 @dataclass(frozen=True)
@@ -667,10 +665,7 @@ class InferenceServerBackend:
                 support=plan.support,
                 port=int(plan.port),
             )
-        # Benchmarks and evals are long client-side runs whose own output is the
-        # point, and a port we cannot parse leaves nothing to poll — so there is
-        # no boot for tt to watch, and Start is skipped rather than held open
-        # across the hand-off.
+        # Nothing to watch: benchmarks/evals, or a port we cannot poll.
         ui.skip_phase(
             START_PHASE,
             f"run.py runs {plan.workflow} in the foreground"
@@ -682,8 +677,6 @@ class InferenceServerBackend:
             f"Starting tt-inference-server ({plan.workflow}) for {plan.model_name} "
             "— Ctrl-C to stop."
         )
-        # Release every live row first: the child owns the terminal now, and a
-        # spinner thread still painting would fight its output.
         ui.handoff()
         return self.runner.stream(
             plan.argv, env=plan.env, cwd=plan.cwd, tool=TOOL

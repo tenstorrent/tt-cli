@@ -11,11 +11,8 @@ instead of a redraw storm.
 Rendering only: the rows are decided by `progress.tracker`. The status channel
 is stderr throughout (`output.py`), which keeps `tt --json serve | jq` clean.
 
-It speaks the `ui` design language (docs/cli-output.md): the same glyphs, theme
-names, spinner and formatters as a phase body, rows in the body's two-space
-gutter, motion only on a real TTY, and no durations when piped. It is its own
-Live rather than a `ui.activity()` because a boot needs a counter, a bar and a
-detail on the one live line — but it takes the same one-live-display slot.
+Follows the `ui` design (docs/cli-output.md); its own Live only because the
+live line carries a counter and a bar.
 """
 
 from __future__ import annotations
@@ -42,7 +39,7 @@ from ....ui.theme import (
 _BAR_WIDTH = 8
 _EIGHTHS = " ▏▎▍▌▋▊▉"
 _GUTTER = "  "
-_LIVE_WIDTH = 80
+_MIN_LABEL = 16
 # Fast enough that the spinner and the elapsed seconds read as continuous, and
 # cheap: a repaint is a dozen short rows.
 _REFRESH_PER_SECOND = 12.5
@@ -63,22 +60,23 @@ class _Row:
     #: a row that only holds the spinner honest until something reports; the
     #: next begin() replaces it rather than leaving a ✓ for work never done.
     placeholder: bool = False
-    #: an aside between rows, not a step: not counted, never timed.
+    #: not a step: never counted or timed.
     is_note: bool = False
 
-    def progress_text(self) -> str:
+    def progress_text(self, *, bar: bool = True) -> str:
         if self.total <= 0:
             return ""
         fraction = min(1.0, max(0.0, self.done / self.total))
         full, part = divmod(round(fraction * _BAR_WIDTH * 8), 8)
-        bar = ("█" * full + (_EIGHTHS[part] if part else "")).ljust(_BAR_WIDTH)
+        bar_text = ("█" * full + (_EIGHTHS[part] if part else "")).ljust(_BAR_WIDTH)
         if self.is_bytes:
             done, total = fmt_bytes(self.done), fmt_bytes(self.total)
             same_unit = done.split()[-1] == total.split()[-1]
             counts = f"{done.split()[0]}/{total}" if same_unit else f"{done} / {total}"
         else:
             counts = f"{int(self.done)}/{int(self.total)}"
-        return f"▕{bar}▏ {counts} · {fraction * 100:.0f}%"
+        numbers = f"{counts} · {fraction * 100:.0f}%"
+        return f"▕{bar_text}▏ {numbers}" if bar else numbers
 
 
 class Checklist:
@@ -92,15 +90,12 @@ class Checklist:
         self._drawn = 0
         self._started = time.monotonic()
         self._live: Live | None = None
-        # Motion on the same terms as every other live row: a real TTY, not
-        # --json/--quiet (ui.live), and not -v, whose raw lines would tear it.
+        # Not under -v: the raw lines would tear the live row.
         self._animate = output.ui.live and not output.verbose
         self._silent = not output.ui.enabled
 
     # -- lifecycle --------------------------------------------------------------------
     def __enter__(self) -> "Checklist":
-        # One live display at a time: a ui spinner painting while this Live
-        # redraws would interleave mid-escape-sequence.
         if self._animate and not ui_console._ACTIVE_LIVE:
             ui_console._ACTIVE_LIVE.append("checklist")
             self._output.ui.note("Ctrl-C stops watching; the server keeps starting.")
@@ -228,9 +223,7 @@ class Checklist:
                 self._unwrap()
                 self._live.console.print(self._line(row, timed=True))
             return
-        # Piped (or -v): the same row with no elapsed suffix, as for a ui step —
-        # a CI log must not flap around the threshold. soft_wrap, so a long
-        # detail is not padded out to the console width.
+        # Piped: no elapsed suffix, as for a ui step.
         self._output.status_console.print(self._line(row, timed=False), soft_wrap=True)
 
     def _refresh(self) -> None:
@@ -253,9 +246,8 @@ class Checklist:
         return line
 
     def _render(self) -> RenderableType:
-        """One short, unpadded line. A terminal made narrower re-wraps what is
-        already drawn, and Live then redraws from the wrong row, leaving a copy
-        per refresh; one line under _LIVE_WIDTH is rarely re-wrapped at all."""
+        """One unpadded line, one cell short of the terminal so it never wraps;
+        _unwrap() handles a terminal made narrower afterwards."""
         self._unwrap()
         if self._closed:
             return Text()
@@ -273,15 +265,24 @@ class Checklist:
             f" [{max(current, 1)}/{max(total, 1)} · {fmt_clock(now - self._started)}]",
             style="muted",
         )
+        limit = self._output.status_console.width - 1
         if row is not None:
-            line.append(f"  {row.label}")
-            if now - row.started >= 1:
-                line.append(f"  {fmt_clock(now - row.started)}", style="muted")
+            clock = f"  {fmt_clock(now - row.started)}" if now - row.started >= 1 else ""
             extra = row.progress_text() or row.detail
+            # The numbers are what matter: shorten the label first, then drop the bar.
+            room = limit - line.cell_len - 2 - len(clock) - (len(extra) + 2 if extra else 0)
+            if row.progress_text() and room < _MIN_LABEL:
+                extra = row.progress_text(bar=False)
+                room = limit - line.cell_len - 2 - len(clock) - len(extra) - 2
+            label = Text(row.label)
+            if label.cell_len > room:
+                label.truncate(max(room, 1), overflow="ellipsis")
+            line.append("  ")
+            line.append_text(label)
+            line.append(clock, style="muted")
             if extra:
                 line.append(f"  {extra}", style="muted")
-        width = self._output.status_console.width
-        line.truncate(min(width, _LIVE_WIDTH), overflow="ellipsis")
+        line.truncate(limit, overflow="ellipsis")
         self._drawn = line.cell_len
         return line
 

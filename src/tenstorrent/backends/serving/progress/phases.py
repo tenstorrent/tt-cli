@@ -220,7 +220,10 @@ def _detail_kv(line: str) -> Optional[str]:
 
 def _detail_warmup(line: str) -> Optional[str]:
     match = re.search(r"init engine .* took ([\d.]+) s(?:econds)?\b", line)
-    return f"{float(match.group(1)):.0f}s of warmup" if match else None
+    if match:
+        return f"{float(match.group(1)):.0f}s of warmup"
+    match = re.search(r"Warming up prefill for sequence length:\s*(\d+)", line)
+    return f"prefill {match.group(1)}" if match else None
 
 
 VLLM_PHASES: tuple[Phase, ...] = (
@@ -246,6 +249,12 @@ VLLM_PHASES: tuple[Phase, ...] = (
         done=_rx(r"multidevice with \d+ devices? and grid .* is created"),
         detail=_detail_device,
     ),
+    # Some model demos fetch only once the device is open.
+    Phase(
+        "fetch_late", "fetching weights into the container", "weights fetched",
+        start=_rx(r"Fetching \d+ files"),
+        planned=False,
+    ),
     Phase(
         "weights", "loading weights", "weights loaded",
         start=_rx(r"Checkpoint directory:", r"Loading checkpoint shards",
@@ -261,6 +270,7 @@ VLLM_PHASES: tuple[Phase, ...] = (
     Phase(
         "warmup", "warming up the model", "model warmed up",
         start=_rx(r"Warming up prefill", r"Warming up decode", r"Starting decode warmup",
+                  r"Starting .*prefill warmup", r"warmup_model_(?:prefill|decode)",
                   r"Done Compiling Model", r"Capturing .*[Tt]race"),
         done=_rx(r"init engine .* took [\d.]+ s(?:econds)?\b"),
         detail=_detail_warmup,

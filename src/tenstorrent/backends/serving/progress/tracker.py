@@ -89,6 +89,7 @@ class PhaseTracker:
         self.tail: deque[str] = deque(maxlen=tail_lines)
         self.notable: list[str] = []
         self._index = -1  # index of the current (or last) phase
+        self._entered: list[str] = []
         self._done = True  # is that phase finished?
         self._progress: dict[str, _Counts] = {}
         self._detail: dict[str, str] = {}
@@ -104,8 +105,8 @@ class PhaseTracker:
 
     @property
     def reached(self) -> list[str]:
-        """Keys of every phase the log got to, in order."""
-        return [p.key for p in self.phases[: self._index + 1]]
+        """Keys of every phase the log started, in order."""
+        return list(self._entered)
 
     def evidence(self) -> list[str]:
         return [*self.notable, *self.tail]
@@ -133,11 +134,15 @@ class PhaseTracker:
         if len(self.notable) < 50 and any(rx.search(line) for rx in CAUSE_RE):
             self.notable.append(line)
 
-        for index in range(self._index + 1, len(self.phases)):
+        # A line that starts the current row continues it rather than jumping ahead.
+        active = self.current
+        restart = active is not None and any(rx.search(line) for rx in active.start)
+        for index in range(self._index + 1, len(self.phases) if not restart else 0):
             phase = self.phases[index]
             if any(rx.search(line) for rx in phase.start):
                 events = self.finish()
                 self._index, self._done = index, False
+                self._entered.append(phase.key)
                 events.append(Event("start", phase.label))
                 return events + self._extract(phase, line)
 

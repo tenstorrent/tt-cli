@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from ...config.store import ConfigStore
@@ -52,6 +53,16 @@ def looks_like_bundle_id(name: str) -> bool:
     return len(parts) == 2 and all(parts) and not any(c.isspace() for c in name)
 
 
+@dataclass(frozen=True)
+class BundleLaunch:
+    """A resolved `tt-model serve`, from prepare() to launch()."""
+
+    argv: list
+    repo_id: str
+    port: int | None
+    watched: bool
+
+
 class ModelManagerBackend:
     def __init__(
         self,
@@ -65,7 +76,7 @@ class ModelManagerBackend:
         self.config = config
         self.output = output
 
-    def _env(self) -> dict[str, str]:
+    def _env(self, *, watched: bool = False) -> dict[str, str]:
         """Environment for every tt-model call.
 
         Runner.stream() *replaces* the child environment rather than merging it
@@ -75,10 +86,13 @@ class ModelManagerBackend:
         --include-weights` deletes from whatever cache its process resolves, so a
         configured paths.hf_model_cache_directory has to reach teardown too, or tt
         would delete from the default cache and orphan the real weights.
+        `watched` adds the progress contract, only for a serve tt renders itself.
         """
+        env = {**os.environ, "HF_HOME": str(hf_home_dir(self.config))}
+        if not watched:
+            return env
         return {
-            **os.environ,
-            "HF_HOME": str(hf_home_dir(self.config)),
+            **env,
             # Asked for, not required: a tt-model that predates it prints its
             # own checklist instead and tt shows one row for the whole
             # preparation (docs/serve-progress-contract.md). An env var rather
@@ -92,6 +106,64 @@ class ModelManagerBackend:
             "PYTHONUNBUFFERED": "1",
         }
 
+    def preflight(self) -> str:
+        """Checks: the container runtime tt-model needs."""
+        return self._docker()
+
+    def prepare(
+        self,
+        repo_id: str,
+        *,
+        offline: bool = False,
+        port: int | None = None,
+        serve_flags: list[str] | None = None,
+        extra_args: list[str] | None = None,
+    ) -> "BundleLaunch":
+        """Prepare: tt-model itself and its argv. The bundle, image and weights
+        are fetched during Start."""
+        entry = self.registry.ensure(TOOL, offline=offline)
+        argv = self._argv(
+            repo_id, offline=offline, port=port, serve_flags=serve_flags,
+            extra_args=extra_args, entry=Path(entry),
+        )
+        return BundleLaunch(
+            argv=argv, repo_id=repo_id, port=port, watched=self._watched(serve_flags)
+        )
+
+    def launch(self, plan: "BundleLaunch") -> int:
+        """Start: watch the boot, or skip it and hand off for --detach/--print."""
+        ui = self.output.ui
+        if not plan.watched:
+            ui.skip_phase(boot.START_PHASE, "tt-model was asked not to wait for the boot")
+            ui.final_stepper()
+            self.output.status(f"Serving {plan.repo_id} via tt-model …")
+            ui.handoff()
+            return self.runner.stream(plan.argv, env=self._env(), tool=TOOL)
+        repo_id = plan.repo_id
+        raw_log = boot.raw_log_path(self.config.paths.logs_dir, repo_id.replace("/", "--"))
+        return boot.report_watched(
+            self.output,
+            name=repo_id,
+            backend="tt-model",
+            phase=boot.START_PHASE,
+            watch=lambda: boot.watch_serve(
+                runner=self.runner,
+                output=self.output,
+                prepare=ModelManagerPreparation(repo_id),
+                argv=plan.argv,
+                env=self._env(watched=True),
+                cwd=None,
+                tool=TOOL,
+                model_name=repo_id,
+                engines=[self._engine(repo_id)],
+                port=plan.port or DEFAULT_PORT,
+                raw_log=raw_log,
+                weights_cache=hf_home_dir(self.config),
+                hf_token=hf_token(),
+                runtime=self._docker(),
+            ),
+        )
+
     def serve(
         self,
         repo_id: str,
@@ -101,47 +173,18 @@ class ModelManagerBackend:
         serve_flags: list[str] | None = None,
         extra_args: list[str] | None = None,
     ) -> int:
-        """Stream `tt-model serve <repo_id>`, which installs the bundle if needed
-        and launches its OpenAI-compatible server.
+        """prepare + launch.
 
         `serve_flags` are tt-model's own serve options that `tt serve` declares
         (--profile, --detach, --print, …), already spelled the way tt-model takes
         them. `extra_args` are appended verbatim after those — where tt-model
         itself expects them (its serve declares allow_extra_args/ignore_unknown_options
         and forwards what it does not claim to vLLM)."""
-        entry = self.registry.ensure(TOOL, offline=offline)
-        argv = self._argv(
-            repo_id, offline=offline, port=port, serve_flags=serve_flags,
-            extra_args=extra_args, entry=Path(entry),
-        )
-        if not self._watched(serve_flags):
-            # The user asked tt-model not to wait (--detach) or not to start
-            # anything (--print): there is no boot for tt to watch, so this is a
-            # plain passthrough and tt-model's own output is the answer.
-            self.output.status(f"Serving {repo_id} via tt-model …")
-            return self.runner.stream(argv, env=self._env(), tool=TOOL)
-        raw_log = boot.raw_log_path(self.config.paths.logs_dir, repo_id.replace("/", "--"))
-        self.output.ui.note(f"Serving {repo_id} via tt-model.")
-        return boot.report_watched(
-            self.output,
-            name=repo_id,
-            backend="tt-model",
-            watch=lambda: boot.watch_serve(
-                runner=self.runner,
-                output=self.output,
-                prepare=ModelManagerPreparation(repo_id),
-                argv=argv,
-                env=self._env(),
-                cwd=None,
-                tool=TOOL,
-                model_name=repo_id,
-                engines=[self._engine(repo_id)],
-                port=port or DEFAULT_PORT,
-                raw_log=raw_log,
-                weights_cache=hf_home_dir(self.config),
-                hf_token=hf_token(),
-                runtime=self._docker(),
-            ),
+        return self.launch(
+            self.prepare(
+                repo_id, offline=offline, port=port, serve_flags=serve_flags,
+                extra_args=extra_args,
+            )
         )
 
     @staticmethod

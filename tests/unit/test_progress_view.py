@@ -228,13 +228,14 @@ def test_a_settled_row_keeps_its_result_not_a_stale_bar(make_output):
     assert "▕" not in frame(view) and "2/444" not in frame(view)
 
 
-def test_the_live_line_stays_short_enough_not_to_rewrap_on_a_resize(make_output):
+def test_the_live_line_uses_the_width_but_never_wraps(make_output):
     view = Checklist(make_output(terminal=True))
     view.plan(["a", "b"])
-    view.begin("weights Qwen/Qwen-Image-2.1@790b3a1 into a very long label indeed")
-    view.progress(3.2e9, 16e9, is_bytes=True)
+    label = "weights openai/gpt-oss-20b@6cee5e81 — resuming a partial download"
+    view.begin(label)
     line = frame(view).rstrip("\n")
-    assert "\n" not in line and len(line) <= 80
+    assert "\n" not in line and len(line) < 100  # the console is 100 wide
+    assert label in line
 
 
 def test_a_line_the_terminal_rewrapped_on_a_resize_is_cleared_first(make_output):
@@ -260,3 +261,11 @@ def test_the_count_stays_put_and_whole_when_the_line_is_clipped(make_output):
     assert line.startswith("  ") and "[1/3 · 0:00]" in line[:20]
     view.done()
     assert "[2/3 · 0:00]" in frame(view)[:20]
+
+
+def test_a_long_label_gives_way_to_the_byte_counts(make_output):
+    view = Checklist(make_output(terminal=True))
+    view.begin("weights HuggingFaceTB/SmolLM2-135M-Instruct")
+    view.progress(1.2e8, 2.7e8, is_bytes=True)
+    line = frame(view).rstrip()
+    assert line.endswith("120.0/270.0 MB · 44%") and len(line) < 100

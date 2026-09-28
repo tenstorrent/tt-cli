@@ -10,6 +10,7 @@ released spec goes to tt-inference-server; a Hugging Face bundle id
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import shutil
 from enum import Enum
@@ -46,10 +47,7 @@ class Workflow(str, Enum):
     evals = "evals"
 
 
-# Fixed roadmap for the tt-inference-server path: Start is the watched boot, and
-# is skipped (not dropped) for benchmarks and evals, which run.py runs in the
-# foreground. The bundle path declares none: tt-model prepares and starts the
-# container in one step, so its checklist is the whole run.
+# Both serving paths. Start is skipped, not dropped, when the child takes the terminal.
 PHASES = ["Checks", "Prepare", START_PHASE]
 
 
@@ -239,9 +237,7 @@ def serve(
         )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
-    # Checks and Prepare, then Start: tt watches the boot until the endpoint
-    # answers, so that wait is tt's work too. launch() owns Start, and skips it
-    # when run.py takes the terminal instead (benchmarks, evals).
+    # launch() owns Start.
     ui = appctx.output.ui
     ui.register_phases(PHASES)
     with ui.phase("Checks"):
@@ -401,10 +397,20 @@ def _serve_with_tt_model_manager(
         )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
-    appctx.output.status(
-        f"{model} is not in the model catalog ({catalog_origin}) — "
-        "serving it as a tt-model bundle."
-    )
-    backend.serve(
-        model, offline=offline, port=port, serve_flags=serve_flags, extra_args=extra_args
-    )
+    ui = appctx.output.ui
+    origin = f" ({catalog_origin})" if appctx.output.verbose else ""
+    ui.note(f"{model} is not in the model catalog{origin} — serving it as a tt-model bundle")
+    ui.register_phases(PHASES)
+    with ui.phase("Checks"):
+        with ui.step("Container runtime") as step:
+            backend.preflight()
+            step.detail("docker")
+    with ui.phase("Prepare"):
+        with ui.step("Resolving tt-model") as step:
+            launch = backend.prepare(
+                model, offline=offline, port=port, serve_flags=serve_flags,
+                extra_args=extra_args,
+            )
+            pin = appctx.registry.spec("tt-model").golden_version or ""
+            step.detail(pin[:7] if re.fullmatch(r"[0-9a-f]{40}", pin) else pin)
+    backend.launch(launch)
