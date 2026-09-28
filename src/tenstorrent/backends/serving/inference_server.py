@@ -347,7 +347,7 @@ class InferenceServerBackend:
                 reason="hf.token.missing",
             )
         if not model.cached and uses_host_weight_cache(model):
-            self.output.warn(
+            self.output.ui.alert(
                 f"{model.name} is not in the local model cache; the server will "
                 f"download it on startup (`tt model pull {model.name}` avoids the wait)."
             )
