@@ -103,7 +103,7 @@ def report_watched(
                 f"tt model logs {name} --follow", cleanup=f"tt model stop {name}"
             )
         )
-        return 0
+        return int(ExitCode.INTERRUPTED)
     if phase:
         ui.final_stepper()
     if not result.ready:

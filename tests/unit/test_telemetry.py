@@ -1465,3 +1465,28 @@ def test_delivery_diagnostics_stay_silent_without_verbose(runner, spooling, spaw
     assert result.exit_code == 0
     assert "telemetry" not in result.stderr.lower()
     assert len(spawns) == 1
+
+
+@pytest.mark.fakes_only
+@pytest.mark.parametrize("model", ["Llama-3.1-8B-Instruct", "ns/bundle"])
+def test_ctrl_c_during_a_watched_serve_is_recorded_as_interrupted(
+    runner, collected, monkeypatch, inference_bin, model_manager_bin, model
+):
+    """The watch catches Ctrl-C to draw its own card; the outcome must still be
+    INTERRUPTED, as it was when run.py held the terminal."""
+    from tenstorrent.backends.serving import boot
+
+    def interrupt(**kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(boot, "watch_serve", interrupt)
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.inference_server.shutil.which",
+        lambda name: "/usr/bin/docker" if name == "docker" else None,
+    )
+    monkeypatch.setenv("HF_TOKEN", "hf_token_for_tests")
+    result = runner.invoke(app, ["serve", model])
+    assert result.exit_code == 130, result.output
+    props = _props(collected)
+    assert props["exit_code_name"] == "INTERRUPTED"
+    assert "exception_type" not in props

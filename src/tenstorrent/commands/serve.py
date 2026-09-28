@@ -253,7 +253,9 @@ def serve(
             port=port,
             force=force,
         )
-    backend.launch(launch)
+    code = backend.launch(launch)
+    if code:
+        raise typer.Exit(code)
 
 
 def _plan_renderer(plan: dict) -> Group:
@@ -413,4 +415,6 @@ def _serve_with_tt_model_manager(
             )
             pin = appctx.registry.spec("tt-model").golden_version or ""
             step.detail(pin[:7] if re.fullmatch(r"[0-9a-f]{40}", pin) else pin)
-    backend.launch(launch)
+    code = backend.launch(launch)
+    if code:
+        raise typer.Exit(code)
