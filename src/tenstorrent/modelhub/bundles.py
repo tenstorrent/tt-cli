@@ -340,6 +340,10 @@ def serve_details(repo_id: str) -> dict | None:
         "tt_metal_version": manifest.get("tt_metal_version"),
         "weights_repo": weights_repo_for(repo_id, entry),
         "profiles": profiles,
+        # The author names the default when there is more than one; otherwise the
+        # only profile is it (container_manifest.resolved_default, mirrored).
+        "default_profile": container.get("default_profile")
+        or (profiles[0] if profiles else None),
     }
 
 
@@ -489,6 +493,36 @@ def search_community(
     return bundles
 
 
+def describe(
+    repo_id: str, *, config: ConfigStore | None = None, offline: bool = False
+) -> BundleInfo | None:
+    """One bundle's catalog row by id (case-insensitive, the Hub's own rule), or
+    None when neither the local install index nor the community catalog knows it.
+
+    The community row wins when both exist: it is the richer record (kind, engine,
+    downloads) and already folds in the install state and cached weights. The local
+    row stands alone for a bundle nobody published, or under `offline`, where the
+    Hub is not asked at all — the caller decides whether None then means "not a
+    bundle" or merely "not installed here"."""
+    wanted = repo_id.lower()
+    local = next(
+        (b for b in local_bundles(config=config) if b.name.lower() == wanted), None
+    )
+    if offline:
+        return local
+    # The Hub's `search` matches on the id, so narrow by the name half; the exact
+    # match is decided here, not by the Hub's substring rule.
+    listed = next(
+        (
+            b
+            for b in search_community(query=repo_id.rsplit("/", 1)[-1], config=config)
+            if b.name.lower() == wanted
+        ),
+        None,
+    )
+    return listed or local
+
+
 def _community_cache_file() -> Path:
     return get_paths().cache_dir / "community-bundles.json"
 
@@ -505,6 +539,13 @@ def save_community_cache(names: list[str]) -> None:
         path.write_text(json.dumps({"names": sorted(names)}, indent=2))
     except OSError:
         pass
+
+
+def add_to_community_cache(names: list[str]) -> None:
+    """Union `names` into the completion cache — for `tt model search`, whose
+    results are a slice of the Hub rather than the whole catalog, so they must not
+    replace what a full listing recorded."""
+    save_community_cache(sorted({*cached_community_names(), *names}))
 
 
 def cached_community_names() -> list[str]:

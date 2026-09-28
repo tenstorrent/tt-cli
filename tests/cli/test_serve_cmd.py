@@ -509,7 +509,7 @@ def test_serve_dry_run_still_refuses_a_known_bad_board(runner, fake_server):
 def test_serve_dry_run_for_a_bundle_does_not_install_tt_model(
     runner, isolated_dirs, monkeypatch
 ):
-    """tt-model is lazily installed; describing a serve must not fetch its git ref."""
+    """Describing a serve must not fetch tt-model's git ref when it is not installed."""
     def boom(*a, **k):  # pragma: no cover - must not run
         raise AssertionError("tt-model was installed for a dry run")
 
@@ -817,6 +817,114 @@ def test_serve_rejects_a_device_the_model_has_no_entry_for(runner, docker_presen
     assert "no support entry for n300" in result.output
     assert "galaxy" in result.output  # it lists what the model does have
     assert not fake_server.exists()
+
+
+# -- tt-model's own serve options, declared on tt serve -------------------------------
+@pytest.mark.fakes_only
+def test_serve_declares_tt_models_serve_options(runner, fake_model_manager, isolated_dirs):
+    result = runner.invoke(
+        app,
+        ["serve", "ns/bundle", "--profile", "p150x2", "--detach", "--print", "--refresh",
+         "--no-update-check", "--no-weights", "--port", "20010", "--", "--max-model-len", "4096"],
+    )
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == [
+        "serve", "ns/bundle", "--port", "20010", "--profile", "p150x2", "--detach",
+        "--print", "--refresh", "--no-update-check", "--no-weights",
+        "--max-model-len", "4096",
+    ]
+
+
+@pytest.mark.fakes_only
+def test_serve_offline_and_options_keep_tt_models_order(
+    runner, fake_model_manager, isolated_dirs
+):
+    result = runner.invoke(app, ["serve", "ns/bundle", "--offline", "--detach"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"] == ["serve", "ns/bundle", "--local-only", "--detach"]
+
+
+def test_serve_dry_run_shows_the_tt_model_options(runner, isolated_dirs):
+    result = runner.invoke(
+        app, ["serve", "acme/some-bundle", "--profile", "x", "--detach", "--dry-run", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    plan = json.loads(result.stdout)
+    assert plan["serve_flags"] == ["--profile", "x", "--detach"]
+    assert plan["argv"][-4:] == ["acme/some-bundle", "--profile", "x", "--detach"]
+    human = runner.invoke(app, ["serve", "acme/some-bundle", "--profile", "x", "--dry-run"])
+    assert "tt-model options" in human.output and "--profile x" in human.output
+
+
+def test_serve_tt_model_options_are_refused_for_a_catalog_model(runner, isolated_dirs):
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--profile", "x", "--dry-run"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "--profile only applies to a tt-model bundle" in result.output
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--detach", "--refresh"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "--detach and --refresh only apply" in result.output
+
+
+def test_serve_help_documents_the_bundle_options(runner):
+    result = runner.invoke(app, ["serve", "--help"])
+    for flag in ("--profile", "--detach", "--print", "--refresh", "--no-update-check", "--no-weights"):
+        assert flag in result.output, flag
+
+
+# -- phase structure and the hand-off ------------------------------------------
+def test_serve_declares_two_phases_for_the_work_it_owns():
+    """Checks and Prepare are tt's work. Once run.py takes the terminal its
+    lifetime is not our phase to hold open, so the stepper completes first."""
+    from tenstorrent.commands.serve import PHASES
+
+    assert PHASES == ["Checks", "Prepare"]
+
+
+def test_prepare_and_launch_are_separable():
+    """The split is what lets the phase close before the hand-off."""
+    from tenstorrent.backends.serving.inference_server import (
+        InferenceServerBackend,
+        ServeLaunch,
+    )
+
+    assert hasattr(InferenceServerBackend, "prepare")
+    assert hasattr(InferenceServerBackend, "launch")
+    # serve() stays as the combined entry point for callers that want it.
+    assert hasattr(InferenceServerBackend, "serve")
+    assert {"argv", "env", "cwd", "workflow", "model_name"} <= set(
+        ServeLaunch.__dataclass_fields__
+    )
+
+
+def test_launch_releases_the_ui_before_the_child_takes_the_terminal(monkeypatch):
+    """A spinner thread still painting would fight run.py's own output."""
+    from tenstorrent.backends.serving.inference_server import (
+        InferenceServerBackend,
+        ServeLaunch,
+    )
+    from tenstorrent.output import OutputManager
+
+    events = []
+
+    class FakeRunner:
+        def stream(self, argv, **kwargs):
+            events.append("stream")
+            return 0
+
+    output = OutputManager()
+    monkeypatch.setattr(
+        type(output.ui), "handoff", lambda self: events.append("handoff")
+    )
+    backend = InferenceServerBackend.__new__(InferenceServerBackend)
+    backend.output = output
+    backend.runner = FakeRunner()
+    backend.launch(
+        ServeLaunch(argv=["run.py"], env={}, cwd="/tmp", workflow="server", model_name="m")
+    )
+    # Order matters: release, then hand over.
+    assert events == ["handoff", "stream"]
 
 
 # -- JWT_SECRET seeding -----------------------------------------------------------------

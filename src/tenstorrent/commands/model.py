@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""`tt model` — browse, inspect, pull, stop and remove models.
+"""`tt model` — browse, search, inspect, pull, query, stop and remove models.
 
 Like `tt serve`, the destructive verbs dispatch on the name: a released-spec
-model is handled here, a Hub bundle id is passed through to tt-model."""
+model is handled here, a Hub bundle id is passed through to tt-model. The verbs
+that only exist for bundles (search, profiles, login, publish, and the authoring
+passthroughs) are tt-model's, surfaced here so one CLI covers the whole loop."""
 
 from __future__ import annotations
 
@@ -30,21 +32,31 @@ from ..backends.serving.model_manager import (
 )
 from ..backends.serving.ps import human_duration, list_served
 from .._compat import confirm
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import (
+    JsonFlag,
+    NoColorFlag,
+    PagedHelpGroup,
+    QuietFlag,
+    VerboseFlag,
+    handle_tt_errors,
+)
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
+from ..launchers.discovery import DEFAULT_PORT
 from ..models.model import ModelInfo
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub import bundles, hub
-from ..modelhub.completions import (
-    complete_catalog_model,
-    complete_local_model,
-    complete_model,
-)
+from ..modelhub.completions import complete_bundle_id, complete_local_model, complete_model
 
 model_app = typer.Typer(
-    help="Model management: browse, pull, and compile models.", no_args_is_help=True
+    help="Model management: browse, search, pull, query, stop and remove models.",
+    no_args_is_help=True,
+    # `tt model --help` is one of the two help pages long enough to scroll off a
+    # small pane; see PagedHelpGroup.
+    cls=PagedHelpGroup,
 )
+
+PANEL_AUTHORING = "Authoring (delegated to tt-model)"
 
 
 def _human_size(size: int | None) -> str:
@@ -56,6 +68,10 @@ def _human_size(size: int | None) -> str:
             return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
         value /= 1024
     return f"{value:.1f} TB"  # pragma: no cover
+
+
+def _applies(flags: list[str]) -> str:
+    return "only applies" if len(flags) == 1 else "only apply"
 
 
 def _detect_device(appctx) -> str | None:
@@ -89,6 +105,18 @@ def _known_devices() -> set[str]:
     return {
         device for model in ModelCatalog().list(cached_sizes={}) for device in model.hardware
     }
+
+
+def _add_columns(table: Table, columns: tuple[str, ...]) -> None:
+    """Columns that fold rather than ellipsize on a narrow terminal.
+
+    Rich's default overflow is `ellipsis`, which trims whatever column happens to
+    be widest — on a 40-column tmux pane that was the model name, the one value
+    the user needs whole to paste into `tt serve`. Folding wraps a long cell over
+    several lines instead, so a narrow terminal costs height, never characters.
+    """
+    for column in columns:
+        table.add_column(column, overflow="fold")
 
 
 def _validate_hardware(hardware: str) -> str:
@@ -197,10 +225,7 @@ def _model_table(payload: dict, *, hardware: str | None, detected: bool) -> Tabl
         if detected:
             title += " (detected — `tt model list --all` for every device/bundle)"
     table = Table(title=title, caption=_MODEL_CAPTION, caption_justify="left")
-    # fold rather than ellipsize: the name is what you paste into `tt serve`
-    table.add_column("name", overflow="fold")
-    for column in ("source", "engine", "serving profiles", "weights"):
-        table.add_column(column)
+    _add_columns(table, ("name", "source", "engine", "serving profiles", "weights"))
     for row in payload["models"]:
         table.add_row(
             row["name"],
@@ -249,6 +274,8 @@ def list_models(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Browse models that run on this machine: the released catalog plus
     community tt-model bundles from the Hub (default: detected hardware only).
@@ -265,7 +292,7 @@ def list_models(
     (`tt serve <namespace>/<name>` for a bundle); weights are referenced
     rather than shipped."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     if community and catalog_only:
         raise TTError(
             "--community and --catalog are opposites.",
@@ -302,6 +329,7 @@ def list_models(
     appctx.output.emit(
         {"device": device, "scope": scope, "models": rows},
         renderer=lambda payload: _model_table(payload, hardware=device, detected=detected),
+        page=True,
     )
 
 
@@ -352,6 +380,88 @@ def _community_rows(appctx, *, cached: bool, hardware: str | None) -> list[dict]
     return [_bundle_row(dataclasses.asdict(b)) for b in found]
 
 
+def _search_table(payload: dict) -> Table:
+    scope = "community catalog" if payload["catalog"] else "every published bundle"
+    query = f" matching {payload['query']!r}" if payload["query"] else ""
+    arch = f", arch {payload['arch']}" if payload["arch"] else ""
+    table = Table(
+        title=f"tt-model bundles on the Hub — {scope}{query}{arch}",
+        caption="Newest first, as `tt-model search` orders them. `installed` is "
+        "tt-model's record on this machine. Serve any row with `tt serve <name>`; "
+        "`--catalog` narrows to bundles opted into the community catalog.",
+    )
+    table.add_column("name", overflow="fold")
+    for column in ("visibility", "downloads", "updated", "installed"):
+        table.add_column(column)
+    for row in payload["bundles"]:
+        table.add_row(
+            row["name"],
+            "private" if row["private"] else "public",
+            str(row["downloads"]) if row["downloads"] is not None else "—",
+            (row["last_modified"] or "")[:10] or "—",
+            "✓" if row["installed"] else "—",
+        )
+    if not payload["bundles"]:
+        table.caption = "No matching bundles found."
+    return table
+
+
+@model_app.command("search")
+@handle_tt_errors
+def search_bundles(
+    ctx: typer.Context,
+    query: str = typer.Argument(
+        "", help="Free-text query over published tt-model bundles (default: all)."
+    ),
+    catalog: bool = typer.Option(
+        False,
+        "--catalog",
+        help="Only bundles listed in the community catalog (what `tt model list "
+        "--community` shows), not every pushed bundle.",
+    ),
+    arch: str = typer.Option(
+        None, "--arch", help="Only bundles tagged for this arch (blackhole, wormhole_b0)."
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, help="Maximum number of results."),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """Search the Hugging Face Hub for published tt-model bundles."""
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    if appctx.offline:
+        raise TTError(
+            "Searching needs the Hugging Face Hub.",
+            why="Published bundles are a Hub index; there is no local copy to search.",
+            next_step="Drop --offline, or `tt model list --community --cached` for "
+            "the bundles installed on this machine.",
+            exit_code=ExitCode.OFFLINE,
+        )
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    found = backend.search(query, limit=limit, catalog=catalog, arch=arch)
+    installed = bundles.installed_bundles()
+    rows = [
+        {
+            "name": str(row["id"]),
+            "private": bool(row.get("private")),
+            "downloads": row.get("downloads"),
+            "last_modified": row.get("last_modified") or None,
+            "installed": str(row["id"]).lower() in installed,
+        }
+        for row in found
+    ]
+    # Every id seen here is a valid `tt serve` argument, so teach tab completion.
+    bundles.add_to_community_cache([r["name"] for r in rows])
+    appctx.output.emit(
+        {"query": query, "catalog": catalog, "arch": arch, "bundles": rows},
+        renderer=_search_table,
+    )
+
+
 def _info_renderer(payload: dict) -> Table:
     m = payload
     table = Table(title=m["name"], show_header=False)
@@ -397,17 +507,171 @@ def _info_renderer(payload: dict) -> Table:
 def model_info(
     ctx: typer.Context,
     name: str = typer.Argument(
-        help="Model name, e.g. Llama-3.1-8B-Instruct.",
-        autocompletion=complete_catalog_model,
+        help="Model name (Llama-3.1-8B-Instruct) or a tt-model bundle id (namespace/name).",
+        autocompletion=complete_model,
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
-    """Show model metadata: engines, per-device support, requirements."""
+    """Show model metadata: engines, per-device support, requirements.
+
+    For a tt-model bundle id: the bundle's manifest and compatibility verdict via
+    `tt-model info` when tt-model is installed, otherwise its community-catalog row.
+    """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
-    model = ModelCatalog().get(name)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    model, bundle = _dispatch(appctx, name)
+    if bundle is not None:
+        _bundle_info(appctx, bundle, json_mode=json_mode)
+        return
     appctx.output.emit(dataclasses.asdict(model), renderer=_info_renderer)
+
+
+def _bundle_info(appctx, name: str, *, json_mode: bool) -> None:
+    """`tt model info` for a tt-model bundle id — the one model verb that used to
+    reject an id `tt model list --community`, `tt model pull` and `tt serve` all accept.
+
+    Two sources, by what is available. With tt-model installed and a human reading,
+    delegate to `tt-model info`: it prints the manifest and its compatibility verdict
+    against this machine, which tt has no business reimplementing. Otherwise render
+    the catalog row tt reads on its own — the same one the community listing shows,
+    plus the pulled manifest's launch settings. That covers: tt-model not installed
+    (info is inspection and must not clone-and-build a tool to describe a bundle,
+    the same rule as stop/rm); --json (tt-model prints a manifest followed by prose,
+    not one document); --offline (tt-model info fetches the manifest from the Hub).
+    """
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    installed_tool = backend.is_installed()
+    if installed_tool and not json_mode and not appctx.offline:
+        backend.info(name)
+        return
+    row = bundles.describe(name, config=appctx.config, offline=appctx.offline)
+    # None: not asked (--offline), so neither "listed" nor "unlisted" is honest.
+    in_catalog = None if appctx.offline else (row is not None and row.source != "local")
+    if row is None:
+        row = _unlisted_bundle(appctx, name)
+    appctx.output.emit(
+        {
+            "source": "tt-model-catalog",
+            "bundle": dataclasses.asdict(row),
+            "in_catalog": in_catalog,
+            "serve": bundles.serve_details(name),
+            "tt_model_installed": installed_tool,
+            "offline": appctx.offline,
+        },
+        renderer=_bundle_info_renderer,
+    )
+
+
+def _unlisted_bundle(appctx, name: str) -> bundles.BundleInfo:
+    """A bundle-shaped id that is neither installed here nor in the community
+    catalog. Offline there is nothing more to ask; online, the Hub says whether the
+    repo carries a manifest at all — a plain weights repo is not a bundle, and
+    telling the two apart is the difference between "pull it" and "you can't"."""
+    if appctx.offline:
+        raise TTError(
+            f"{name} is not installed on this machine.",
+            why="--offline: the community catalog lives on the Hugging Face Hub, "
+            "so only an installed bundle can be described from disk.",
+            next_step=f"Drop --offline, or install it: `tt model pull {name}`.",
+            exit_code=ExitCode.OFFLINE,
+        )
+    is_bundle = bundles.is_bundle_repo(name)
+    if is_bundle is None:
+        raise TTError(
+            f"Could not check whether {name} is a tt-model bundle.",
+            why="It is not in the community catalog or installed here, and the Hub "
+            "could not be asked (unreachable, private, or rate-limited).",
+            next_step="Check the connection or HF_TOKEN; `tt model list --community` "
+            "lists the published bundles.",
+            exit_code=ExitCode.ERROR,
+        )
+    if not is_bundle:
+        raise TTError(
+            f"{name} is not a tt-model bundle.",
+            why="It is not in the model catalog, not in the community bundle catalog, "
+            "and its Hub repo carries no bundle manifest.",
+            next_step="Run `tt model list --community` for bundle ids; a plain "
+            f"HuggingFace repo's weights fetch with `tt model pull {name} --weights-only`.",
+            exit_code=ExitCode.USAGE,
+        )
+    appctx.output.warn(
+        f"{name} is a tt-model bundle but not in the community catalog (never "
+        "published with `tt-model publish`); only the id is known until it is pulled."
+    )
+    return bundles.BundleInfo(name=name)
+
+
+def _bundle_info_renderer(payload: dict) -> Table:
+    b, serve = payload["bundle"], payload["serve"]
+    name = b["name"]
+    table = Table(title=name, show_header=False)
+    table.add_column("field", style="bold")
+    table.add_column("value")
+    table.add_row("kind", "tt-model bundle" + (f" ({b['kind']})" if b["kind"] else ""))
+    if payload["in_catalog"] is None:
+        catalog = "not checked — --offline skips the Hub"
+    elif payload["in_catalog"]:
+        catalog = "community (`tt model list --community`)"
+    elif b["installed"]:
+        catalog = "not in the community catalog — installed here"
+    else:
+        catalog = "not in the community catalog — published on the Hub"
+    table.add_row("catalog", catalog)
+    table.add_row("arch", ", ".join(b["arch"]) or "—")
+    if not serve:  # pulled bundles show the manifest's target below instead
+        table.add_row("hardware", _hardware_cell(b, None))
+    table.add_row("engine", b["engine"] or "—")
+    if b["downloads"] is not None:
+        table.add_row("downloads", str(b["downloads"]))
+    table.add_row(
+        "installed", "yes" if b["installed"] else f"no — `tt model pull {name}`"
+    )
+    if b["weights_repo"]:
+        cached = _cached_cell(_bundle_row(b))
+        state = "not in the HF cache" if cached == "—" else f"cached {cached}"
+        table.add_row("weights", f"{b['weights_repo']} — {state}")
+    else:
+        table.add_row("weights", "? (known from the manifest once the bundle is pulled)")
+    if serve:  # pulled, and its manifest is on disk
+        chips = ""
+        if serve["arch"] and serve["device_count"]:
+            count = serve["device_count"]
+            chips = f"{serve['arch']}, {count} chip{'s' if count != 1 else ''}"
+        if serve["hardware"]:
+            device = serve["hardware"] + (f"  [dim]({chips})[/dim]" if chips else "")
+        else:
+            device = chips or "—"
+        table.add_row("hardware", device)
+        table.add_row("docker image", serve["image"] or "—")
+        if serve["port"]:
+            table.add_row("port", str(serve["port"]))
+        if serve["max_model_len"]:
+            table.add_row("max model len", str(serve["max_model_len"]))
+        if serve["tt_metal_version"]:
+            table.add_row("tt-metal", serve["tt_metal_version"])
+        if serve["profiles"]:
+            table.add_row("profiles", ", ".join(serve["profiles"]))
+    table.add_row(
+        "servable", f"yes — `tt serve {name}`; preview with `tt serve {name} --dry-run`"
+    )
+    if payload["offline"] and payload["tt_model_installed"]:
+        table.add_row(
+            "manifest",
+            "[dim]skipped under --offline: `tt-model info` fetches the manifest "
+            "from the Hub[/dim]",
+        )
+    elif not payload["tt_model_installed"]:
+        table.add_row(
+            "manifest",
+            "[dim]tt-model's manifest and compatibility verdict show here once "
+            "tt-model is installed (`tt serve` installs it on first use)[/dim]",
+        )
+    return table
 
 
 @model_app.command("pull", no_args_is_help=True)
@@ -433,13 +697,36 @@ def pull(
     offline: bool = typer.Option(
         False, "--offline", help="Only use the local cache; never download."
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Bundles: reinstall even if already installed, and push past a "
+        "compatibility warning (never past an arch mismatch).",
+    ),
+    no_weights: bool = typer.Option(
+        False,
+        "--no-weights",
+        help="Bundles: install the bundle only; the weights are fetched on the "
+        "first serve instead.",
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Download a model: a catalog model's weights, or a tt-model bundle."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     offline = offline or appctx.offline
+    bundle_flags = [f for f, on in (("--force", force), ("--no-weights", no_weights)) if on]
+    if bundle_flags and weights_only:
+        raise TTError(
+            f"{' and '.join(bundle_flags)} {_applies(bundle_flags)} to a tt-model bundle.",
+            why="--weights-only fetches plain HuggingFace weights, which tt-model "
+            "never installs.",
+            next_step="Drop the flag(s), or drop --weights-only.",
+            exit_code=ExitCode.USAGE,
+        )
     if bundle and weights_only:
         raise TTError(
             "--bundle and --weights-only are opposites.",
@@ -460,7 +747,7 @@ def pull(
                 "already installed.",
                 exit_code=ExitCode.OFFLINE,
             )
-        _pull_bundle(appctx, name)
+        _pull_bundle(appctx, name, force=force, with_weights=not no_weights)
         return
     catalog = ModelCatalog()
     model = catalog.find(name)
@@ -468,8 +755,18 @@ def pull(
         _pull_unlisted(
             appctx, name, catalog_origin=catalog.origin,
             weights_only=weights_only, offline=offline,
+            force=force, with_weights=not no_weights,
         )
         return
+    if bundle_flags:
+        raise TTError(
+            f"{' and '.join(bundle_flags)} {_applies(bundle_flags)} to a tt-model "
+            f"bundle; {model.name} is a catalog model.",
+            why="A catalog model's weights are one HuggingFace snapshot: there is "
+            "nothing to reinstall, and nothing to pull without them.",
+            next_step=f"`tt model pull {model.name}` (re-downloads only what is missing).",
+            exit_code=ExitCode.USAGE,
+        )
     if not hub.has_hub_weights(model):
         raise TTError(
             f"{model.name} has no weights to download.",
@@ -493,8 +790,10 @@ def pull(
     )
 
 
-def _pull_bundle(appctx, name: str) -> None:
-    """Install a tt-model bundle, with its weights."""
+def _pull_bundle(
+    appctx, name: str, *, force: bool = False, with_weights: bool = True
+) -> None:
+    """Install a tt-model bundle, with its weights unless told otherwise."""
     if not looks_like_bundle_id(name):
         raise TTError(
             f"{name!r} is not a bundle id.",
@@ -505,15 +804,17 @@ def _pull_bundle(appctx, name: str) -> None:
     backend = ModelManagerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     )
-    backend.pull(name)
+    backend.pull(name, with_weights=with_weights, force=force)
     appctx.output.emit(
-        {"name": name, "kind": "bundle", "pulled_by": "tt-model"},
+        {"name": name, "kind": "bundle", "pulled_by": "tt-model",
+         "with_weights": with_weights, "force": force},
         renderer=lambda d: f"{d['name']} installed — serve it with `tt serve {d['name']}`.",
     )
 
 
 def _pull_unlisted(
-    appctx, name: str, *, catalog_origin: str, weights_only: bool, offline: bool
+    appctx, name: str, *, catalog_origin: str, weights_only: bool, offline: bool,
+    force: bool = False, with_weights: bool = True,
 ) -> None:
     """A name the released spec does not know: a tt-model bundle, or a plain HF repo.
 
@@ -524,8 +825,18 @@ def _pull_unlisted(
         raise unknown_model_error(name, catalog_origin)
     is_bundle = None if (offline or weights_only) else bundles.is_bundle_repo(name)
     if is_bundle:
-        _pull_bundle(appctx, name)
+        _pull_bundle(appctx, name, force=force, with_weights=with_weights)
         return
+    if force or not with_weights:
+        raise TTError(
+            f"--force / --no-weights only apply to a tt-model bundle, and {name} "
+            + ("could not be checked." if is_bundle is None else "is not one."),
+            why="Both flags configure `tt-model pull`; a plain weights download has "
+            "neither a venv to reinstall nor anything but weights to fetch.",
+            next_step=f"`tt model pull {name}` to fetch the weights, or `--bundle` to "
+            "insist it is a bundle.",
+            exit_code=ExitCode.USAGE,
+        )
     # Fetch the weights so they are cached, but never imply more than that. Only the
     # "definitely not a bundle" case can honestly say serving is impossible.
     if weights_only:
@@ -558,6 +869,8 @@ def compile_model(
     name: str = typer.Argument(help="Model name, e.g. Llama-3.1-8B-Instruct."),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """[stub] Pre-compile a model to a TT-optimized format servable by `tt serve`."""
     raise TTError(
@@ -577,18 +890,34 @@ def _stdin_isatty() -> bool:
 def _confirm_destructive(appctx, what: str, *, yes: bool) -> None:
     """Ask before deleting. Non-interactive without --yes is a usage error rather
     than a silent yes: these operations reclaim tens of gigabytes."""
+    _confirm_action(
+        appctx,
+        f"{what} This cannot be undone. Continue?",
+        yes=yes,
+        refusal="Refusing to remove anything without confirmation.",
+        hint="Re-run with --yes once you have checked `--dry-run`.",
+        declined="Nothing was removed.",
+    )
+
+
+def _confirm_action(
+    appctx, question: str, *, yes: bool, refusal: str, hint: str, declined: str
+) -> None:
+    """The one confirmation rule for anything irreversible or outward-facing:
+    --yes skips; JSON/quiet/non-TTY without --yes is a usage error, never a silent
+    yes; declining is a clean exit 0."""
     if yes:
         return
     if appctx.output.json_mode or appctx.output.quiet or not _stdin_isatty():
         raise TTError(
-            "Refusing to remove anything without confirmation.",
+            refusal,
             why="stdin is not a terminal (or --json/--quiet is in effect), so there "
             "is no way to ask.",
-            next_step="Re-run with --yes once you have checked `--dry-run`.",
+            next_step=hint,
             exit_code=ExitCode.USAGE,
         )
-    if not confirm(f"{what} This cannot be undone. Continue?"):
-        raise TTError("Nothing was removed.", exit_code=ExitCode.OK)
+    if not confirm(question):
+        raise TTError(declined, exit_code=ExitCode.OK)
 
 
 def _dispatch(appctx, name: str):
@@ -615,10 +944,12 @@ def stop_model(
     profile: str = typer.Option(None, "--profile", help="Stop only this profile."),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Stop a running model server."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     model, bundle = _dispatch(appctx, name)
     if bundle is not None:
         backend = ModelManagerBackend(
@@ -692,7 +1023,10 @@ def logs_model(
     profile: str = typer.Option(
         None, "--profile", help="tt-model bundles: logs for this profile."
     ),
+    json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Show a served model's output.
 
@@ -701,7 +1035,7 @@ def logs_model(
     tt-model bundle id passes through to `tt-model logs`.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     if appctx.output.json_mode:
         raise TTError(
             "`tt model logs` prints plain text, not JSON.",
@@ -888,10 +1222,12 @@ def rm_model(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """Remove a model's local artifacts, keeping its weights by default."""
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     model, bundle = _dispatch(appctx, name)
     if bundle is not None:
         _rm_bundle(
@@ -1026,6 +1362,334 @@ def _rm_catalog_model(appctx, model, *, include_weights: bool, dry_run: bool, ye
     appctx.output.emit(payload, renderer=render, soft_wrap=True)
 
 
+# -- bundle-only verbs (tt-model's own) --------------------------------------------
+def _bundle_only(appctx, name: str, verb: str, *, catalog_hint: str) -> str:
+    """The bundle id for a verb that only exists for tt-model bundles. A catalog
+    model gets told which tt command answers the same question instead."""
+    model, bundle = _dispatch(appctx, name)
+    if bundle is None:
+        raise TTError(
+            f"`tt model {verb}` applies to tt-model bundles; {model.name} is a "
+            "catalog model served by tt-inference-server.",
+            why="Catalog models are configured by the released spec, not by a bundle "
+            "manifest.",
+            next_step=catalog_hint,
+            exit_code=ExitCode.USAGE,
+        )
+    return bundle
+
+
+def _profiles_renderer(payload: dict) -> Table:
+    table = Table(title=f"{payload['model']} — serve profiles", show_header=True)
+    table.add_column("profile")
+    table.add_column("default")
+    for name in payload["profiles"]:
+        table.add_row(name, "✓" if name == payload["default"] else "")
+    table.caption = (
+        "One image serves every profile; pick one with "
+        f"`tt serve {payload['model']} --profile <name>`."
+    )
+    return table
+
+
+@model_app.command("profiles", no_args_is_help=True)
+@handle_tt_errors
+def model_profiles(
+    ctx: typer.Context,
+    name: str = typer.Argument(
+        help="A pulled tt-model bundle id (namespace/name).",
+        autocompletion=complete_bundle_id,
+    ),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """Show a bundle's serve profiles and which one is the default."""
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    bundle = _bundle_only(
+        appctx, name, "profiles",
+        catalog_hint=f"`tt model info {name}` shows its per-device support.",
+    )
+    details = bundles.serve_details(bundle)
+    if details is None:
+        raise TTError(
+            f"{bundle} is not pulled on this machine.",
+            why="Profiles are read from the bundle's manifest, which arrives with "
+            "`tt model pull`; tt does not fetch one just to list them.",
+            next_step=f"`tt model pull {bundle}`, or `tt model info {bundle}`.",
+            exit_code=ExitCode.ERROR,
+        )
+    if appctx.output.json_mode:
+        # tt-model prints a checklist, not JSON, so the --json contract is tt's own,
+        # read from the same manifest tt-model would.
+        appctx.output.emit(
+            {
+                "model": bundle,
+                "profiles": details.get("profiles") or [],
+                "default": details.get("default_profile"),
+            },
+            renderer=_profiles_renderer,
+        )
+        return
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    backend.profiles(bundle)
+
+
+def _served_base_url(appctx, *, port: int | None, url: str | None) -> str:
+    """Server root for `tt-model curl` (no /v1): --url, --port, or the one server
+    tt itself is running — found the same way `tt launch` finds it."""
+    if url and port:
+        raise TTError(
+            "--url and --port cannot both be given.",
+            why="They set the same thing.",
+            next_step="Pass --port for a local server, --url for anything else.",
+            exit_code=ExitCode.USAGE,
+        )
+    if url:
+        return url.rstrip("/").removesuffix("/v1")
+    if port:
+        return f"http://127.0.0.1:{port}"
+    from .launch import _local_candidate_ports
+
+    ports = sorted(set(_local_candidate_ports(appctx)))
+    if len(ports) > 1:
+        raise TTError(
+            f"Several model servers are running (ports {', '.join(map(str, ports))}).",
+            why="tt cannot tell which one the prompt is for.",
+            next_step="Pass --port <port>; `tt model ps` lists what is serving where.",
+            exit_code=ExitCode.USAGE,
+        )
+    return f"http://127.0.0.1:{ports[0] if ports else DEFAULT_PORT}"
+
+
+@model_app.command(
+    "curl",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+@handle_tt_errors
+def model_curl(
+    ctx: typer.Context,
+    prompt: str = typer.Argument(
+        None, help="The user message to send (default: tt-model's one-line greeting)."
+    ),
+    port: int = typer.Option(
+        None,
+        "--port",
+        min=1,
+        max=65535,
+        help="Local port the server listens on (default: the one tt is serving on).",
+    ),
+    url: str = typer.Option(None, "--url", help="Server root, for a non-local server."),
+    model: str = typer.Option(
+        None, "--model", help="Model id to name in the request (default: ask the server)."
+    ),
+    print_only: bool = typer.Option(
+        False, "--print", help="Print the equivalent curl command instead of sending it."
+    ),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """Send a chat completion to the model being served.
+
+    Anything tt does not recognise goes into the request body, so vLLM's sampling
+    options need no flags of their own: `tt model curl "a haiku" --max-tokens 40`.
+    Works for catalog models and bundles alike — it is one HTTP request.
+    """
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    if appctx.output.json_mode:
+        raise TTError(
+            "`tt model curl` prints the server's reply, not JSON of tt's own.",
+            next_step="Drop --json; `tt model curl --print` shows the request to run yourself.",
+            exit_code=ExitCode.USAGE,
+        )
+    base_url = _served_base_url(appctx, port=port, url=url)
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    backend.curl(
+        prompt, base_url=base_url, model=model, print_only=print_only,
+        extra_args=list(ctx.args),
+    )
+
+
+@model_app.command("login")
+@handle_tt_errors
+def model_login(
+    ctx: typer.Context,
+    token: str = typer.Option(
+        None, "--token", help="Hugging Face token; omit to be prompted for one."
+    ),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """Log in to the Hugging Face Hub for gated or private bundles and weights.
+
+    Uses Hugging Face's own token store, so `hf auth login` and tt agree.
+    """
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    if appctx.output.json_mode:
+        raise TTError(
+            "`tt model login` has no JSON output.",
+            next_step="Drop --json.",
+            exit_code=ExitCode.USAGE,
+        )
+    if appctx.offline:
+        raise TTError(
+            "Logging in needs the Hugging Face Hub.",
+            why="The token is verified against the Hub before it is stored.",
+            next_step="Drop --offline.",
+            exit_code=ExitCode.OFFLINE,
+        )
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    backend.login(token)
+
+
+def _catalog_listing(appctx, name: str, *, listed: bool, yes: bool) -> None:
+    verb = "publish" if listed else "unpublish"
+    if not looks_like_bundle_id(name):
+        raise TTError(
+            f"{name!r} is not a bundle id.",
+            why="Only a pushed tt-model bundle (a Hub repo, namespace/name) can be "
+            "listed in the community catalog.",
+            next_step="Pass the repo id `tt-model push` printed.",
+            exit_code=ExitCode.USAGE,
+        )
+    if appctx.offline:
+        raise TTError(
+            f"{verb} needs the Hugging Face Hub.",
+            why="The catalog listing is a tag on the Hub repo.",
+            next_step="Drop --offline.",
+            exit_code=ExitCode.OFFLINE,
+        )
+    if listed:
+        _confirm_action(
+            appctx,
+            f"Publish {name}: this makes the repo public if it is private, and lists "
+            "it in the community catalog for everyone. Continue?",
+            yes=yes,
+            refusal="Refusing to publish without confirmation.",
+            hint="Re-run with --yes.",
+            declined="Nothing was published.",
+        )
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    backend.set_catalog_listing(name, listed=listed)
+    appctx.output.emit(
+        {"model": name, "listed": listed},
+        renderer=lambda d: (
+            f"{d['model']} is listed in the community catalog — it now shows in "
+            "`tt model list --community`."
+            if d["listed"]
+            else f"{d['model']} is no longer listed; the repo itself is untouched."
+        ),
+    )
+
+
+@model_app.command("publish", no_args_is_help=True, rich_help_panel=PANEL_AUTHORING)
+@handle_tt_errors
+def model_publish(
+    ctx: typer.Context,
+    name: str = typer.Argument(
+        help="A pushed tt-model bundle id (namespace/name).",
+        autocompletion=complete_bundle_id,
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """List a pushed bundle in the community catalog (makes a private repo public)."""
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    _catalog_listing(appctx, name, listed=True, yes=yes)
+
+
+@model_app.command("unpublish", no_args_is_help=True, rich_help_panel=PANEL_AUTHORING)
+@handle_tt_errors
+def model_unpublish(
+    ctx: typer.Context,
+    name: str = typer.Argument(
+        help="A listed tt-model bundle id (namespace/name).",
+        autocompletion=complete_bundle_id,
+    ),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """Delist a bundle from the community catalog; the repo is untouched."""
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    _catalog_listing(appctx, name, listed=False, yes=True)
+
+
+def _passthrough(ctx: typer.Context, subcommand: str) -> None:
+    """Forward an authoring command to tt-model untouched, including --help.
+
+    The command's own help option is disabled (help_option_names=[]) so that
+    `tt model package --help` reaches tt-model, whose help is the authoritative flag
+    list, rather than showing a tt page that would only say "see tt-model"."""
+    appctx = get_app_context(ctx)
+    if appctx.offline:
+        raise TTError(
+            f"`tt model {subcommand}` needs the Hugging Face Hub.",
+            why="Authoring resolves wheels, images and repos on the Hub.",
+            next_step="Drop --offline.",
+            exit_code=ExitCode.OFFLINE,
+        )
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    code = backend.passthrough(subcommand, list(ctx.args))
+    if code:
+        raise typer.Exit(code)
+
+
+_PASSTHROUGH_SETTINGS = {
+    "allow_extra_args": True,
+    "ignore_unknown_options": True,
+    "help_option_names": [],
+}
+
+
+@model_app.command("package", context_settings=_PASSTHROUGH_SETTINGS,
+                   rich_help_panel=PANEL_AUTHORING)
+@handle_tt_errors
+def model_package(ctx: typer.Context) -> None:
+    """Build a bundle from a bring-up (`tt-model package`; all flags are its own)."""
+    _passthrough(ctx, "package")
+
+
+@model_app.command("package-thin", context_settings=_PASSTHROUGH_SETTINGS,
+                   rich_help_panel=PANEL_AUTHORING)
+@handle_tt_errors
+def model_package_thin(ctx: typer.Context) -> None:
+    """Beta: build a v6 thin bundle (`tt-model package-thin`; all flags are its own)."""
+    _passthrough(ctx, "package-thin")
+
+
+@model_app.command("push", context_settings=_PASSTHROUGH_SETTINGS,
+                   rich_help_panel=PANEL_AUTHORING)
+@handle_tt_errors
+def model_push(ctx: typer.Context) -> None:
+    """Push a staged container package to the Hub (`tt-model push`; all flags are its own)."""
+    _passthrough(ctx, "push")
+
+
 # -- what is being served --------------------------------------------------------------
 def _ps_table(payload: dict) -> Table | str:
     rows = payload["served"]
@@ -1075,6 +1739,8 @@ def ps_models(
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """List the model servers on this machine: name, backend, container, port, health, uptime.
 
@@ -1082,7 +1748,7 @@ def ps_models(
     TT-Studio model containers. Exits 0 with an empty list when nothing is served.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     runtime = InferenceServerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     ).container_runtime()

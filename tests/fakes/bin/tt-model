@@ -1,23 +1,57 @@
 #!/usr/bin/env python3
 """Fake `tt-model` for tests: records argv (and the HF_HOME it inherited) and exits.
-Never touches the network or the Hub."""
+Never touches the network or the Hub.
+
+Subcommands whose *output* tt parses or shows get a canned answer in tt-model's own
+shape (search --json, profiles, curl --print); everything else just records."""
 
 import json
 import os
 import sys
 
+SEARCH_RESULTS = [
+    {"id": "acme/demo", "private": False, "downloads": 12,
+     "last_modified": "2026-09-01 10:00:00+00:00"},
+    {"id": "acme/private-thing", "private": True, "downloads": 0,
+     "last_modified": "2026-08-01 10:00:00+00:00"},
+]
+
 
 def main() -> int:
+    argv = sys.argv[1:]
     log = os.environ.get("FAKE_TT_MODEL_LOG")
     if log:
         with open(log, "a") as fh:
             fh.write(
-                json.dumps({"argv": sys.argv[1:], "hf_home": os.environ.get("HF_HOME")})
+                json.dumps({"argv": argv, "hf_home": os.environ.get("HF_HOME")})
                 + "\n"
             )
     if os.environ.get("FAKE_TT_MODEL_FAIL"):
         print("fake tt-model: forced failure", file=sys.stderr)
         return 1
+    sub = argv[0] if argv else ""
+    if sub == "search" and "--json" in argv:
+        results = SEARCH_RESULTS
+        query = argv[1] if len(argv) > 1 and not argv[1].startswith("--") else ""
+        if query:
+            results = [r for r in results if query.lower() in r["id"].lower()]
+        if "--catalog" in argv:
+            results = [r for r in results if not r["private"]]
+        print(json.dumps(results, indent=2))
+        return 0
+    if sub == "profiles":
+        print("  • default (default)   p150x2 · N300   seqs 32 · len 4096")
+        return 0
+    if sub == "curl" and "--print" in argv:
+        base = argv[argv.index("--base-url") + 1] if "--base-url" in argv else "http://localhost:20000"
+        print(f"curl -sS {base}/v1/chat/completions -H 'Content-Type: application/json' -d '{{}}'")
+        return 0
+    if sub in ("package", "package-thin", "push") and "--help" in argv:
+        print(f"Usage: tt-model {sub} [OPTIONS] (fake help)")
+        return 0
+    if sub == "login":
+        print("Logged in as fake-user")
+        return 0
     print("fake tt-model: serving")
     return 0
 

@@ -49,11 +49,17 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | Model serving | Functionality |
 |---|---|
 | `tt model list` | Models that run on this machine's detected hardware, from two sources: the released catalog (models Tenstorrent ships and tests via tt-inference-server) and community bundles (`--all` for every device; `--cached`, `--type`, `--hw` filters) |
-| `tt model list --catalog` / `--community` | Narrow to one source: `--catalog` for the released catalog only; `--community` for bundles anyone has published with tt-model-manager on the Hugging Face Hub, not tested or maintained by Tenstorrent (served with `tt serve <namespace>/<name>`) |
-| `tt model info NAME` | Model metadata: engines, per-device support/status, requirements, cache state |
-| `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`) |
-| `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id |
+| `tt model list --catalog` / `--community` | Narrow to one source: `--catalog` for the released catalog only; `--community` for bundles anyone has published with tt-model-manager on the Hugging Face Hub, not tested or maintained by Tenstorrent (served with `tt serve <namespace>/<name>`); `--community --cached` for the ones installed here |
+| `tt model search [QUERY]` | Search the Hub for published tt-model bundles (`--catalog` for community-catalog listings only; `--arch`, `--limit`) |
+| `tt model info NAME` | Model metadata: engines, per-device support/status, requirements, cache state; for a tt-model bundle id, its manifest and compatibility verdict (or catalog row) |
+| `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`; bundles: `--force`, `--no-weights`) |
+| `tt model profiles NAME` | A pulled bundle's serve profiles and its default |
+| `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id (bundles: `--profile`, `--detach`, `--print`, `--refresh`, `--no-update-check`, `--no-weights`) |
+| `tt model curl [PROMPT]` | Send a chat completion to the model being served; unknown options go into the request body (`--max-tokens 40`), `--print` shows the curl instead |
 | `tt model stop NAME` | Stop a running model server (`--profile` to stop only one profile of a bundle) |
+| `tt model rm NAME` | Remove a model's local artifacts, keeping its weights unless `--include-weights` (`--dry-run`, `--yes`) |
+| `tt model login` | Log in to the Hugging Face Hub for gated or private bundles and weights (`--token`) |
+| `tt model publish` / `unpublish` | List or delist your pushed bundle in the community catalog; `tt model package` / `package-thin` / `push` forward to tt-model's authoring commands unchanged |
 | `tt model ps` | Model servers running on this machine: name, backend, port, health, uptime (`--all` includes stopped containers; `--no-probe` skips the HTTP health check) |
 | `tt model logs NAME` | Output of a served model: the newest tt-inference-server log file for a catalog model, or `tt-model logs` for a bundle (`--follow`; `--tail N`; `--since` needs a running container; `--profile` for bundles) |
 
