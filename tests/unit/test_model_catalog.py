@@ -29,6 +29,9 @@ from tenstorrent.modelhub.catalog import (
 SMALL_SUPPORT = (
     Path(__file__).parent.parent / "fakes" / "data" / "model_support_small.json"
 )
+SMALL_STUDIO = (
+    Path(__file__).parent.parent / "fakes" / "data" / "studio_models_small.json"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -36,6 +39,7 @@ def small_spec(monkeypatch):
     """Pin the catalog to the 4-model fixture so exact assertions stay stable when
     the shipped model_support.json is regenerated."""
     monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(SMALL_SUPPORT))
+    monkeypatch.setenv("TT_STUDIO_MODELS_PATH", str(SMALL_STUDIO))
 
 
 @pytest.fixture(autouse=True)

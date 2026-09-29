@@ -21,6 +21,8 @@ What it does, per upstream:
 * **tt-inference-server** — latest release; the bundled release_model_spec.json is
   replaced verbatim from that tag, after checking it parses under our catalog code.
 * **tt-model-manager** — head of the default branch (upstream publishes no tags).
+* **tt-studio** — latest GitHub release (a plain tag bump, like tt-inference-server
+  but with no bundled spec to rebuild).
 
 Comments in supplement.toml are preserved but not rewritten — the ones describing the
 last hand verification stay as they were, and the PR body says so.
@@ -62,6 +64,7 @@ INSTALLER_REPO = "tenstorrent/tt-installer"
 MANIFEST_REPO = "tenstorrent/tt-sw-manifest"
 INFERENCE_REPO = "tenstorrent/tt-inference-server"
 MODEL_MANAGER_REPO = "tenstorrent/tt-model-manager"
+STUDIO_REPO = "tenstorrent/tt-studio"
 
 # Flags `tt update` passes to install.sh (backends/installer.py). A release that drops
 # one would break `tt update`, so its bump is refused rather than proposed.
@@ -285,6 +288,16 @@ def bump_inference_server(plan: Plan, gh: GitHub) -> None:
     plan.changes.append(Change("tt-inference-server", old, tag, details))
 
 
+def bump_studio(plan: Plan, gh: GitHub) -> None:
+    tool = plan.supplement["tools"]["tt-studio"]
+    old = str(tool["golden_version"])
+    tag = gh.latest_release(STUDIO_REPO).tag
+    if tag == old:
+        return
+    tool["golden_version"] = tag
+    plan.changes.append(Change("tt-studio", old, tag))
+
+
 def bump_model_manager(plan: Plan, gh: GitHub) -> None:
     tool = plan.supplement["tools"]["tt-model"]
     old = str(tool["golden_version"])
@@ -307,6 +320,7 @@ def build_plan(supplement_text: str, tests_workflow: str, gh: GitHub) -> Plan:
     if new_workflow != tests_workflow:
         plan.files[TESTS_WORKFLOW] = new_workflow.encode("utf-8")
     bump_inference_server(plan, gh)
+    bump_studio(plan, gh)
     bump_model_manager(plan, gh)
     if plan.changed:
         plan.files[SUPPLEMENT] = tomlkit.dumps(plan.supplement).encode("utf-8")
@@ -336,6 +350,12 @@ _REVIEW_ITEMS = {
     "tt-model (tt-model-manager)": [
         "Re-check the `org.tenstorrent.tt-model` label family and `tt-model-<name>-<profile>` "
         "container naming `tt model ps` reads (upstream src/tt_kernel/container.py).",
+    ],
+    "tt-studio": [
+        "Re-check run.py's `run <model>`, `--stop-model <model>` and `--stop` contract "
+        "(backends/serving/studio.py) — this is what a prior pin bump broke before v2.11.0.",
+        "Re-copy modelhub/studio_models.json from the new tag's "
+        "app/backend/shared_config/models_from_inference_server.json if it changed.",
     ],
     "tt-sw-manifest (golden)": [
         "Re-capture the tt-smi parser fixtures after a real `tt update` if the smi version moved.",

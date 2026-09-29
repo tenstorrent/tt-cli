@@ -35,25 +35,6 @@ def uses_host_weight_cache(model: ModelInfo) -> bool:
     return has_hub_weights(model) and model.model_type not in _CONTAINER_FETCHED_TYPES
 
 
-def hf_token() -> str | None:
-    """The Hugging Face token, resolved the way the Hub itself resolves it:
-    HF_TOKEN in the environment, else the one `hf auth login` stored.
-
-    tt-inference-server reads only the environment variable and getpass-prompts
-    for it when it is unset — a prompt that goes to /dev/tty, which a watched
-    serve cannot show and the user cannot answer. So tt resolves the token and
-    passes it down (backends/serving/inference_server.py:_env).
-    """
-    try:
-        from huggingface_hub import get_token
-    except ImportError:  # pragma: no cover — a declared dependency
-        return os.environ.get("HF_TOKEN") or None
-    try:
-        return get_token() or None
-    except OSError:  # an unreadable token file is "no token", not a crash
-        return os.environ.get("HF_TOKEN") or None
-
-
 def hf_home_dir(config: ConfigStore) -> Path:
     """The HF cache root, with HF_HOME semantics (hub cache lives at <root>/hub):
     config override → HF_HOME env → ~/.cache/huggingface.
@@ -70,6 +51,35 @@ def hf_home_dir(config: ConfigStore) -> Path:
     if env_home:
         return Path(env_home).expanduser()
     return Path.home() / ".cache" / "huggingface"
+
+
+def hf_token(config: ConfigStore | None) -> tuple[str, str] | None:
+    """(token, source) for the Hugging Face token a serving tool should inherit,
+    or None. Sources, first wins: the shell's HF_TOKEN ("env"), then the login
+    store written by `hf auth login` / `huggingface-cli login` ("hf-login":
+    HF_TOKEN_PATH, else <hf_home>/token). The value itself is never printed.
+
+    tt-inference-server reads only the environment variable and getpass-prompts
+    for it when it is unset — a prompt that goes to /dev/tty, which a watched
+    serve cannot show and the user cannot answer. So tt resolves the token and
+    passes it down (backends/serving/inference_server.py:_env)."""
+    env_token = os.environ.get("HF_TOKEN", "").strip()
+    if env_token:
+        return env_token, "env"
+    candidates = []
+    token_path = os.environ.get("HF_TOKEN_PATH", "").strip()
+    if token_path:
+        candidates.append(Path(token_path).expanduser())
+    if config is not None:
+        candidates.append(hf_home_dir(config) / "token")
+    for path in candidates:
+        try:
+            stored = path.read_text().strip()
+        except OSError:
+            continue
+        if stored:
+            return stored, "hf-login"
+    return None
 
 
 def hf_cache_dir(config: ConfigStore) -> str | None:

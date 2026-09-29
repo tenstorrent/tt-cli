@@ -28,6 +28,7 @@ def main() -> int:
                         "argv": argv,
                         "hf_home": os.environ.get("HF_HOME"),
                         "progress": os.environ.get("TT_MODEL_PROGRESS"),
+                        "hf_token": os.environ.get("HF_TOKEN"),
                     }
                 )
                 + "\n"

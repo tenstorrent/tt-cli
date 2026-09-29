@@ -14,9 +14,11 @@ shared label, so the listing cannot be a docker filter:
 * tt-model — every container carries the `org.tenstorrent.tt-model` label family
   (`.repo`, `.profile`, …); the port is whatever it published, never a profile
   default (a live bundle published 20000).
-* TT-Studio — model containers are named after the model and built from the
-  `studio_images` image family; studio's own services (backend on 8000, frontend,
-  agent, litellm, chroma) use other images and are excluded by that rule.
+* TT-Studio — model containers are named exactly after the catalog model
+  (`Qwen3.5-9B`, `Llama-3.1-8B-Instruct`), whether built from studio's own
+  `studio_images` family or from tt-inference-server's images (studio deploys
+  those models too, from the same images); studio's own services (backend on
+  8000, frontend, agent, litellm, chroma) have other names and are excluded.
 
 Every rule is pinned to upstream naming and belongs on the re-check list when a
 pin is bumped, alongside `_BOARDS_TO_DEVICE`. A rename upstream makes rows vanish;
@@ -55,7 +57,9 @@ UNKNOWN = "unknown"
 # .arch, .weights. Verified against a live container 2026-09-08.
 TT_MODEL_LABEL = "org.tenstorrent.tt-model"
 # TT-Studio model containers carry no tt labels and are named after the model
-# (`Qwen3.5-9B`); the image family is the only thing that ties them to studio.
+# (`Qwen3.5-9B`, app/backend/docker_control/docker_utils.py: container_name=
+# impl.model_name). Studio's own image family is a sufficient tell; a model it
+# runs from a tt-inference-server image is recognised by that name alone.
 STUDIO_IMAGE_PREFIX = "ghcr.io/tenstorrent/tt-studio/studio_images"
 # Short on purpose: a server that is up answers /v1/models in milliseconds, and
 # this runs once per row on every `tt model ps`.
@@ -139,7 +143,7 @@ def _inspect_all(runner: Runner, runtime: str, include_stopped: bool) -> list[di
 # -- classification -------------------------------------------------------------------
 class _Catalog:
     """The model catalog, built once and only if a row needs it (it reads a JSON
-    file — cheap, but `tt model ps` on a box with only studio rows never should)."""
+    file — cheap, but `tt model ps` with nothing running never should)."""
 
     def __init__(self) -> None:
         self._models = None
@@ -158,6 +162,11 @@ class _Catalog:
             if wanted in (model.name.lower(), model.hf_repo.lower()):
                 return model.name
         return served_id
+
+    def is_model_name(self, name: str) -> bool:
+        """Whether `name` is exactly a catalog model's name — how studio names the
+        containers it deploys."""
+        return any(model.name == name for model in self.models())
 
 
 def _classify(entry: dict, catalog: _Catalog, now: datetime) -> ServedModel | None:
@@ -178,7 +187,7 @@ def _classify(entry: dict, catalog: _Catalog, now: datetime) -> ServedModel | No
         backend = MODEL_MANAGER
         model_name = str(labels.get(f"{TT_MODEL_LABEL}.repo") or labels[TT_MODEL_LABEL])
         profile = labels.get(f"{TT_MODEL_LABEL}.profile") or None
-    elif image.startswith(STUDIO_IMAGE_PREFIX):
+    elif image.startswith(STUDIO_IMAGE_PREFIX) or catalog.is_model_name(name):
         backend = STUDIO
         model_name = name
     else:

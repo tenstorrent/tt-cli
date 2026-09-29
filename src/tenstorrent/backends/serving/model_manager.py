@@ -85,10 +85,15 @@ class ModelManagerBackend:
         pinned on **every** subcommand, not just the ones that download: `rm
         --include-weights` deletes from whatever cache its process resolves, so a
         configured paths.hf_model_cache_directory has to reach teardown too, or tt
-        would delete from the default cache and orphan the real weights.
-        `watched` adds the progress contract, only for a serve tt renders itself.
+        would delete from the default cache and orphan the real weights. HF_TOKEN
+        is seeded from the HF login store when the shell has none, like the other
+        backends. `watched` adds the progress contract, only for a serve tt
+        renders itself.
         """
         env = {**os.environ, "HF_HOME": str(hf_home_dir(self.config))}
+        token = hf_token(self.config)
+        if token:
+            env.setdefault("HF_TOKEN", token[0])
         if not watched:
             return env
         return {
@@ -159,7 +164,7 @@ class ModelManagerBackend:
                 port=plan.port or DEFAULT_PORT,
                 raw_log=raw_log,
                 weights_cache=hf_home_dir(self.config),
-                hf_token=hf_token(),
+                hf_token=(hf_token(self.config) or (None,))[0],
                 runtime=self._docker(),
             ),
         )

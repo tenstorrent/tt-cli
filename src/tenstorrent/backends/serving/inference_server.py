@@ -361,7 +361,7 @@ class InferenceServerBackend:
         reads that back on later runs, so a checkout already holding one never
         asks again — and a checkout that does not exist yet certainly will.
         """
-        if hf_token() is not None:
+        if hf_token(self.config) is not None:
             return False
         root = self.checkout_root()
         dotenv = root / ".env" if root is not None else None
@@ -391,6 +391,13 @@ class InferenceServerBackend:
         env = dict(os.environ)
         source = "huggingface" if uses_host_weight_cache(model) else "noaction"
         env.setdefault("MODEL_SOURCE", source)
+        # run.py reads HF_TOKEN from its environment (or its own .env) and, upstream,
+        # getpass-prompts when neither has one. A token from `hf auth login` is
+        # handed over so a user who already logged in is never asked again
+        # (preflight refuses the serve when there is no token at all).
+        token = hf_token(self.config)
+        if token:
+            env.setdefault("HF_TOKEN", token[0])
         # tt runs the server with --no-auth, so no JWT secret is ever checked — but
         # setup_host still getpass-prompts "Enter your JWT_SECRET:" whenever the
         # variable is unset (and dies with EOFError when stdin is not a terminal).
@@ -412,13 +419,6 @@ class InferenceServerBackend:
         # TT_SERVER_BOOT_ATTEMPTS yourself to keep the retry; the watcher reads
         # the boot correctly either way.)
         env.setdefault("TT_SERVER_BOOT_ATTEMPTS", "1")
-        # setup_host reads HF_TOKEN from the environment only, and getpass-prompts
-        # when it is unset. Pass the token `hf auth login` stored so someone who
-        # has logged in never meets that prompt (preflight refuses the serve when
-        # there is no token at all).
-        token = hf_token()
-        if token:
-            env.setdefault("HF_TOKEN", token)
         return env
 
     def _python_for(self, entry: Path) -> str:
@@ -475,6 +475,7 @@ class InferenceServerBackend:
             "default_port": os.environ.get("SERVICE_PORT", str(DEFAULT_SERVICE_PORT)),
             "default_port_from_env": "SERVICE_PORT" in os.environ,
             "installed": entry is not None,
+            "hf_token_source": (hf_token(self.config) or (None, None))[1],
         }
         forced = (support.serve_overrides or {}) if support else {}
         settings["docker_image"] = forced.get("docker_image")
@@ -822,7 +823,7 @@ class InferenceServerBackend:
                 port=port,
                 raw_log=raw_log,
                 weights_cache=hf_home_dir(self.config),
-                hf_token=hf_token(),
+                hf_token=(hf_token(self.config) or (None,))[0],
                 runtime=self.container_runtime(),
             ),
         )

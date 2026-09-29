@@ -77,3 +77,22 @@ repo = "https://github.com/tenstorrent/tt-model-manager"
 golden_version = "b39a2d589fedf25c7de253b4626ef5c3a38d8092"
 python = "3.10"
 health = ["--version"]
+
+[tools.tt-studio]
+# TT-Studio: the third `tt serve` path, for the models only its catalog carries
+# (bundled copy: modelhub/studio_models.json — re-copy it from
+# app/backend/shared_config/models_from_inference_server.json on a bump). tt
+# delegates the whole lifecycle to the checkout's run.py: `run <model>` deploys,
+# `--stop-model <model>` stops it, `--stop` takes the stack down (after a stop or a
+# failed deploy).
+# Catalog copy taken from dev@f96ec8c7 on 2026-09-22.
+kind = "git-venv"
+golden_version = "v2.11.0"
+repo = "https://github.com/tenstorrent/tt-studio"
+entry = "run.py"
+python = "3.12"
+# run.py bootstraps its own deps into .tt_studio_run_venv and re-execs itself, so
+# the managed venv only has to provide the interpreter.
+deps = []
+# Only users who serve a studio-only model need the ~200 MB checkout.
+lazy = true

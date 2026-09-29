@@ -48,15 +48,15 @@ This is not an exhaustive list. For the full list of commands and options in eac
 
 | Model serving | Functionality |
 |---|---|
-| `tt model list` | Models that run on this machine's detected hardware, from two sources: the released catalog (models Tenstorrent ships and tests via tt-inference-server) and community bundles (`--all` for every device; `--cached`, `--type`, `--hw` filters) |
+| `tt model list` | Models that run on this machine's detected hardware, from two sources: the released catalog (models Tenstorrent ships and tests via tt-inference-server) and community bundles; the `via` column shows how each is served (inference-server, studio or tt-model) (`--all` for every device; `--cached`, `--type`, `--hw` filters) |
 | `tt model list --catalog` / `--community` | Narrow to one source: `--catalog` for the released catalog only; `--community` for bundles anyone has published with tt-model-manager on the Hugging Face Hub, not tested or maintained by Tenstorrent (served with `tt serve <namespace>/<name>`); `--community --cached` for the ones installed here |
 | `tt model search [QUERY]` | Search the Hub for published tt-model bundles (`--catalog` for community-catalog listings only; `--arch`, `--limit`) |
 | `tt model info NAME` | Model metadata: engines, per-device support/status, requirements, cache state; for a tt-model bundle id, its manifest and compatibility verdict (or catalog row) |
 | `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`; bundles: `--force`, `--no-weights`) |
 | `tt model profiles NAME` | A pulled bundle's serve profiles and its default |
-| `tt serve NAME [-- ARGS…]` | Serve a model via tt-inference-server, or via tt-model-manager for a community bundle id (bundles: `--profile`, `--detach`, `--print`, `--refresh`, `--no-update-check`, `--no-weights`) |
+| `tt serve [NAME] [-- ARGS…]` | Serve a model via tt-inference-server, TT-Studio, or tt-model-manager for a community bundle id (`--inference-server`, `--studio` or `--model-manager` forces a path; with no NAME, pick from what that backend serves; bundles: `--profile`, `--detach`, `--print`, `--refresh`, `--no-update-check`, `--no-weights`) — see [Serving backends](#serving-backends) |
 | `tt model curl [PROMPT]` | Send a chat completion to the model being served; unknown options go into the request body (`--max-tokens 40`), `--print` shows the curl instead |
-| `tt model stop NAME...` | Stop running model servers (`--profile` to stop only one profile of a bundle; `tt model stop $(tt model ps --names)` stops everything) |
+| `tt model stop NAME...` | Stop running model servers; when studio deployed one, studio stops the model and then its own containers and services (`--profile` to stop only one profile of a bundle; `tt model stop $(tt model ps --names)` stops everything) |
 | `tt model rm NAME` | Remove a model's local artifacts, keeping its weights unless `--include-weights` (`--dry-run`, `--yes`) |
 | `tt model login` | Log in to the Hugging Face Hub for gated or private bundles and weights (`--token`) |
 | `tt model publish` / `unpublish` | List or delist your pushed bundle in the community catalog; `tt model package` / `package-thin` / `push` forward to tt-model's authoring commands unchanged |
@@ -108,6 +108,18 @@ tt serve Qwen3-32B --port 8000         # in another terminal
 tt launch openwebui --web-port 3080    # pull and run its container, after you confirm
 tt launch stop openwebui               # stop it, keeping its data
 ```
+
+## Serving backends
+
+`tt serve NAME` picks the serving path from the model:
+
+- **inference-server** — every model `tt model list` shows with `via inference-server`, driven through tt-inference-server's `run.py`. Preferred whenever it knows the model.
+- **studio** — every model in [TT-Studio](https://github.com/tenstorrent/tt-studio)'s catalog: most are tt-inference-server's, which studio deploys from the same images, plus the few only studio carries (today `Qwen3.5-9B` and `Qwen3.8-27B`), for which it is the default. `tt serve NAME --studio` picks it for any of them. tt clones studio's latest tagged release on first use and runs `run.py run NAME` from it, which brings the stack up, deploys the model and reports the endpoint; `tt model stop NAME` runs its `--stop-model` for anything studio deployed, then `--stop` to take studio's containers and services down with it; a deploy that fails is followed by the same `--stop`, so a broken deploy leaves nothing of studio's running. Single-chip models (a `P150` entry) are listed for the multi-card Blackhole boards too, the way studio runs them — one chip of a P300. Studio allocates chips and ports itself, so `--device` and `--port` are ignored there with a warning.
+- **model-manager** — tt-model bundles (`namespace/name`) neither catalog knows.
+
+`tt model list` shows the paths in its `via` column (`inference-server, studio` for a model both offer); `tt model info` says the same. `--inference-server`, `--studio` or `--model-manager` forces a path and refuses one the model does not offer. With no model, `tt serve --studio` (or `--inference-server`, `--model-manager`) lists what that path serves on this machine — for studio, its whole catalog — and asks for a number; the picker needs a terminal and is off under `--json`/`--quiet`.
+
+Every path inherits a Hugging Face token: `HF_TOKEN` from the shell if set, else the token `hf auth login` stored (`HF_TOKEN_PATH`, then `<HF_HOME>/token`). `tt serve --dry-run` names the source without printing the token.
 
 ## Configuration
 

@@ -30,7 +30,8 @@ from ..backends.serving.model_manager import (
     ModelManagerBackend,
     looks_like_bundle_id,
 )
-from ..backends.serving.ps import human_duration, list_served
+from ..backends.serving.studio import StudioBackend
+from ..backends.serving.ps import STUDIO, human_duration, list_served
 from .._compat import confirm
 from ..cli import (
     JsonFlag,
@@ -45,6 +46,7 @@ from ..launchers.discovery import DEFAULT_PORT
 from ..models.model import ModelInfo
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub import bundles, hub
+from ..modelhub.studio import studio_only
 from ..modelhub.completions import complete_bundle_id, complete_local_model, complete_model
 
 model_app = typer.Typer(
@@ -132,9 +134,11 @@ def _validate_hardware(hardware: str) -> str:
 
 
 _MODEL_CAPTION = (
-    "source: tt-inference-server catalog vs. HuggingFace/local community. "
+    "source: tt-inference-server/tt-studio catalog vs. HuggingFace/local community. "
     "profiles: smallest board/mesh tag per capability. "
-    "`tt model list --help` for details."
+    "via: the paths `tt serve` offers — inference-server (its released spec, the "
+    "default), studio (TT-Studio's catalog; `--studio` picks it), tt-model for a "
+    "bundle. `tt model list --help` for details."
 )
 
 
@@ -184,9 +188,12 @@ def _catalog_row(m: dict) -> dict:
         )
         for hw, d in supported.items()
     }
+    # A studio-only entry (modelhub/studio.py) is in the catalog, but it is not
+    # tt-inference-server's — say where it came from, as the community rows do.
+    source = "tt-inference-server" if "inference-server" in m["backends"] else "tt-studio"
     return {
         **m,
-        "source": "tt-inference-server",
+        "source": source,
         "type": m["model_type"],
         "hardware": bundles.drop_superseded_hardware(profiles),
     }
@@ -204,6 +211,8 @@ def _bundle_row(b: dict) -> dict:
         "engines": [b["engine"]] if b.get("engine") else [],
         "cached": cached,
         "cache_size_bytes": b.get("weights_bytes") if cached else None,
+        # Every bundle serves through tt-model; the catalog rows carry theirs.
+        "backends": ["tt-model"],
     }
 
 
@@ -221,13 +230,16 @@ def _model_table(payload: dict, *, hardware: str | None, detected: bool) -> Tabl
         if detected:
             title += " (detected — `tt model list --all` for every device/bundle)"
     table = Table(title=title, caption=_MODEL_CAPTION, caption_justify="left")
-    _add_columns(table, ("name", "source", "engine", "serving profiles", "weights"))
+    _add_columns(
+        table, ("name", "source", "engine", "serving profiles", "via", "weights")
+    )
     for row in payload["models"]:
         table.add_row(
             row["name"],
             row["source"],
             _engines_cell(row),
             _hardware_cell(row, hardware),
+            ", ".join(row["backends"]),
             _cached_cell(row),
         )
     return table
@@ -466,12 +478,16 @@ def _info_renderer(payload: dict) -> Table:
     table.add_row("hf_repo", m["hf_repo"])
     table.add_row("type", m["model_type"])
     table.add_row("engines", ", ".join(m["engines"]))
-    table.add_row(
-        "servable",
-        f"yes — `tt serve {m['name']}`"
-        if m["tt_model_id"]
-        else "no (no tt-inference-server entry)",
-    )
+    table.add_row("via", ", ".join(m["backends"]))
+    if m["tt_model_id"] and "studio" in m["backends"]:
+        servable = f"yes — `tt serve {m['name']}` (`--studio` deploys it with TT-Studio)"
+    elif m["tt_model_id"]:
+        servable = f"yes — `tt serve {m['name']}`"
+    elif m["backends"] == ["studio"]:
+        servable = f"yes, through TT-Studio — `tt serve {m['name']}`"
+    else:
+        servable = "no (no tt-inference-server entry)"
+    table.add_row("servable", servable)
     if m["param_count"] is not None:
         table.add_row("parameters", f"{m['param_count']}B")
     if m["min_disk_gb"] is not None:
@@ -494,6 +510,8 @@ def _info_renderer(payload: dict) -> Table:
         elif support["serve_as"]:
             detail += f"\n[dim]served as {support['serve_as']}"
             detail += f" — {support['note']}[/dim]" if support["note"] else "[/dim]"
+        elif support["note"]:
+            detail += f"\n[dim]{support['note']}[/dim]"
         table.add_row(f"on {device}", detail)
     return table
 
@@ -955,6 +973,11 @@ def stop_model(
                 ModelManagerBackend(
                     appctx.registry, appctx.runner, appctx.config, appctx.output
                 ).stop(bundle, profile=profile)
+            elif studio_only(model) or _studio_is_serving(appctx, model):
+                # Deployed by studio's run.py, so studio stops it (and resets its chips).
+                StudioBackend(
+                    appctx.registry, appctx.runner, appctx.config, appctx.output
+                ).stop(model)
             else:
                 _stop_catalog_model(appctx, model)
         except TTError as err:
@@ -968,6 +991,20 @@ def stop_model(
             why="The others were stopped; the errors above say why these were not.",
             exit_code=ExitCode.TOOL_FAILED,
         )
+
+
+def _studio_is_serving(appctx, model) -> bool:
+    """Whether a running container is studio's deploy of this model. A model both
+    paths offer may have come up through `tt serve X --studio`, and studio's
+    containers are not tt-inference-server's (`tt model ps` tells them apart the
+    same way), so the owner has to be asked to stop it."""
+    runtime = InferenceServerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    ).container_runtime()
+    return any(
+        row.backend == STUDIO and row.name == model.name
+        for row in list_served(appctx.runner, runtime, probe=False)
+    )
 
 
 def _stop_catalog_model(appctx, model) -> None:
