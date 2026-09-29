@@ -9,7 +9,8 @@ The contract that keeps `tt --json ... | jq` clean:
 - Errors are always shown: as a Rich panel on stderr in human/quiet mode, as an
   `{"error": {...}}` object on stdout in JSON mode.
 - Long listings page (`less`) when stdout is a terminal and the output would not
-  fit on one screen; a pipe, `--json`, `--no-pager` or TT_NO_PAGER=1 never pages.
+  fit on one screen; a pipe, `--json`, `--no-pager`, TT_NO_PAGER=1 or
+  `output.pager = false` in the config never pages. `--help` is never paged.
 """
 
 from __future__ import annotations
@@ -50,15 +51,55 @@ def pager_disabled() -> bool:
     return os.environ.get("TT_NO_PAGER", "") not in ("", "0")
 
 
+def less_defaults(total_lines: int) -> str:
+    """LESS for tt's pager: git's -FRX (quit if it fits, keep colour, leave the screen
+    alone) plus K, so Ctrl+C quits less cleanly (systemd's default carries K for the
+    same reason), and a prompt that says where you are, how to move and how to leave:
+    "lines 1-40 of 200  Enter/Space for more, q to quit", and at the end
+    "lines 161-200 of 200  (END)  q to quit".
+
+    tt supplies the total because less reads a pipe lazily and does not know it until
+    the end. The -P prompt runs to the end of the string, so it must stay last."""
+    return (
+        f"-FRXK -Pslines %lt-%lb of {total_lines}  ?e(END)  :Enter/Space for more, .q to quit"
+    )
+
+
+def _run_pager(pager: str, data: bytes, env: dict[str, str]) -> int | None:
+    """Feed `data` to `pager` and wait for it to exit. None when it cannot start.
+
+    The pager owns the terminal until it exits, so it is never killed. Ctrl+C reaches
+    both processes, and killing less at that point (what subprocess.run does on
+    KeyboardInterrupt) leaves the terminal with no echo until `reset`. With K in LESS,
+    less quits on Ctrl+C by itself; any other pager is waited for, as git and Click
+    do. Ctrl+C at the pager means "done reading", so it is not re-raised.
+    """
+    try:
+        proc = subprocess.Popen(pager, shell=True, stdin=subprocess.PIPE, env=env)
+    except OSError:
+        return None
+    try:
+        try:
+            proc.stdin.write(data)
+        finally:
+            proc.stdin.close()
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass  # the user quit before reading it all, or pressed Ctrl+C mid-write
+    while True:
+        try:
+            return proc.wait()
+        except KeyboardInterrupt:
+            continue
+
+
 def maybe_page(text: str, *, disabled: bool = False) -> None:
     """Write `text` to stdout, through the user's pager when it will not fit.
 
     Pages only when every one of these holds: stdout is a terminal, paging is not
     switched off (`disabled`, TT_NO_PAGER, or a pager of `cat`), and the text is
-    taller than the terminal. `less` gets `-FRX` unless LESS is already set — the
-    same defaults git uses: quit if it fits, keep colour, leave the screen alone.
-    A pager that cannot be started never loses the output: it falls back to a
-    plain write.
+    taller than the terminal. `less` gets less_defaults() unless LESS is already set:
+    the user's own settings always win. A pager that cannot be started never loses
+    the output: it falls back to a plain write.
     """
     if not text:
         return
@@ -79,15 +120,13 @@ def maybe_page(text: str, *, disabled: bool = False) -> None:
         return
     env = dict(os.environ)
     if os.path.basename(pager.split()[0]) == "less":
-        env.setdefault("LESS", "-FRX")
+        env.setdefault("LESS", less_defaults(lines))
     sys.stdout.flush()
-    try:
-        proc = subprocess.run(pager, shell=True, input=text.encode("utf-8", "replace"), env=env)
-    except OSError:
-        proc = None
+    returncode = _run_pager(pager, text.encode("utf-8", "replace"), env)
     # 126/127 are the shell saying "cannot run that" — nothing was shown, so show
-    # it here. Any other exit is the pager's own business (`q` is 0 in less).
-    if proc is None or proc.returncode in (126, 127):
+    # it here. Any other exit is the pager's own business (`q` is 0 in less, Ctrl+C
+    # with K is 2).
+    if returncode is None or returncode in (126, 127):
         sys.stdout.write(text)
         sys.stdout.flush()
 
@@ -121,6 +160,9 @@ class OutputManager:
         self.quiet = quiet
         self.verbose = verbose
         self.no_pager = no_pager
+        # The `output.pager` config setting. AppContext wires it to the config store;
+        # it is only called when a listing is about to page.
+        self.pager_enabled: Callable[[], bool] = lambda: True
         # NO_COLOR is the cross-tool convention; honouring it means a CI log or a
         # dumb terminal stays readable without anyone passing a flag.
         self.no_color = bool(no_color) or bool(os.environ.get("NO_COLOR"))
@@ -233,7 +275,7 @@ class OutputManager:
         # table exactly as a direct print would.
         with self.data_console.capture() as capture:
             self.data_console.print(renderable, soft_wrap=soft_wrap)
-        maybe_page(capture.get(), disabled=self.no_pager)
+        maybe_page(capture.get(), disabled=self.no_pager or not self.pager_enabled())
 
     # -- errors (always shown) --------------------------------------------------
     def emit_error(self, err: "TTError") -> None:

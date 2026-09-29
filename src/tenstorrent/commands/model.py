@@ -36,7 +36,6 @@ from .._compat import confirm
 from ..cli import (
     JsonFlag,
     NoColorFlag,
-    PagedHelpGroup,
     QuietFlag,
     VerboseFlag,
     handle_tt_errors,
@@ -53,9 +52,6 @@ from ..modelhub.completions import complete_bundle_id, complete_local_model, com
 model_app = typer.Typer(
     help="Model management: browse, search, pull, query, stop and remove models.",
     no_args_is_help=True,
-    # `tt model --help` is one of the two help pages long enough to scroll off a
-    # small pane; see PagedHelpGroup.
-    cls=PagedHelpGroup,
 )
 
 PANEL_AUTHORING = "Authoring (delegated to tt-model)"

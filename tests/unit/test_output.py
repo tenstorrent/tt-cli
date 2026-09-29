@@ -204,28 +204,101 @@ def test_maybe_page_respects_every_opt_out(capsys, monkeypatch, tmp_path):
     assert not sink.exists()
 
 
-def test_maybe_page_gives_less_git_style_defaults_only_when_unset(monkeypatch):
+class _FakePager:
+    """Stands in for subprocess.Popen: records what tt does to the pager process.
+    `wait_interrupts` Ctrl+Cs arrive while tt waits; `write_interrupts` makes the
+    Ctrl+C land while tt is still feeding the pager."""
+
+    def __init__(self, *, wait_interrupts: int = 0, write_interrupts: bool = False):
+        self.wait_interrupts = wait_interrupts
+        self.write_interrupts = write_interrupts
+        self.calls: list[str] = []
+        self.launches: list[dict] = []
+
+    def __call__(self, cmd, **kwargs):
+        self.launches.append({"cmd": cmd, "LESS": kwargs["env"].get("LESS")})
+        fake = self
+
+        class _Stdin:
+            def write(self, data):
+                fake.calls.append("write")
+                if fake.write_interrupts:
+                    raise KeyboardInterrupt
+
+            def close(self):
+                fake.calls.append("close")
+
+        class _Proc:
+            stdin = _Stdin()
+
+            def wait(self):
+                fake.calls.append("wait")
+                if fake.wait_interrupts:
+                    fake.wait_interrupts -= 1
+                    raise KeyboardInterrupt
+                return 0
+
+            def kill(self):
+                fake.calls.append("kill")
+
+            def terminate(self):
+                fake.calls.append("terminate")
+
+        return _Proc()
+
+
+def _default_pager(monkeypatch, fake: _FakePager) -> None:
     from tenstorrent import output
 
-    seen: list[dict] = []
-
-    def fake_run(cmd, **kwargs):
-        seen.append({"cmd": cmd, "LESS": kwargs["env"].get("LESS")})
-        return type("P", (), {"returncode": 0})()
-
-    monkeypatch.setattr(output.subprocess, "run", fake_run)
+    monkeypatch.setattr(output.subprocess, "Popen", fake)
     _tall_tty(monkeypatch)
     monkeypatch.delenv("TT_PAGER", raising=False)
     monkeypatch.delenv("PAGER", raising=False)
     monkeypatch.delenv("LESS", raising=False)
+
+
+def test_maybe_page_gives_less_its_defaults_only_when_unset(monkeypatch):
+    from tenstorrent import output
+
+    fake = _FakePager()
+    _default_pager(monkeypatch, fake)
     output.maybe_page(TALL)  # default pager
     monkeypatch.setenv("LESS", "-S")
     output.maybe_page(TALL)  # the user's own LESS wins
     monkeypatch.delenv("LESS")
     monkeypatch.setenv("PAGER", "more")
     output.maybe_page(TALL)  # not less: nothing injected
-    assert [s["cmd"] for s in seen] == ["less", "less", "more"]
-    assert [s["LESS"] for s in seen] == ["-FRX", "-S", None]
+    assert [s["cmd"] for s in fake.launches] == ["less", "less", "more"]
+    assert [s["LESS"] for s in fake.launches] == [output.less_defaults(20), "-S", None]
+    # git's FRX, K so Ctrl+C quits less cleanly, and a prompt saying where you are and
+    # how to leave; the -P prompt runs to the end of the string, so it has to be last.
+    defaults = output.less_defaults(20)
+    assert defaults.startswith("-FRXK ")
+    assert defaults.split(" -")[-1].startswith("Ps")
+    assert "of 20 " in defaults  # tt knows the total; less would not until the end
+    assert "Enter/Space for more" in defaults
+    assert defaults.endswith("q to quit")
+
+
+def test_ctrl_c_at_the_pager_waits_for_it_instead_of_killing_it(monkeypatch, capsys):
+    """Killing less on Ctrl+C (what subprocess.run does) leaves the terminal with no
+    echo. tt keeps waiting for the pager to exit and treats Ctrl+C as done reading."""
+    from tenstorrent import output
+
+    fake = _FakePager(wait_interrupts=2)
+    _default_pager(monkeypatch, fake)
+    output.maybe_page(TALL)  # returns normally: no KeyboardInterrupt escapes
+    assert fake.calls == ["write", "close", "wait", "wait", "wait"]
+    assert capsys.readouterr().out == ""  # the pager showed it; nothing re-printed
+
+
+def test_ctrl_c_while_feeding_the_pager_still_closes_and_waits(monkeypatch):
+    from tenstorrent import output
+
+    fake = _FakePager(write_interrupts=True)
+    _default_pager(monkeypatch, fake)
+    output.maybe_page(TALL)
+    assert fake.calls == ["write", "close", "wait"]
 
 
 def test_maybe_page_falls_back_to_plain_output_when_the_pager_cannot_run(
@@ -259,4 +332,19 @@ def test_emit_page_is_inert_for_json_and_no_pager(monkeypatch, tmp_path, capsys)
     json_text, _, rest = captured.partition("}\n")
     assert json.loads(json_text + "}") == {"n": 1}  # JSON went straight to stdout
     assert "line 19" in rest  # and so did the --no-pager listing
+    assert not sink.exists()
+
+
+def test_emit_page_honours_the_output_pager_setting(monkeypatch, tmp_path, capsys):
+    from tenstorrent.context import AppContext
+
+    cmd, sink = _fake_pager(tmp_path)
+    monkeypatch.setenv("TT_PAGER", cmd)
+    _tall_tty(monkeypatch)
+    appctx = AppContext.create()
+    assert appctx.output.pager_enabled() is True  # default: page long listings
+    appctx.config.set("output.pager", False)
+    assert appctx.output.pager_enabled() is False
+    appctx.output.emit({"n": 20}, renderer=lambda d: TALL, page=True)
+    assert "line 19" in capsys.readouterr().out
     assert not sink.exists()
