@@ -91,6 +91,8 @@ class StudioBackend:
             f"Starting TT-Studio and deploying {model.name} — Ctrl-C stops watching, "
             f"`tt model stop {model.name}` stops the model and studio."
         )
+        # Release every live row first: run.py owns the terminal from here on.
+        self.output.ui.handoff()
         # run.py resolves the repo root, .env and its compose file from cwd.
         try:
             return self.runner.stream(

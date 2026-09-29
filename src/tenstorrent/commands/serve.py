@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 import sys
 from enum import Enum
 
@@ -34,13 +35,16 @@ from ..backends.serving.model_manager import (
 )
 from ..backends.serving.studio import StudioBackend
 from .._compat import IntRange, prompt
-from ..cli import JsonFlag, QuietFlag, handle_tt_errors
+from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
 from ..models.model import ModelInfo
 from ..modelhub import bundles
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub.completions import complete_model
+
+
+PANEL_BUNDLE = "tt-model bundles"
 
 
 class Workflow(str, Enum):
@@ -61,28 +65,37 @@ def _stdin_isatty() -> bool:
     return sys.stdin.isatty()
 
 
+# Fixed roadmap for the tt-inference-server path. The bundle path hands straight
+# off to tt-model, which renders this design itself, so it declares no phases.
+PHASES = ["Checks", "Prepare"]
+
+
 def _autodetect_device(appctx) -> str | None:
     """Best-effort device config from our own tt-smi snapshot. run.py's built-in
     detection crashes on fresh checkouts (see backends/serving/inference_server.py), so serve
     passes --device explicitly whenever the host is confidently mappable."""
-    try:
-        snap = get_device_backend(appctx).snapshot()
-    except TTError as err:
-        appctx.output.warn(
-            f"device auto-detect skipped ({err.what}) — "
-            "pass --device if the server cannot infer it."
-        )
-        return None
-    device = infer_device_config(snap.devices)
+    ui = appctx.output.ui
+    with ui.step("Detecting device configuration") as step:
+        try:
+            snap = get_device_backend(appctx).snapshot()
+        except TTError as err:
+            step.skip("auto-detect unavailable")
+            appctx.output.warn(
+                f"device auto-detect skipped ({err.what}) — "
+                "pass --device if the server cannot infer it."
+            )
+            return None
+        device = infer_device_config(snap.devices)
+        if device is None:
+            step.skip("no mappable device")
+        else:
+            step.detail(f"{device} (override with --device)")
     if device is None:
         seen = ", ".join(sorted({d.board_type or "?" for d in snap.devices})) or "none"
+        # Actionable, so it is never folded, and it lands after the step collapses.
         appctx.output.warn(
             f"could not map detected boards ({seen}) to a device config — "
             "pass --device if the server cannot infer it."
-        )
-    else:
-        appctx.output.status(
-            f"Detected device configuration: {device} (override with --device)."
         )
     return device
 
@@ -141,25 +154,80 @@ def serve(
         "--dry-run",
         help="Show the resolved configuration and the command, without running it.",
     ),
+    profile: str = typer.Option(
+        None,
+        "--profile",
+        help="Bundles: serve this profile instead of the bundle's default "
+        "(`tt model profiles NAME` lists them).",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
+    detach: bool = typer.Option(
+        False,
+        "--detach",
+        help="Bundles: return once the container is up instead of following the boot.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
+    print_only: bool = typer.Option(
+        False,
+        "--print",
+        help="Bundles: print the exact launch command and environment instead of "
+        "running it.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Bundles: update to the Hub's newest revision before serving.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
+    no_update_check: bool = typer.Option(
+        False,
+        "--no-update-check",
+        help="Bundles: skip the advisory about a newer revision on the Hub.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
+    no_weights: bool = typer.Option(
+        False,
+        "--no-weights",
+        help="Bundles: do not pre-fetch the weights on the host; the engine loads "
+        "them itself.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
 ) -> None:
     """[beta] Serve a model for inference via tt-inference-server, TT-Studio, or
     tt-model (for a bundle id neither catalog covers).
 
     For a bundle id, anything tt serve does not recognize is passed to tt-model —
-    its own flags and its vLLM passthrough: `tt serve ns/model -- --port 8080 --follow`.
+    its own flags and its vLLM passthrough: `tt serve ns/model -- --max-model-len 4096`.
     """
     appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     offline = offline or appctx.offline
     # Unrecognized options are collected rather than rejected (see the command's
-    # context_settings) so tt-model's own flags — --port, --follow, --profile — and
-    # its vLLM passthrough reach it unchanged.
+    # context_settings) so tt-model's vLLM passthrough reaches it unchanged.
     extra_args = list(ctx.args)
     backend = _requested_backend(
         inference_server=inference_server, studio=studio, model_manager=model_manager
     )
+    # tt-model's own serve options, spelled the way it takes them. Declared here
+    # so they show up in --help and in the dry-run plan, rather than only working
+    # by accident of the passthrough.
+    serve_flags = ["--profile", profile] if profile else []
+    serve_flags += [
+        flag
+        for flag, on in (
+            ("--detach", detach),
+            ("--print", print_only),
+            ("--refresh", refresh),
+            ("--no-update-check", no_update_check),
+            ("--no-weights", no_weights),
+        )
+        if on
+    ]
     catalog = ModelCatalog()
     if model is None:
         model = _pick_model(appctx, catalog, backend)
@@ -169,9 +237,20 @@ def serve(
         _serve_with_tt_model_manager(
             appctx, model, catalog_origin=catalog.origin,
             workflow=workflow, device=device, offline=offline,
-            port=port, extra_args=extra_args, dry_run=dry_run,
+            port=port, serve_flags=serve_flags, extra_args=extra_args, dry_run=dry_run,
         )
         return
+    if serve_flags:
+        given = [f for f in serve_flags if f.startswith("--")]
+        verb = "only applies" if len(given) == 1 else "only apply"
+        raise TTError(
+            f"{' and '.join(given)} {verb} to a tt-model bundle; {entry.name} is "
+            "a catalog model.",
+            why="They configure `tt-model serve`; tt-inference-server and TT-Studio have "
+            "no profiles or Hub revisions to refresh, and print their plan with --dry-run.",
+            next_step="Drop the flag, or use `tt serve --dry-run`.",
+            exit_code=ExitCode.USAGE,
+        )
     if extra_args:
         raise TTError(
             f"Unrecognized arguments for a catalog model: {' '.join(extra_args)}",
@@ -202,15 +281,26 @@ def serve(
         )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
-    server.preflight(entry)
-    server.serve(
-        entry,
-        workflow=workflow.value,
-        device=device,
-        offline=offline,
-        port=port,
-        force=force,
-    )
+    # Two phases, not three: Checks and Prepare are the work tt owns. Once run.py
+    # takes the terminal its lifetime is not our phase to hold open — the stepper
+    # completes and the server's output takes over.
+    ui = appctx.output.ui
+    ui.register_phases(PHASES)
+    with ui.phase("Checks"):
+        with ui.step("Container runtime") as step:
+            server.preflight(entry)
+            step.detail("docker" if shutil.which("docker") else "podman")
+    with ui.phase("Prepare"):
+        launch = server.prepare(
+            entry,
+            workflow=workflow.value,
+            device=device,
+            offline=offline,
+            port=port,
+            force=force,
+        )
+    ui.final_stepper()
+    server.launch(launch)
 
 
 _BACKEND_FLAGS = {
@@ -416,7 +506,9 @@ def _plan_renderer(plan: dict) -> Group:
                 "installed, but no readable manifest — tt-model resolves it at launch",
             )
         if not plan["installed"]:
-            table.add_row("tt-model", "not installed — the first serve installs it")
+            table.add_row("tt-model", "not installed — `tt update` or this serve installs it")
+        if plan.get("serve_flags"):
+            table.add_row("tt-model options", " ".join(plan["serve_flags"]))
         if plan["extra_args"]:
             table.add_row("passthrough", " ".join(plan["extra_args"]))
     elif plan.get("backend") == "studio":
@@ -503,6 +595,7 @@ def _serve_with_tt_model_manager(
     offline: bool,
     port: int | None,
     extra_args: list[str],
+    serve_flags: list[str] | None = None,
     dry_run: bool = False,
 ) -> None:
     """Fallback path: a name the released spec does not know. Only Hub-style bundle
@@ -520,11 +613,15 @@ def _serve_with_tt_model_manager(
             "itself (override with its own --arch)."
         )
     if dry_run:
-        plan = backend.plan(model, offline=offline, port=port, extra_args=extra_args)
+        plan = backend.plan(
+            model, offline=offline, port=port, serve_flags=serve_flags, extra_args=extra_args
+        )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
     appctx.output.status(
         f"{model} is not in the model catalog ({catalog_origin}) — "
         "serving it as a tt-model bundle."
     )
-    backend.serve(model, offline=offline, port=port, extra_args=extra_args)
+    backend.serve(
+        model, offline=offline, port=port, serve_flags=serve_flags, extra_args=extra_args
+    )

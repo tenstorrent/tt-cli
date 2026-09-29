@@ -30,6 +30,7 @@ from rich.text import Text
 
 if TYPE_CHECKING:  # pragma: no cover
     from .errors import TTError
+    from .ui.console import Ui
 
 
 def _stdout_isatty() -> bool:
@@ -113,14 +114,47 @@ class OutputManager:
         json_mode: bool = False,
         quiet: bool = False,
         verbose: bool = False,
+        no_color: bool = False,
         no_pager: bool = False,
     ) -> None:
         self.json_mode = json_mode
         self.quiet = quiet
         self.verbose = verbose
         self.no_pager = no_pager
-        self.data_console = Console(highlight=False)
-        self.status_console = Console(stderr=True, highlight=False)
+        # NO_COLOR is the cross-tool convention; honouring it means a CI log or a
+        # dumb terminal stays readable without anyone passing a flag.
+        self.no_color = bool(no_color) or bool(os.environ.get("NO_COLOR"))
+        # Imported here, not at module scope: keeps output.py import-cheap and
+        # avoids a package-level cycle with ui/ (which type-hints OutputManager).
+        from .ui.theme import THEME
+
+        self.data_console = Console(highlight=False, theme=THEME, no_color=self.no_color)
+        self.status_console = Console(
+            stderr=True, highlight=False, theme=THEME, no_color=self.no_color
+        )
+
+    @property
+    def ui(self) -> "Ui":
+        """The terminal design layer: phases, collapsing steps, activity row, cards.
+
+        Hung off OutputManager rather than AppContext because every backend
+        already receives an OutputManager and none receives an AppContext — so
+        `output.ui` costs zero signature changes. Lazy, and constructed once per
+        invocation, which keeps phase/step state out of module globals (they would
+        leak between in-process CliRunner runs).
+        """
+        cached = self.__dict__.get("_ui")
+        if cached is None:
+            from .ui.console import Ui
+
+            cached = self.__dict__["_ui"] = Ui(self)
+        return cached
+
+    def release_ui(self) -> None:
+        """Tear the UI down without building one that never existed."""
+        cached = self.__dict__.get("_ui")
+        if cached is not None:
+            cached.release()
 
     def apply_flags(
         self,
@@ -128,11 +162,16 @@ class OutputManager:
         json_mode: bool = False,
         quiet: bool = False,
         verbose: bool = False,
+        no_color: bool = False,
     ) -> None:
         """Leaf-command flags can only turn modes on, never back off a root flag."""
         self.json_mode = self.json_mode or json_mode
         self.quiet = self.quiet or quiet
         self.verbose = self.verbose or verbose
+        self.no_color = self.no_color or bool(no_color)
+        # The consoles already exist, so retint them rather than rebuilding.
+        self.data_console.no_color = self.no_color
+        self.status_console.no_color = self.no_color
 
     # -- status channel (stderr) ------------------------------------------------
     def status(

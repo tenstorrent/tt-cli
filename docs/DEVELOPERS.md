@@ -109,7 +109,31 @@ want. They are served by engines included in the repos themselves
 `tt model pull
 <namespace>/<name>` installs one, and `tt serve <namespace>/<name>` serves it,
 passing through anything `tt serve` does not recognize (`tt serve repo/model --
---port 8080 --follow`).
+--max-model-len 4096`).
+
+Every `tt-model` consumer command has a `tt model` counterpart, so one CLI covers
+the loop; the mapping is one-to-one and tt shells out to the pinned `tt-model`:
+
+| `tt` | `tt-model` | Notes |
+|---|---|---|
+| `tt model search [Q] --catalog --arch --limit` | `search` | tt renders `tt-model search --json`; `--json` is tt's own contract, with `installed` added |
+| `tt model list --community` | `search --catalog` (+ `list`) | queried directly on the Hub, without installing tt-model |
+| `tt model list --community --cached` | `list` | installed bundles, from tt-model's own index |
+| `tt model info NS/NAME` | `info` | |
+| `tt model pull NS/NAME [--force] [--no-weights]` | `pull [--force] [--with-weights]` | tt asks for the weights by default; tt-model does not |
+| `tt model profiles NS/NAME` | `profiles` | `--json` reads the pulled manifest instead |
+| `tt serve NS/NAME [--port] [--profile] [--detach] [--print] [--refresh] [--no-update-check] [--no-weights] [-- …]` | `serve` | `--offline` becomes `--local-only`; everything after the id is tt-model's passthrough |
+| `tt model curl [PROMPT] [--port/--url] [--model] [--print] [--key value…]` | `curl` | the port defaults to the one server tt is running, found like `tt launch` does |
+| `tt model ps` / `tt model logs NS/NAME [-f] [--profile]` | `logs` | |
+| `tt model stop NS/NAME [--profile]` | `stop` | |
+| `tt model rm NS/NAME [--keep-cache] [--include-weights]` | `rm` | tt adds `--dry-run` (prints the delegation) and a confirmation |
+| `tt model login [--token]` | `login` | interactive without a token (the terminal is handed over) |
+| `tt model publish` / `unpublish` | `publish` / `unpublish` | publish asks first, since it makes a private repo public |
+| `tt model package` / `package-thin` / `push` | same | pure passthrough, `--help` included: the flags are tt-model's |
+
+Verbs that inspect or tear down (`profiles`, `curl`, `stop`, `rm`) never install
+tt-model; the ones that need the Hub anyway (`search`, `pull`, `serve`, `login`,
+`publish`) install the pinned version first if `tt update` has not.
 
 `tt model pull` also accepts an ordinary HuggingFace repo id, fetching its weights
 into the same cache — useful to pre-warm before serving — with a warning that
@@ -162,6 +186,16 @@ Exit codes are a documented contract:
 | 8 | OFFLINE | Network needed but offline |
 | 9 | CONFIG | Invalid configuration |
 | 130 | INTERRUPTED | Stopped with Ctrl-C (shell convention: 128 + SIGINT) |
+
+# Terminal output
+
+How `tt` renders phases, steps, progress, and failures — and the rules for adding
+output — is documented in [cli-output.md](cli-output.md). Read it before changing
+anything the user sees. To see the whole output language at once:
+
+```bash
+python3 scripts/ui_demo.py          # add --fail for the failure paths, -v to unfold detail
+```
 
 # Testing the local repo
 

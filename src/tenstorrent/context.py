@@ -34,6 +34,12 @@ class AppContext:
 
     def run_before_exec(self) -> None:
         """Guarded: a hook must never stop the hand-off it precedes."""
+        # First, always: give the terminal back. exec_tty never returns, so a live
+        # spinner thread would otherwise still be painting over the child's UI.
+        try:
+            self.output.release_ui()
+        except Exception:
+            pass
         for hook in self.before_exec:
             try:
                 hook()
@@ -48,6 +54,9 @@ class AppContext:
             self._extras["runner"] = Runner(
                 sudo_command=str(self.config.get("tools.sudo_command")),
                 before_exec=self.run_before_exec,
+                # Streamed children tee their output here, and a failure carries
+                # the path so the error panel can point at it.
+                log_dir=self.paths.logs_dir,
             )
         return self._extras["runner"]
 
@@ -57,7 +66,7 @@ class AppContext:
             from .tools.registry import ToolRegistry
 
             self._extras["registry"] = ToolRegistry(
-                self.paths, self.config, runner=self.runner
+                self.paths, self.config, runner=self.runner, ui=self.output.ui
             )
         return self._extras["registry"]
 
@@ -80,12 +89,17 @@ class AppContext:
         json_mode: bool = False,
         quiet: bool = False,
         verbose: bool = False,
+        no_color: bool = False,
         offline: bool = False,
         no_pager: bool = False,
     ) -> "AppContext":
         paths = get_paths()
         output = OutputManager(
-            json_mode=json_mode, quiet=quiet, verbose=verbose, no_pager=no_pager
+            json_mode=json_mode,
+            quiet=quiet,
+            verbose=verbose,
+            no_color=no_color,
+            no_pager=no_pager,
         )
         return cls(
             paths=paths,
