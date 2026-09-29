@@ -69,22 +69,19 @@ def test_help_advertises_no_pager(runner):
     assert "--no-pager" in runner.invoke(app, ["--help"]).output.replace("\n", "")
 
 
-def test_help_pages_on_a_short_terminal(runner, monkeypatch, tmp_path):
-    """`tt --help` and `tt model --help` scroll off a small tmux pane; on a
-    terminal they go through the pager. The captured help keeps Typer's own
-    rendering — the pager sees the same Usage line a direct print would show."""
+def test_help_is_never_paged(runner, monkeypatch, tmp_path):
+    """Help prints straight out even when it is taller than the terminal, like gh,
+    kubectl and docker: a pager there left people at a bare `:` prompt. Bare
+    `tt model` is the same help (no_args_is_help)."""
     cmd, sink = _fake_pager(tmp_path)
     monkeypatch.setenv("TT_PAGER", cmd)
     monkeypatch.setattr("tenstorrent.output._stdout_isatty", lambda: True)
     monkeypatch.setattr("tenstorrent.output._terminal_lines", lambda: 5)
-    for argv in (["--help"], ["model", "--help"]):
-        sink.unlink(missing_ok=True)
+    for argv in (["--help"], ["model", "--help"], ["model"]):
         result = runner.invoke(app, argv)
         assert result.exit_code == 0, result.output
-        # The pager owns the screen; click's own echo of the (empty) formatter
-        # still adds one newline, exactly as it does for an unpaged help.
-        assert result.output.strip() == ""
-        assert "Usage: " in sink.read_text()
+        assert "Usage: " in result.output
+        assert not sink.exists()
 
 
 def test_help_no_pager_flag_prints_directly(runner, monkeypatch, tmp_path):
