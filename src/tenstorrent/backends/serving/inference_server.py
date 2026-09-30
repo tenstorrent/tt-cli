@@ -28,6 +28,8 @@ from ...modelhub.hub import hf_home_dir, hf_token, uses_host_weight_cache
 from ...output import OutputManager
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
+from . import boot, chips
+from .preparation import RunPyPreparation
 
 TOOL = "tt-inference-server"
 WORKFLOWS = ("server", "benchmarks", "evals")
@@ -52,6 +54,39 @@ _BOARDS_TO_DEVICE = {
     ("p300", 1): "p300",
     ("p300", 2): "p300x2",
 }
+
+
+# tt-studio's placement (docker_utils.infer_inference_server_device): on a
+# multi-chip board a model with a spec for the board's own chip runs on one chip.
+_BOARD_TO_CHIP = {
+    "n150x4": "n150",
+    "t3k": "n300",
+    "p150x4": "p150",
+    "p150x8": "p150",
+    "p300x2": "p150",
+}
+_WHOLE_BOARD_LLM_BOARDS = {"n150x4", "t3k"}
+# P300 cards: one chip alone is a CUSTOM cluster to tt-metal, which only boots a
+# spec that names its mesh graph (the media p150 specs do; vLLM's do not).
+_MESH_DESC_BOARDS = {"p300x2"}
+_SPEECH_TYPES = {"audio", "text_to_speech"}
+_ONE_CHIP_DEVICES = {"e150", "n150", "n300", "p100", "p150"}
+
+
+def choose_device(model: ModelInfo, board: str) -> str:
+    chip = _BOARD_TO_CHIP.get(board)
+    if chip is None:
+        return board
+    if model.model_type in ("llm", "vlm") and board in _WHOLE_BOARD_LLM_BOARDS:
+        return board
+    if model.model_type in _SPEECH_TYPES and chip == "n300" and "n150" in model.devices:
+        chip = "n150"
+    spec = model.devices.get(chip)
+    if spec is None or not spec.supported:
+        return board
+    if board in _MESH_DESC_BOARDS and not spec.mesh_graph_desc:
+        return board
+    return chip
 
 
 def infer_device_config(devices: Sequence[DeviceSnapshot]) -> str | None:
@@ -129,6 +164,9 @@ _HF_SNAPSHOT_RE = re.compile(r"models--([^/]+?)--([^/]+?)[/\\]snapshots")
 _VOLUME_PREFIX = "volume_id_"
 
 
+START_PHASE = boot.START_PHASE
+
+
 @dataclass(frozen=True)
 class ServeLaunch:
     """A resolved, ready-to-run server invocation.
@@ -142,6 +180,11 @@ class ServeLaunch:
     cwd: str
     workflow: str
     model_name: str
+    # What the watched boot needs on top: the model, the device spec it resolved
+    # to, and the --service-port value it has to poll.
+    model: ModelInfo | None = None
+    support: DeviceSupport | None = None
+    port: str = ""
 
 
 @dataclass(frozen=True)
@@ -277,7 +320,7 @@ class InferenceServerBackend:
         self.config = config
         self.output = output
 
-    def preflight(self, model: ModelInfo) -> None:
+    def preflight(self, model: ModelInfo, *, workflow: str = "server") -> None:
         if not (shutil.which("docker") or shutil.which("podman")):
             raise TTError(
                 "No container runtime found.",
@@ -289,11 +332,49 @@ class InferenceServerBackend:
                 reason="tool.missing.docker",
                 details={"tool": "docker"},
             )
+        # Refused here rather than met halfway through: run.py getpass-prompts for
+        # a missing HF_TOKEN, and that prompt goes to /dev/tty — behind the
+        # progress view, where it can be neither seen nor answered.
+        if workflow == "server" and self._would_prompt_for_hf_token():
+            raise TTError(
+                "tt serve needs a Hugging Face token.",
+                why="tt-inference-server requires HF_TOKEN for every containerized "
+                "serve — it fetches weights and tokenizers from the Hub — and asks "
+                "for it interactively when it is unset.",
+                next_step="Run `hf auth login` once, or export HF_TOKEN=hf_… — then "
+                "re-run.",
+                exit_code=ExitCode.CONFIG,
+                reason="hf.token.missing",
+            )
         if not model.cached and uses_host_weight_cache(model):
-            self.output.warn(
+            self.output.ui.alert(
                 f"{model.name} is not in the local model cache; the server will "
                 f"download it on startup (`tt model pull {model.name}` avoids the wait)."
             )
+
+    def _would_prompt_for_hf_token(self) -> bool:
+        """Whether a containerized serve would stop and ask for HF_TOKEN.
+
+        run.py demands it for every `--docker-server` run, cached weights or
+        not (handle_secrets: huggingface_required is true whenever
+        docker_server is). It writes what it is given to `<checkout>/.env` and
+        reads that back on later runs, so a checkout already holding one never
+        asks again — and a checkout that does not exist yet certainly will.
+        """
+        if hf_token(self.config) is not None:
+            return False
+        root = self.checkout_root()
+        dotenv = root / ".env" if root is not None else None
+        if dotenv is None or not dotenv.is_file():
+            return True
+        try:
+            lines = dotenv.read_text().splitlines()
+        except OSError:
+            return True
+        return not any(
+            line.strip().startswith("HF_TOKEN=") and line.strip() != "HF_TOKEN="
+            for line in lines
+        )
 
     def _env(self, model: ModelInfo) -> dict[str, str]:
         """Environment for run.py. Runner.stream() *replaces* the child
@@ -311,8 +392,9 @@ class InferenceServerBackend:
         source = "huggingface" if uses_host_weight_cache(model) else "noaction"
         env.setdefault("MODEL_SOURCE", source)
         # run.py reads HF_TOKEN from its environment (or its own .env) and, upstream,
-        # prompts on stdin when neither has one. A token from `hf auth login` is
-        # handed over so a user who already logged in is never asked again.
+        # getpass-prompts when neither has one. A token from `hf auth login` is
+        # handed over so a user who already logged in is never asked again
+        # (preflight refuses the serve when there is no token at all).
         token = hf_token(self.config)
         if token:
             env.setdefault("HF_TOKEN", token[0])
@@ -322,6 +404,21 @@ class InferenceServerBackend:
         # A throwaway value keeps the deploy non-interactive; the user's own
         # JWT_SECRET, if exported, is left alone.
         env.setdefault("JWT_SECRET", secrets.token_hex(32))
+        # run.py logs to sys.stdout, which Python block-buffers at 8 KB when it
+        # is a pipe rather than a terminal — so a watched serve saw nothing for
+        # minutes and the checklist sat on its first row. The tool is the one
+        # being watched; it has to flush as it writes.
+        env.setdefault("PYTHONUNBUFFERED", "1")
+        # v0.21.0 added a readiness gate to ServerCommand: with more than one boot
+        # attempt — its default of 2 — run.py blocks polling /health until the
+        # model is warm (up to an hour), and tears the container down and retries
+        # if that runs out. tt already owns both halves of that: the container log
+        # drives the checklist and the same endpoint decides ready. Leaving the
+        # gate on means two processes waiting on one boot, and two deciding when
+        # to destroy it. One attempt restores the fire-and-forget return. (Set
+        # TT_SERVER_BOOT_ATTEMPTS yourself to keep the retry; the watcher reads
+        # the boot correctly either way.)
+        env.setdefault("TT_SERVER_BOOT_ATTEMPTS", "1")
         return env
 
     def _python_for(self, entry: Path) -> str:
@@ -440,6 +537,7 @@ class InferenceServerBackend:
         device: str | None,
         port: int | None,
         entry: Path | None,
+        device_ids: Sequence[int] | None = None,
     ) -> list[str]:
         """The run.py command line. `entry` is None for a dry run, which has not
         resolved (and must not install) the checkout."""
@@ -495,11 +593,11 @@ class InferenceServerBackend:
                 argv += ["--override-tt-config", json.dumps(forced["override_tt_config"])]
         elif device:
             argv += ["--device", device]
+        if device_ids:
+            argv += ["--device-id", ",".join(map(str, device_ids))]
         # Always pass it explicitly: otherwise run.py falls back to its own
         # SERVICE_PORT/8000 default instead of ours.
-        if port is None:
-            port = os.environ.get("SERVICE_PORT", DEFAULT_SERVICE_PORT)
-        argv += ["--service-port", str(port)]
+        argv += ["--service-port", self._service_port(port)]
         return argv
 
     def prepare(
@@ -529,6 +627,10 @@ class InferenceServerBackend:
         # registry.ensure may clone the repo and build a venv — minutes of work
         # that now renders its own steps (see tools/installers.py).
         entry = self.registry.ensure(TOOL, offline=offline)
+        device_ids = None
+        if workflow == "server":
+            device_ids = self._place(model, support, device)
+            port = self._free_service_port(model, port)
         argv = self._argv(
             model,
             workflow=workflow,
@@ -536,6 +638,7 @@ class InferenceServerBackend:
             device=device,
             port=port,
             entry=Path(entry),
+            device_ids=device_ids,
         )
         return ServeLaunch(
             argv=argv,
@@ -545,20 +648,52 @@ class InferenceServerBackend:
             cwd=str(Path(entry).parent),
             workflow=workflow,
             model_name=model.name,
+            model=model,
+            support=support,
+            port=self._service_port(port),
         )
 
     def launch(self, plan: "ServeLaunch") -> int:
-        """Hand the terminal to run.py. Its output from here on is the server's."""
+        """Run run.py. `--workflow server` is watched to ready as the Start phase
+        (see _serve_watched); anything else hands it the terminal."""
+        ui = self.output.ui
+        if plan.workflow == "server" and plan.model is not None and plan.port.isdigit():
+            return self._serve_watched(
+                plan.model,
+                plan.argv,
+                env=plan.env,
+                cwd=plan.cwd,
+                support=plan.support,
+                port=int(plan.port),
+            )
+        # Nothing to watch: benchmarks/evals, or a port we cannot poll.
+        ui.skip_phase(
+            START_PHASE,
+            f"run.py runs {plan.workflow} in the foreground"
+            if plan.workflow != "server"
+            else f"SERVICE_PORT={plan.port!r} is not a port tt can watch",
+        )
+        ui.final_stepper()
         self.output.status(
             f"Starting tt-inference-server ({plan.workflow}) for {plan.model_name} "
             "— Ctrl-C to stop."
         )
-        # Release every live row first: the child owns the terminal now, and a
-        # spinner thread still painting would fight its output.
-        self.output.ui.handoff()
+        ui.handoff()
         return self.runner.stream(
             plan.argv, env=plan.env, cwd=plan.cwd, tool=TOOL
         )
+
+    @staticmethod
+    def _service_port(port: int | None) -> str:
+        """Exactly what --service-port gets: the flag, SERVICE_PORT, or our default.
+
+        A string, and unvalidated, because a hand-set SERVICE_PORT belongs to the
+        user: run.py is the right place for it to be rejected. launch() parses the
+        result to know which port to poll, and skips the wait when it cannot.
+        """
+        if port is not None:
+            return str(port)
+        return str(os.environ.get("SERVICE_PORT", DEFAULT_SERVICE_PORT))
 
     def serve(
         self,
@@ -580,6 +715,117 @@ class InferenceServerBackend:
                 port=port,
                 force=force,
             )
+        )
+
+    def _place(
+        self, model: ModelInfo, support: DeviceSupport | None, device: str | None
+    ) -> list[int] | None:
+        ids = chips.all_ids()
+        taken = chips.claimed(self.runner, self.container_runtime(), ids) if ids else None
+        if taken is None:
+            return None
+        sent = (support.serve_as or device) if support else device
+        if sent in _ONE_CHIP_DEVICES and len(ids) > 1:
+            free = [i for i in ids if i not in taken]
+            if not free:
+                raise self._in_use(model, f"All {len(ids)} chips are in use.")
+            self.output.ui.note(f"Serving on chip {free[0]} ({sent}).")
+            return free[:1]
+        if taken:
+            held = ", ".join(map(str, sorted(taken)))
+            raise self._in_use(
+                model, f"{model.name} needs the whole board, and chip(s) {held} are in use."
+            )
+        return None
+
+    @staticmethod
+    def _in_use(model: ModelInfo, what: str) -> TTError:
+        return TTError(
+            what,
+            why="Another served model holds them.",
+            next_step=f"`tt model ps` to see what is running, `tt model stop <model>` "
+            f"to free them, then re-run `tt serve {model.name}`.",
+            exit_code=ExitCode.TOOL_FAILED,
+            reason="serve.device.in_use",
+        )
+
+    def _free_service_port(self, model: ModelInfo, port: int | None) -> int | None:
+        """The port to serve on, checked before run.py is asked to publish it.
+
+        docker refuses a taken port only once run.py runs the container, into a
+        log file of run.py's own, and meanwhile the model already on it answers
+        every probe. So a port the user chose is refused here while the reason
+        can still be said; left to us, we walk up past busy ones as tt-model
+        does, which is what lets a second model serve beside the first.
+        """
+        setting = self._service_port(port)
+        if not setting.isdigit():
+            return port  # the user's SERVICE_PORT; run.py is the one to reject it
+        wanted = int(setting)
+        if boot.port_is_free(wanted):
+            return port
+        if port is not None or "SERVICE_PORT" in os.environ:
+            raise TTError(
+                f"Port {wanted} is already in use.",
+                why="Another server — often a model served earlier — is listening there.",
+                next_step=f"Pick another: `tt serve {model.name} --port <port>`, or "
+                "`tt model ps` to see what is running.",
+                exit_code=ExitCode.USAGE,
+                reason="serve.port.in_use",
+            )
+        chosen = boot.pick_free_port(wanted)
+        if chosen is None:
+            raise TTError(
+                f"No free port found from {wanted} upward.",
+                next_step=f"Pass one explicitly: `tt serve {model.name} --port <port>`.",
+                exit_code=ExitCode.USAGE,
+                reason="serve.port.in_use",
+            )
+        self.output.ui.note(f"Port {wanted} is in use; serving on {chosen} instead.")
+        return chosen
+
+    def _serve_watched(
+        self,
+        model: ModelInfo,
+        argv: Sequence[str],
+        *,
+        env: dict[str, str],
+        cwd: str,
+        support: DeviceSupport | None,
+        port: int,
+    ) -> int:
+        """`--workflow server`: render the boot as a checklist and wait it out.
+
+        The checklist is the Start phase's body; the ready card follows once
+        the stepper is complete.
+
+        run.py returns as soon as the container is *listed*, which is minutes
+        before a large model has finished loading — so waiting here is what makes
+        `tt serve` mean "the endpoint is up", which is what `tt launch` straight
+        afterwards needs it to mean.
+        """
+        raw_log = boot.raw_log_path(self.config.paths.logs_dir, model.name)
+        return boot.report_watched(
+            self.output,
+            name=model.name,
+            backend="tt-inference-server",
+            phase=START_PHASE,
+            watch=lambda: boot.watch_serve(
+                runner=self.runner,
+                output=self.output,
+                prepare=RunPyPreparation(),
+                argv=argv,
+                env=env,
+                cwd=cwd,
+                tool=TOOL,
+                model_name=model.name,
+                engines=list(support.engines) if support else [],
+                port=port,
+                raw_log=raw_log,
+                weights_cache=hf_home_dir(self.config),
+                hf_token=(hf_token(self.config) or (None,))[0],
+                runtime=self.container_runtime(),
+            ),
         )
 
     # -- artifact cleanup (`tt model rm`) --------------------------------------------

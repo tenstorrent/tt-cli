@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,29 @@ def small_spec(monkeypatch):
 @pytest.fixture(autouse=True)
 def empty_hf_cache(monkeypatch):
     monkeypatch.setattr("tenstorrent.modelhub.catalog.scan_hf_cache", lambda: {})
+
+
+@pytest.fixture(autouse=True)
+def nothing_is_serving(monkeypatch):
+    """No health probe reaches the machine running the tests.
+
+    `tt serve` waits for `GET /v1/models` on the port it asked for, so without
+    this a real server on 20000 — another test box, or a model someone left
+    up — makes a failing serve look like a successful one.
+    """
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.boot.discovery.probe", lambda url, timeout_s=0: None
+    )
+
+
+@pytest.fixture(autouse=True)
+def hf_token_present(monkeypatch):
+    """The ordinary case: the machine has a Hugging Face login.
+
+    tt-inference-server requires a token for every containerized serve, so
+    without one preflight refuses — see test_serve_refuses_when_there_is_no_hf_token.
+    """
+    monkeypatch.setenv("HF_TOKEN", "hf_token_for_tests")
 
 
 @pytest.fixture
@@ -64,6 +88,28 @@ def test_serve_streams_run_py(runner, docker_present, fake_server, isolated_dirs
         "--no-auth", "--host-hf-cache", str(isolated_dirs / "hf"),
         "--service-port", "20000",
     ]
+
+
+@pytest.mark.fakes_only
+def test_serve_shows_progress_and_where_the_raw_output_went(
+    runner, docker_present, fake_server, isolated_dirs
+):
+    """The checklist replaces the server's wall of output, so the run has to say
+    where that output is — and it must be there. No flag: this is the default."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert "Raw output: tt model logs Llama-3.1-8B-Instruct --follow" in result.output
+    logs = sorted((isolated_dirs / "data" / "logs").glob("serve-Llama-3.1-8B-Instruct-*.log"))
+    assert logs and "listening" in logs[-1].read_text()
+
+
+@pytest.mark.fakes_only
+def test_serve_benchmarks_keeps_the_tools_own_output(runner, docker_present, fake_server):
+    """A checklist suits a boot with known steps; a benchmark run's own output
+    is the result, so it is streamed through untouched."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--workflow", "benchmarks"])
+    assert result.exit_code == 0, result.output
+    assert "Raw output:" not in result.output
 
 
 @pytest.mark.fakes_only
@@ -143,6 +189,69 @@ def test_serve_warns_when_model_not_cached(runner, docker_present, fake_server):
     assert "not in the local model cache" in result.output
 
 
+@pytest.fixture
+def no_hf_token(monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.inference_server.hf_token", lambda config: None
+    )
+
+
+def test_serve_refuses_when_there_is_no_hf_token(
+    runner, docker_present, fake_server, no_hf_token
+):
+    """run.py getpass-prompts for a missing HF_TOKEN on every --docker-server
+    run, and that prompt goes to /dev/tty — behind the progress view, where it
+    can be neither seen nor answered. Refuse up front instead of hanging."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == ExitCode.CONFIG
+    assert "hf auth login" in result.output
+    assert not fake_server.exists()  # refused before anything was started
+
+
+@pytest.mark.fakes_only
+def test_serve_accepts_a_token_the_checkout_already_recorded(
+    runner, docker_present, fake_server, no_hf_token, fakes_dir, tmp_path, monkeypatch
+):
+    """run.py writes the token it was given to <checkout>/.env and reads it back
+    on later runs, so a checkout holding one never asks again."""
+    checkout = tmp_path / "inference-repo"
+    shutil.copytree(fakes_dir / "inference-repo", checkout)
+    (checkout / ".env").write_text("JWT_SECRET=x\nHF_TOKEN=hf_recorded\n")
+    monkeypatch.setenv("TT_TOOL_BIN_TT_INFERENCE_SERVER", str(checkout / "run.py"))
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.fakes_only
+def test_serve_client_side_workflows_need_no_token_up_front(
+    runner, docker_present, fake_server, no_hf_token
+):
+    """Benchmarks and evals run without --docker-server, so run.py does not
+    require the token — and they stream on the inherited terminal anyway, where
+    a prompt would be visible."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--workflow", "evals"])
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.fakes_only
+def test_serve_passes_a_stored_hf_token_so_setup_host_never_prompts(
+    runner, docker_present, fake_server, tmp_path, monkeypatch
+):
+    """`hf auth login` is enough: tt resolves the stored token and exports it,
+    because setup_host reads the environment variable and nothing else."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.inference_server.hf_token",
+        lambda config: ("hf_stored", "hf-login"),
+    )
+    env_log = tmp_path / "inference-env.jsonl"
+    monkeypatch.setenv("FAKE_INFERENCE_ENV_LOG", str(env_log))
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(env_log.read_text().splitlines()[-1])["HF_TOKEN"] == "hf_stored"
+
+
 @pytest.mark.fakes_only
 @pytest.mark.parametrize(
     "model",
@@ -219,8 +328,36 @@ def test_serve_falls_back_to_tt_model_for_a_bundle_id(
     assert result.exit_code == 0, result.output
     assert "not in the model catalog" in result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "raahemnabeel/qwen3-coder-30b-a3b"]
+    assert record["argv"] == ["--verbose", "serve", "raahemnabeel/qwen3-coder-30b-a3b", "--detach"]
     assert record["hf_home"]  # HF_HOME exported for the child
+
+
+@pytest.mark.fakes_only
+def test_serve_renders_a_bundle_the_same_way_as_a_catalog_model(
+    runner, fake_model_manager, isolated_dirs
+):
+    """Same checklist, same raw-output pointer, same everything: tt renders
+    both backends, so this is the one assertion that keeps them together."""
+    result = runner.invoke(app, ["serve", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    assert "Raw output: tt model logs ns/bundle --follow" in result.output
+    logs = sorted((isolated_dirs / "data" / "logs").glob("serve-ns--bundle-*.log"))
+    assert logs, "the bundle's output was not teed"
+
+
+@pytest.mark.fakes_only
+def test_serve_asks_tt_model_for_events_and_not_to_watch_the_boot(
+    runner, fake_model_manager, isolated_dirs
+):
+    """--detach so only one process waits on the boot, and the env var (not a
+    flag — tt-model forwards unknown flags to vLLM) to ask for structured
+    steps. A tt-model that ignores the variable still works."""
+    result = runner.invoke(app, ["serve", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(fake_model_manager.read_text().splitlines()[-1])
+    assert record["argv"][:2] == ["--verbose", "serve"]  # global opts precede it
+    assert "--detach" in record["argv"]
+    assert record.get("progress") == "ndjson"
 
 
 @pytest.mark.fakes_only
@@ -242,7 +379,7 @@ def test_serve_offline_makes_tt_model_use_the_local_bundle(
     result = runner.invoke(app, ["serve", "ns/bundle", "--offline"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--local-only"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--local-only"]
 
 
 def test_serve_unknown_name_that_is_not_a_bundle_id_is_usage(runner, isolated_dirs):
@@ -284,7 +421,7 @@ def test_serve_passes_unknown_flags_through_to_tt_model(
     )
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--port", "8080", "--follow"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--port", "8080", "--follow"]
 
 
 @pytest.mark.fakes_only
@@ -294,7 +431,7 @@ def test_serve_passthrough_works_without_the_separator(
     result = runner.invoke(app, ["serve", "ns/bundle", "--port", "8080"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--port", "8080"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--port", "8080"]
 
 
 @pytest.mark.fakes_only
@@ -304,7 +441,7 @@ def test_serve_offline_keeps_local_only_before_the_passthrough(
     result = runner.invoke(app, ["serve", "ns/bundle", "--offline", "--", "--port", "9"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--local-only", "--port", "9"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--local-only", "--port", "9"]
 
 
 def test_serve_rejects_passthrough_for_a_catalog_model(runner, isolated_dirs):
@@ -335,7 +472,7 @@ def test_serve_port_is_tt_models_own_flag_for_a_bundle(
     result = runner.invoke(app, ["serve", "ns/bundle", "--port", "8080"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--port", "8080"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--port", "8080"]
 
 
 @pytest.mark.fakes_only
@@ -349,7 +486,7 @@ def test_serve_passthrough_port_wins_over_the_tt_flag(
     )
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
-    assert record["argv"] == ["serve", "ns/bundle", "--port", "8080", "--port", "9999"]
+    assert record["argv"] == ["--verbose", "serve", "ns/bundle", "--detach", "--port", "8080", "--port", "9999"]
 
 
 def test_serve_rejects_an_out_of_range_port(runner, isolated_dirs):
@@ -523,7 +660,7 @@ def test_serve_dry_run_for_a_bundle_does_not_install_tt_model(
     plan = json.loads(result.stdout)
     assert plan["backend"] == "tt-model"
     assert plan["installed"] is False
-    assert plan["argv"][:3] == ["<tt-model>", "serve", "acme/some-bundle"]
+    assert plan["argv"][:4] == ["<tt-model>", "--verbose", "serve", "acme/some-bundle"]
 
 
 def test_serve_dry_run_names_the_image_even_without_an_override(runner, fake_server):
@@ -933,7 +1070,7 @@ def test_explicit_model_manager_still_serves_a_bundle(runner, fake_model_manager
     result = runner.invoke(app, ["serve", "acme/demo", "--model-manager"])
     assert result.exit_code == 0, result.output
     assert json.loads(fake_model_manager.read_text().splitlines()[-1])["argv"] == [
-        "serve", "acme/demo",
+        "--verbose", "serve", "acme/demo", "--detach",
     ]
 
 
@@ -999,7 +1136,9 @@ def test_studio_success_leaves_the_stack_up(runner, studio_docker, fake_studio):
     assert calls == [["run", "Qwen3.5-9B"]]
 
 
-def test_studio_dry_run_needs_neither_docker_nor_a_checkout(runner, isolated_dirs):
+def test_studio_dry_run_needs_neither_docker_nor_a_checkout(
+    runner, isolated_dirs, no_shell_hf_token
+):
     result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--dry-run", "--json"])
     assert result.exit_code == 0, result.output
     plan = json.loads(result.output)
@@ -1098,7 +1237,7 @@ def test_model_manager_picker_offers_pulled_bundles(
     assert result.exit_code == 0, result.output
     assert "1. acme/demo" in result.output
     assert json.loads(fake_model_manager.read_text().splitlines()[-1])["argv"] == [
-        "serve", "acme/demo",
+        "--verbose", "serve", "acme/demo", "--detach",
     ]
 
 
@@ -1157,12 +1296,36 @@ def test_serve_help_documents_the_bundle_options(runner):
 
 
 # -- phase structure and the hand-off ------------------------------------------
-def test_serve_declares_two_phases_for_the_work_it_owns():
-    """Checks and Prepare are tt's work. Once run.py takes the terminal its
-    lifetime is not our phase to hold open, so the stepper completes first."""
+def test_serve_declares_three_phases_for_the_work_it_owns():
+    """Checks and Prepare are tt's work, and so is Start: tt watches the boot
+    until the endpoint answers rather than handing run.py the terminal."""
     from tenstorrent.commands.serve import PHASES
 
-    assert PHASES == ["Checks", "Prepare"]
+    assert PHASES == ["Checks", "Prepare", "Start"]
+
+
+def test_a_foreground_workflow_skips_start_instead_of_holding_it_open(monkeypatch):
+    """Benchmarks own the terminal, so Start is skipped (the count stays 3) and
+    the stepper completes before the hand-off."""
+    from tenstorrent.backends.serving.inference_server import (
+        InferenceServerBackend,
+        ServeLaunch,
+    )
+    from tenstorrent.output import OutputManager
+
+    class FakeRunner:
+        def stream(self, argv, **kwargs):
+            return 0
+
+    output = OutputManager()
+    output.ui.register_phases(["Checks", "Prepare", "Start"])
+    backend = InferenceServerBackend.__new__(InferenceServerBackend)
+    backend.output = output
+    backend.runner = FakeRunner()
+    backend.launch(
+        ServeLaunch(argv=["run.py"], env={}, cwd="/tmp", workflow="benchmarks", model_name="m")
+    )
+    assert [p["status"] for p in output.ui._phases] == ["pending", "pending", "skipped"]
 
 
 def test_prepare_and_launch_are_separable():
@@ -1251,6 +1414,13 @@ def _seen_token(log) -> str | None:
     return json.loads(log.read_text().splitlines()[-1])["HF_TOKEN"]
 
 
+@pytest.fixture
+def no_shell_hf_token(monkeypatch):
+    """Undo hf_token_present: the shell exports no HF_TOKEN, so any token tt
+    passes down came from the login store."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+
+
 @pytest.mark.fakes_only
 def test_shell_hf_token_reaches_run_py(
     runner, docker_present, fake_server, inference_env_log, monkeypatch
@@ -1262,7 +1432,7 @@ def test_shell_hf_token_reaches_run_py(
 
 @pytest.mark.fakes_only
 def test_login_store_token_is_seeded_when_the_shell_has_none(
-    runner, docker_present, fake_server, inference_env_log, isolated_dirs
+    runner, docker_present, fake_server, inference_env_log, isolated_dirs, no_shell_hf_token
 ):
     hf_home = isolated_dirs / "hf"
     hf_home.mkdir(parents=True, exist_ok=True)
@@ -1274,15 +1444,19 @@ def test_login_store_token_is_seeded_when_the_shell_has_none(
 
 @pytest.mark.fakes_only
 def test_no_token_anywhere_seeds_nothing(
-    runner, docker_present, fake_server, inference_env_log
+    runner, docker_present, fake_server, inference_env_log, no_shell_hf_token
 ):
-    assert runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"]).exit_code == 0
+    # The server workflow refuses without a token (see
+    # test_serve_refuses_when_there_is_no_hf_token); evals runs without one.
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--workflow", "evals"])
+    assert result.exit_code == 0, result.output
     assert _seen_token(inference_env_log) is None
 
 
 @pytest.mark.fakes_only
 def test_login_store_token_reaches_studio_and_tt_model(
-    runner, studio_docker, fake_studio, fake_model_manager, isolated_dirs, tmp_path, monkeypatch
+    runner, studio_docker, fake_studio, fake_model_manager, isolated_dirs, tmp_path, monkeypatch,
+    no_shell_hf_token,
 ):
     hf_home = isolated_dirs / "hf"
     hf_home.mkdir(parents=True, exist_ok=True)
@@ -1297,7 +1471,7 @@ def test_login_store_token_reaches_studio_and_tt_model(
 
 
 def test_dry_run_names_the_token_source_but_never_the_token(
-    runner, isolated_dirs, monkeypatch
+    runner, isolated_dirs, monkeypatch, no_shell_hf_token
 ):
     hf_home = isolated_dirs / "hf"
     hf_home.mkdir(parents=True, exist_ok=True)
@@ -1332,6 +1506,46 @@ def test_serve_seeds_a_jwt_secret_so_setup_host_never_prompts(
 
 
 @pytest.mark.fakes_only
+def test_serve_runs_the_server_unbuffered_so_the_checklist_can_follow_it(
+    runner, docker_present, fake_server, inference_env_log
+):
+    """run.py logs to sys.stdout, which Python block-buffers at 8 KB when it is
+    a pipe. Watched serves saw nothing for minutes and sat on the first row."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(inference_env_log.read_text().splitlines()[-1])
+    assert record["PYTHONUNBUFFERED"] == "1"
+
+
+@pytest.mark.fakes_only
+def test_serve_asks_the_server_not_to_wait_on_the_boot_itself(
+    runner, docker_present, fake_server, inference_env_log
+):
+    """From v0.21.0 run.py blocks polling /health until the model is warm, and
+    tears the container down if its own gate runs out. tt already owns both —
+    the container log drives the checklist and the same endpoint decides ready —
+    so leaving the gate on means two processes waiting on one boot and two
+    deciding when to destroy it."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(inference_env_log.read_text().splitlines()[-1])
+    assert record["TT_SERVER_BOOT_ATTEMPTS"] == "1"
+
+
+@pytest.mark.fakes_only
+def test_serve_keeps_a_boot_attempt_count_the_user_asked_for(
+    runner, docker_present, fake_server, inference_env_log, monkeypatch
+):
+    """The watcher reads the boot correctly either way, so the retry is the
+    user's to keep."""
+    monkeypatch.setenv("TT_SERVER_BOOT_ATTEMPTS", "3")
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(inference_env_log.read_text().splitlines()[-1])
+    assert record["TT_SERVER_BOOT_ATTEMPTS"] == "3"
+
+
+@pytest.mark.fakes_only
 def test_serve_keeps_the_users_jwt_secret(
     runner, docker_present, fake_server, inference_env_log, monkeypatch
 ):
@@ -1339,3 +1553,79 @@ def test_serve_keeps_the_users_jwt_secret(
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
     assert result.exit_code == 0, result.output
     assert _seen_jwt(inference_env_log) == "mine"
+
+
+@pytest.mark.fakes_only
+def test_serve_walks_past_a_port_another_model_holds(
+    runner, docker_present, fake_server, monkeypatch
+):
+    """A second model beside the first: the default port is taken, so the next
+    free one is used rather than asking docker for one it will refuse."""
+    from tenstorrent.backends.serving import boot
+
+    monkeypatch.delenv("SERVICE_PORT", raising=False)
+    monkeypatch.setattr(boot, "port_is_free", lambda port: port != 20000)
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    assert "serving on 20001 instead" in result.output
+    argv = json.loads(fake_server.read_text().splitlines()[-1])
+    assert argv[-2:] == ["--service-port", "20001"]
+
+
+@pytest.mark.fakes_only
+def test_serve_refuses_a_port_the_user_chose_that_is_taken(
+    runner, docker_present, fake_server, monkeypatch
+):
+    from tenstorrent.backends.serving import boot
+
+    monkeypatch.setattr(boot, "port_is_free", lambda port: False)
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--port", "20000"])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "Port 20000 is already in use" in result.output
+    assert not fake_server.exists() or not fake_server.read_text().strip()
+
+
+@pytest.fixture
+def four_chips(monkeypatch, tmp_path):
+    root = tmp_path / "dev-tenstorrent"
+    root.mkdir()
+    for i in range(4):
+        (root / str(i)).touch()
+    monkeypatch.setenv("TT_DEVICE_ROOT", str(root))
+
+    def held(*taken):
+        from tenstorrent.backends.serving import chips
+
+        monkeypatch.setattr(chips, "claimed", lambda runner, runtime, ids: set(taken))
+
+    return held
+
+
+@pytest.mark.fakes_only
+def test_serve_puts_a_single_chip_model_on_a_free_chip(
+    runner, docker_present, fake_server, four_chips
+):
+    four_chips(0)
+    result = runner.invoke(app, ["serve", "whisper-large-v3", "--device", "n150"])
+    assert result.exit_code == 0, result.output
+    argv = json.loads(fake_server.read_text().splitlines()[-1])
+    assert argv[argv.index("--device") + 1] == "n150"
+    assert argv[argv.index("--device-id") + 1] == "1"
+
+
+@pytest.mark.fakes_only
+def test_serve_refuses_when_every_chip_is_held(runner, docker_present, fake_server, four_chips):
+    four_chips(0, 1, 2, 3)
+    result = runner.invoke(app, ["serve", "whisper-large-v3", "--device", "n150"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert "All 4 chips are in use" in result.output
+
+
+@pytest.mark.fakes_only
+def test_serve_refuses_the_whole_board_while_a_chip_is_held(
+    runner, docker_present, fake_server, four_chips
+):
+    four_chips(2)
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+    assert "needs the whole board" in result.output

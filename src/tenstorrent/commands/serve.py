@@ -14,6 +14,7 @@ picker of what that backend serves."""
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import shutil
 import sys
@@ -26,7 +27,9 @@ from rich.text import Text
 
 from ..backends.device import get_device_backend
 from ..backends.serving.inference_server import (
+    START_PHASE,
     InferenceServerBackend,
+    choose_device,
     infer_device_config,
 )
 from ..backends.serving.model_manager import (
@@ -65,9 +68,10 @@ def _stdin_isatty() -> bool:
     return sys.stdin.isatty()
 
 
-# Fixed roadmap for the tt-inference-server path. The bundle path hands straight
-# off to tt-model, which renders this design itself, so it declares no phases.
-PHASES = ["Checks", "Prepare"]
+# The tt-inference-server and tt-model paths. Start is skipped, not dropped, when
+# the child takes the terminal. Studio's run.py renders its own deploy, so the
+# studio path declares no phases.
+PHASES = ["Checks", "Prepare", START_PHASE]
 
 
 def _autodetect_device(appctx) -> str | None:
@@ -201,6 +205,10 @@ def serve(
     """[beta] Serve a model for inference via tt-inference-server, TT-Studio, or
     tt-model (for a bundle id neither catalog covers).
 
+    The boot is shown as a live checklist — image, weights, device, KV cache,
+    warmup — and the command returns once the endpoint answers. The server's own
+    output is saved to a file the run names; `--verbose` also prints it.
+
     For a bundle id, anything tt serve does not recognize is passed to tt-model —
     its own flags and its vLLM passthrough: `tt serve ns/model -- --max-model-len 4096`.
     """
@@ -269,7 +277,8 @@ def serve(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     )
     if device is None:
-        device = _autodetect_device(appctx)
+        board = _autodetect_device(appctx)
+        device = choose_device(entry, board) if board else None
     # Spec device_type keys are lowercased throughout (`tt model list --hw` does
     # the same), and every per-device lookup is by that key.
     device = device.lower() if device else device
@@ -281,14 +290,12 @@ def serve(
         )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
-    # Two phases, not three: Checks and Prepare are the work tt owns. Once run.py
-    # takes the terminal its lifetime is not our phase to hold open — the stepper
-    # completes and the server's output takes over.
+    # launch() owns Start.
     ui = appctx.output.ui
     ui.register_phases(PHASES)
     with ui.phase("Checks"):
         with ui.step("Container runtime") as step:
-            server.preflight(entry)
+            server.preflight(entry, workflow=workflow.value)
             step.detail("docker" if shutil.which("docker") else "podman")
     with ui.phase("Prepare"):
         launch = server.prepare(
@@ -299,8 +306,9 @@ def serve(
             port=port,
             force=force,
         )
-    ui.final_stepper()
-    server.launch(launch)
+    code = server.launch(launch)
+    if code:
+        raise typer.Exit(code)
 
 
 _BACKEND_FLAGS = {
@@ -618,10 +626,22 @@ def _serve_with_tt_model_manager(
         )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
-    appctx.output.status(
-        f"{model} is not in the model catalog ({catalog_origin}) — "
-        "serving it as a tt-model bundle."
-    )
-    backend.serve(
-        model, offline=offline, port=port, serve_flags=serve_flags, extra_args=extra_args
-    )
+    ui = appctx.output.ui
+    origin = f" ({catalog_origin})" if appctx.output.verbose else ""
+    ui.note(f"{model} is not in the model catalog{origin} — serving it as a tt-model bundle")
+    ui.register_phases(PHASES)
+    with ui.phase("Checks"):
+        with ui.step("Container runtime") as step:
+            backend.preflight()
+            step.detail("docker")
+    with ui.phase("Prepare"):
+        with ui.step("Resolving tt-model") as step:
+            launch = backend.prepare(
+                model, offline=offline, port=port, serve_flags=serve_flags,
+                extra_args=extra_args,
+            )
+            pin = appctx.registry.spec("tt-model").golden_version or ""
+            step.detail(pin[:7] if re.fullmatch(r"[0-9a-f]{40}", pin) else pin)
+    code = backend.launch(launch)
+    if code:
+        raise typer.Exit(code)

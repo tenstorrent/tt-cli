@@ -951,8 +951,8 @@ def _dispatch(appctx, name: str):
 @handle_tt_errors
 def stop_model(
     ctx: typer.Context,
-    name: str = typer.Argument(
-        help="Model name or tt-model bundle id.",
+    names: list[str] = typer.Argument(
+        help="Model names or tt-model bundle ids, e.g. `tt model stop $(tt model ps --names)`.",
         autocompletion=complete_local_model,
     ),
     profile: str = typer.Option(None, "--profile", help="Stop only this profile."),
@@ -961,23 +961,36 @@ def stop_model(
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """Stop a running model server."""
+    """Stop running model servers."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
-    model, bundle = _dispatch(appctx, name)
-    if bundle is not None:
-        backend = ModelManagerBackend(
-            appctx.registry, appctx.runner, appctx.config, appctx.output
+    # Every name resolved first: a typo stops nothing.
+    targets = [(name, *_dispatch(appctx, name)) for name in dict.fromkeys(names)]
+    failed = []
+    for name, model, bundle in targets:
+        try:
+            if bundle is not None:
+                ModelManagerBackend(
+                    appctx.registry, appctx.runner, appctx.config, appctx.output
+                ).stop(bundle, profile=profile)
+            elif studio_only(model) or _studio_is_serving(appctx, model):
+                # Deployed by studio's run.py, so studio stops it (and resets its chips).
+                StudioBackend(
+                    appctx.registry, appctx.runner, appctx.config, appctx.output
+                ).stop(model)
+            else:
+                _stop_catalog_model(appctx, model)
+        except TTError as err:
+            if len(targets) == 1:
+                raise
+            appctx.output.emit_error(err)
+            failed.append(name)
+    if failed:
+        raise TTError(
+            f"Could not stop {', '.join(failed)}.",
+            why="The others were stopped; the errors above say why these were not.",
+            exit_code=ExitCode.TOOL_FAILED,
         )
-        backend.stop(bundle, profile=profile)
-        return
-    if studio_only(model) or _studio_is_serving(appctx, model):
-        # Deployed by studio's run.py, so studio stops it (and resets its chips).
-        StudioBackend(appctx.registry, appctx.runner, appctx.config, appctx.output).stop(
-            model
-        )
-        return
-    _stop_catalog_model(appctx, model)
 
 
 def _studio_is_serving(appctx, model) -> bool:
@@ -1771,6 +1784,9 @@ def ps_models(
         help="Skip the HTTP health check (GET /v1/models on each server); "
         "health shows as unknown.",
     ),
+    names: bool = typer.Option(
+        False, "--names", "-n", help="Print only model names, one per line (for `tt model stop`)."
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
     verbose: VerboseFlag = False,
@@ -1786,7 +1802,14 @@ def ps_models(
     runtime = InferenceServerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     ).container_runtime()
-    rows = list_served(appctx.runner, runtime, include_stopped=all_, probe=not no_probe)
+    rows = list_served(
+        appctx.runner, runtime, include_stopped=all_, probe=not (no_probe or names)
+    )
+    if names and not json_mode:
+        # Only rows with a container: a server found by probing alone has nothing to stop.
+        for name in dict.fromkeys(r.name for r in rows if r.container):
+            typer.echo(name)
+        return
     appctx.output.emit(
         {"served": [dataclasses.asdict(r) for r in rows], "probed": not no_probe},
         renderer=_ps_table,

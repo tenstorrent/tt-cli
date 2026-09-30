@@ -56,11 +56,11 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt model profiles NAME` | A pulled bundle's serve profiles and its default |
 | `tt serve [NAME] [-- ARGS…]` | Serve a model via tt-inference-server, TT-Studio, or tt-model-manager for a community bundle id (`--inference-server`, `--studio` or `--model-manager` forces a path; with no NAME, pick from what that backend serves; bundles: `--profile`, `--detach`, `--print`, `--refresh`, `--no-update-check`, `--no-weights`) — see [Serving backends](#serving-backends) |
 | `tt model curl [PROMPT]` | Send a chat completion to the model being served; unknown options go into the request body (`--max-tokens 40`), `--print` shows the curl instead |
-| `tt model stop NAME` | Stop a running model server; when studio deployed it, studio stops the model and then its own containers and services (`--profile` to stop only one profile of a bundle) |
+| `tt model stop NAME...` | Stop running model servers; when studio deployed one, studio stops the model and then its own containers and services (`--profile` to stop only one profile of a bundle; `tt model stop $(tt model ps --names)` stops everything) |
 | `tt model rm NAME` | Remove a model's local artifacts, keeping its weights unless `--include-weights` (`--dry-run`, `--yes`) |
 | `tt model login` | Log in to the Hugging Face Hub for gated or private bundles and weights (`--token`) |
 | `tt model publish` / `unpublish` | List or delist your pushed bundle in the community catalog; `tt model package` / `package-thin` / `push` forward to tt-model's authoring commands unchanged |
-| `tt model ps` | Model servers running on this machine: name, backend, port, health, uptime (`--all` includes stopped containers; `--no-probe` skips the HTTP health check) |
+| `tt model ps` | Model servers running on this machine: name, backend, port, health, uptime (`--all` includes stopped containers; `--no-probe` skips the HTTP health check; `--names`/`-n` prints only the names) |
 | `tt model logs NAME` | Output of a served model: the newest tt-inference-server log file for a catalog model, or `tt-model logs` for a bundle (`--follow`; `--tail N`; `--since` needs a running container; `--profile` for bundles) |
 
 | Other | Functionality |
@@ -72,6 +72,32 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt self update` | Upgrade `tt` itself where it owns its environment (`--check` to only look) — see [Keeping tt up to date](/docs/DEVELOPERS.md) |
 
 For a comprehensive view on packaging, publishing and pulling down community models [read more here](/docs/community-models.md)
+
+## Watching a model come up
+
+A first serve can take ten minutes: the image is pulled, the weights are fetched, the
+device is opened, the KV cache is sized and the model is warmed up. `tt serve` shows
+those as a live checklist instead of the server's thousands of log lines, and returns
+only once the endpoint actually answers — so `tt launch` straight afterwards works.
+There is no flag for it; it is what serving looks like.
+
+`tt serve` prints `tt model logs <model> --follow` before it starts, so that can be run in another terminal to watch the raw boot.
+
+`TT_SERVE_READY_TIMEOUT=<seconds>` raises the one-hour bound on that wait. Ctrl-C stops
+watching, not the server — the container keeps booting, and `tt model stop <model>`
+ends it.
+
+Both backends draw the same checklist. The long half of a serve — engine, device,
+weights, KV cache, warmup — is the container's own boot, so tt reads
+`docker logs` and classifies it itself rather than trusting either tool to
+narrate it; only the preparation differs, and a bundle simply has one extra step.
+[docs/serve-progress-contract.md](/docs/serve-progress-contract.md) has the
+details, including what tt-model-manager emits.
+
+Serving a catalog model needs a Hugging Face token: tt-inference-server fetches weights
+and tokenizers from the Hub and asks for one interactively when `HF_TOKEN` is unset.
+Run `hf auth login` once (or export `HF_TOKEN`) and `tt serve` stays non-interactive;
+without one it says so up front rather than stopping at a prompt you cannot see.
 
 ## Interactive clients with `tt launch`
 

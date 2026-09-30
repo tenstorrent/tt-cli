@@ -3,11 +3,13 @@
 
 """Process execution for wrapped tools.
 
-Four modes:
+Five modes:
 
 - `capture`       pipe and buffer; the caller parses the result.
 - `stream`        inherit stdio; the child owns the terminal.
 - `stream_parsed` pipe, read line by line, tee to a log, feed a parser.
+- `stream_lines`  pipe, hand every line (CR or LF) to a callback; `popen_piped`
+                  when the caller must watch something else at the same time.
 - `exec_tty`      replace this process; never returns.
 
 `stream_parsed` is what lets a long tool show one live line instead of thousands
@@ -25,13 +27,15 @@ passing `sudo_command=""` disables sudo entirely.
 
 from __future__ import annotations
 
+import codecs
 import os
+import re
 import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, NoReturn, Sequence
+from typing import Any, Callable, Iterator, Mapping, NoReturn, Sequence
 
 from ..errors import ExitCode, TTError
 from .runlog import open_run_log
@@ -333,6 +337,80 @@ class Runner:
             except BaseException:
                 continue
 
+    def popen_piped(
+        self,
+        argv: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+        tool: str | None = None,
+    ) -> subprocess.Popen:
+        """Start a tool with its output piped here, and hand back the process.
+
+        For a caller that has to watch something else while the tool is running — the
+        serve watcher reads the container's log while tt-inference-server is
+        still running — and so cannot sit in `stream_lines`'s read loop. The
+        caller owns draining and reaping it; `stream_lines` is the simple case.
+        """
+        try:
+            return self._popen(
+                list(argv),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=dict(env) if env is not None else None,
+                cwd=cwd,
+            )
+        except FileNotFoundError as exc:
+            raise TTError(
+                f"Cannot run {argv[0]!r}: executable not found.",
+                next_step="Run `tt update` to install managed tools.",
+                exit_code=ExitCode.TOOL_MISSING,
+                details={"tool": tool or str(argv[0])},
+            ) from exc
+        except PermissionError as exc:
+            raise TTError(
+                f"Cannot run {argv[0]!r}: permission denied.",
+                why="The file exists but is not executable.",
+                next_step=f"chmod +x {argv[0]} or re-run `tt update` to reinstall it.",
+                exit_code=ExitCode.TOOL_FAILED,
+                details={"tool": tool or str(argv[0])},
+            ) from exc
+
+    def stream_lines(
+        self,
+        argv: Sequence[str],
+        *,
+        on_line: Callable[[str], None],
+        env: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+        check: bool = True,
+        tool: str | None = None,
+    ) -> int:
+        """Run with the output piped here, handing every line to `on_line`.
+
+        `stream` for anything the user should read verbatim; this for a tool whose
+        output tt renders itself (the serve checklist). stderr is merged into
+        stdout so `on_line` sees one chronological stream, and the child's stdin
+        is left inherited — the tools this drives are non-interactive, but
+        closing it would turn a stray prompt into an EOFError crash.
+        """
+        proc = self.popen_piped(argv, env=env, cwd=cwd, tool=tool)
+        try:
+            for line in iter_output_lines(proc.stdout):
+                on_line(line)
+        finally:
+            if proc.stdout is not None:
+                proc.stdout.close()
+            proc.wait()
+        if check and proc.returncode != 0:
+            raise TTError(
+                f"{tool or argv[0]} exited with status {proc.returncode}.",
+                next_step="Re-run with --verbose for the tool's own output.",
+                exit_code=ExitCode.TOOL_FAILED,
+                details={"tool": tool or str(argv[0]), "returncode": proc.returncode},
+            )
+        return proc.returncode
+
     def exec_tty(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None) -> NoReturn:
         """Replace this process (TUI hand-off). Never returns.
 
@@ -346,3 +424,51 @@ class Runner:
             final_env.update(env)
         self._exec_fn(str(argv[0]), list(argv), final_env)
         raise AssertionError("exec_fn returned")  # pragma: no cover
+
+
+# -- line splitting -----------------------------------------------------------------
+_LINE_BREAK_RE = re.compile(r"[\r\n]")
+_CHUNK = 8192
+
+
+class LineSplitter:
+    """Bytes in, whole lines out, splitting on CR *and* LF.
+
+    Both terminators, because progress writers use the carriage return: a tqdm
+    bar repaints one "line" for minutes, and splitting on "\\n" alone would hold
+    every update back until the download finished. Decoding is incremental, so a
+    multi-byte character straddling two chunks survives.
+    """
+
+    def __init__(self) -> None:
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._buffer = ""
+
+    def feed(self, chunk: bytes) -> list[str]:
+        self._buffer += self._decoder.decode(chunk)
+        parts = _LINE_BREAK_RE.split(self._buffer)
+        self._buffer = parts.pop()
+        return parts
+
+    def flush(self) -> list[str]:
+        """Whatever is left once the stream ends (a last line with no break)."""
+        self._buffer += self._decoder.decode(b"", True)
+        rest, self._buffer = self._buffer, ""
+        return [rest] if rest else []
+
+
+def iter_output_lines(stream) -> Iterator[str]:
+    """Yield lines from a binary stream as they arrive.
+
+    `read1` rather than `read`: the latter blocks until the full chunk or EOF,
+    which on a long-running tool means seeing nothing for minutes at a time.
+    """
+    if stream is None:
+        return
+    splitter = LineSplitter()
+    while True:
+        chunk = stream.read1(_CHUNK)
+        if not chunk:
+            break
+        yield from splitter.feed(chunk)
+    yield from splitter.flush()

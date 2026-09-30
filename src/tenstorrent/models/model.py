@@ -47,6 +47,8 @@ class DeviceSupport:
     # Device name to send as `run.py --device` instead of this one, when the
     # model is reached through a device_fallback rather than its own spec.
     serve_as: str | None = None
+    # The spec's TT_MESH_GRAPH_DESC_PATH: what lets it boot on one chip of a P300.
+    mesh_graph_desc: str | None = None
     # How this entry was reached: "spec" is the model's own, "mesh-equivalent"
     # borrows the other four-chip Blackhole mesh, "single-chip" runs it on one
     # chip of a larger board.

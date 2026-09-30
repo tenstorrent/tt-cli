@@ -57,7 +57,12 @@ def hf_token(config: ConfigStore | None) -> tuple[str, str] | None:
     """(token, source) for the Hugging Face token a serving tool should inherit,
     or None. Sources, first wins: the shell's HF_TOKEN ("env"), then the login
     store written by `hf auth login` / `huggingface-cli login` ("hf-login":
-    HF_TOKEN_PATH, else <hf_home>/token). The value itself is never printed."""
+    HF_TOKEN_PATH, else <hf_home>/token). The value itself is never printed.
+
+    tt-inference-server reads only the environment variable and getpass-prompts
+    for it when it is unset — a prompt that goes to /dev/tty, which a watched
+    serve cannot show and the user cannot answer. So tt resolves the token and
+    passes it down (backends/serving/inference_server.py:_env)."""
     env_token = os.environ.get("HF_TOKEN", "").strip()
     if env_token:
         return env_token, "env"

@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from ...config.store import ConfigStore
@@ -28,8 +29,14 @@ from ...modelhub.hub import hf_home_dir, hf_token
 from ...output import OutputManager
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
+from . import boot
+from .preparation import ModelManagerPreparation
 
 TOOL = "tt-model"  # the distribution, the command, and the manifest key
+# tt-model's own default. Left to itself it walks up past busy ports, so this is
+# only where tt starts looking; the container says where it actually listens
+# (ModelManagerPreparation.resolve_container).
+DEFAULT_PORT = 20000
 # tt-model-manager's own container label (container.py: LABEL); every container
 # it starts carries it, and always under docker, never podman.
 _LABEL = "org.tenstorrent.tt-model"
@@ -46,6 +53,16 @@ def looks_like_bundle_id(name: str) -> bool:
     return len(parts) == 2 and all(parts) and not any(c.isspace() for c in name)
 
 
+@dataclass(frozen=True)
+class BundleLaunch:
+    """A resolved `tt-model serve`, from prepare() to launch()."""
+
+    argv: list
+    repo_id: str
+    port: int | None
+    watched: bool
+
+
 class ModelManagerBackend:
     def __init__(
         self,
@@ -59,7 +76,7 @@ class ModelManagerBackend:
         self.config = config
         self.output = output
 
-    def _env(self) -> dict[str, str]:
+    def _env(self, *, watched: bool = False) -> dict[str, str]:
         """Environment for every tt-model call.
 
         Runner.stream() *replaces* the child environment rather than merging it
@@ -70,13 +87,87 @@ class ModelManagerBackend:
         configured paths.hf_model_cache_directory has to reach teardown too, or tt
         would delete from the default cache and orphan the real weights. HF_TOKEN
         is seeded from the HF login store when the shell has none, like the other
-        backends.
+        backends. `watched` adds the progress contract, only for a serve tt
+        renders itself.
         """
         env = {**os.environ, "HF_HOME": str(hf_home_dir(self.config))}
         token = hf_token(self.config)
         if token:
             env.setdefault("HF_TOKEN", token[0])
-        return env
+        if not watched:
+            return env
+        return {
+            **env,
+            # Asked for, not required: a tt-model that predates it prints its
+            # own checklist instead and tt shows one row for the whole
+            # preparation (docs/serve-progress-contract.md). An env var rather
+            # than a flag because `tt-model serve` forwards anything it does not
+            # claim to vLLM, so an unknown flag would reach the engine.
+            "TT_MODEL_PROGRESS": "ndjson",
+            # Its output is ours to render; its own view would fight the pipe.
+            "TT_MODEL_NO_PIN": "1",
+            # As for run.py: a piped Python block-buffers its stdout, so a step
+            # that takes minutes would not be seen to start until it ended.
+            "PYTHONUNBUFFERED": "1",
+        }
+
+    def preflight(self) -> str:
+        """Checks: the container runtime tt-model needs."""
+        return self._docker()
+
+    def prepare(
+        self,
+        repo_id: str,
+        *,
+        offline: bool = False,
+        port: int | None = None,
+        serve_flags: list[str] | None = None,
+        extra_args: list[str] | None = None,
+    ) -> "BundleLaunch":
+        """Prepare: tt-model itself and its argv. The bundle, image and weights
+        are fetched during Start."""
+        entry = self.registry.ensure(TOOL, offline=offline)
+        argv = self._argv(
+            repo_id, offline=offline, port=port, serve_flags=serve_flags,
+            extra_args=extra_args, entry=Path(entry),
+        )
+        return BundleLaunch(
+            argv=argv, repo_id=repo_id, port=port, watched=self._watched(serve_flags)
+        )
+
+    def launch(self, plan: "BundleLaunch") -> int:
+        """Start: watch the boot, or skip it and hand off for --detach/--print."""
+        ui = self.output.ui
+        if not plan.watched:
+            ui.skip_phase(boot.START_PHASE, "tt-model was asked not to wait for the boot")
+            ui.final_stepper()
+            self.output.status(f"Serving {plan.repo_id} via tt-model …")
+            ui.handoff()
+            return self.runner.stream(plan.argv, env=self._env(), tool=TOOL)
+        repo_id = plan.repo_id
+        raw_log = boot.raw_log_path(self.config.paths.logs_dir, repo_id.replace("/", "--"))
+        return boot.report_watched(
+            self.output,
+            name=repo_id,
+            backend="tt-model",
+            phase=boot.START_PHASE,
+            watch=lambda: boot.watch_serve(
+                runner=self.runner,
+                output=self.output,
+                prepare=ModelManagerPreparation(repo_id),
+                argv=plan.argv,
+                env=self._env(watched=True),
+                cwd=None,
+                tool=TOOL,
+                model_name=repo_id,
+                engines=[self._engine(repo_id)],
+                port=plan.port or DEFAULT_PORT,
+                raw_log=raw_log,
+                weights_cache=hf_home_dir(self.config),
+                hf_token=(hf_token(self.config) or (None,))[0],
+                runtime=self._docker(),
+            ),
+        )
 
     def serve(
         self,
@@ -87,21 +178,53 @@ class ModelManagerBackend:
         serve_flags: list[str] | None = None,
         extra_args: list[str] | None = None,
     ) -> int:
-        """Stream `tt-model serve <repo_id>`, which installs the bundle if needed
-        and launches its OpenAI-compatible server.
+        """prepare + launch.
 
         `serve_flags` are tt-model's own serve options that `tt serve` declares
         (--profile, --detach, --print, …), already spelled the way tt-model takes
         them. `extra_args` are appended verbatim after those — where tt-model
         itself expects them (its serve declares allow_extra_args/ignore_unknown_options
         and forwards what it does not claim to vLLM)."""
-        entry = self.registry.ensure(TOOL, offline=offline)
-        argv = self._argv(
-            repo_id, offline=offline, port=port, serve_flags=serve_flags,
-            extra_args=extra_args, entry=Path(entry),
+        return self.launch(
+            self.prepare(
+                repo_id, offline=offline, port=port, serve_flags=serve_flags,
+                extra_args=extra_args,
+            )
         )
-        self.output.status(f"Serving {repo_id} via tt-model …")
-        return self.runner.stream(argv, env=self._env(), tool=TOOL)
+
+    @staticmethod
+    def _engine(repo_id: str) -> str:
+        """Which stack the bundle boots, for picking the container template.
+
+        Most bundles run the Tenstorrent vLLM plugin — the same stack the
+        catalog's vLLM models boot, so the same phases read their log — but a
+        `tt-dit-server` one is a diffusion pipeline and looks nothing like it.
+        An unpulled bundle has no manifest to ask; vLLM is the common case and
+        a template that does not match costs rows, not correctness.
+        """
+        details = bundles.serve_details(repo_id) or {}
+        return details.get("engine") or "vLLM"
+
+    def _docker(self) -> str:
+        """tt-model only ever uses docker (container.py), never podman."""
+        found = shutil.which("docker")
+        if found is None:
+            raise TTError(
+                "No container runtime found.",
+                why="tt-model serves bundles as docker containers.",
+                next_step="Install docker — e.g. https://docs.docker.com/engine/install/",
+                exit_code=ExitCode.TOOL_MISSING,
+                reason="tool.missing.docker",
+                details={"tool": "docker"},
+            )
+        return found
+
+    @staticmethod
+    def _watched(serve_flags: list[str] | None) -> bool:
+        """Whether tt watches this serve to ready. Not when the user asked
+        tt-model to detach or only to print its command: either way no boot
+        follows that tt could honestly report on."""
+        return not {"--detach", "--print"} & set(serve_flags or ())
 
     def _argv(
         self,
@@ -116,7 +239,19 @@ class ModelManagerBackend:
         """The tt-model command line. `entry` is None for a dry run, which must not
         install the tool just to describe what it would run."""
         argv = [str(entry)] if entry else ["<tt-model>"]
+        watched = self._watched(serve_flags)
+        if watched:
+            # --verbose before the subcommand: it is a global option, so it is
+            # not swept into serve's passthrough to vLLM, and it stops tt-model
+            # capturing each step's output into a buffer it then discards —
+            # which is the only way its steps are visible through a pipe at all.
+            argv.append("--verbose")
         argv += ["serve", repo_id]
+        if watched:
+            # tt watches the boot itself, from the container's own log; tt-model
+            # waiting too would mean two processes on one boot (and, on a
+            # failure, two deciding to tear it down).
+            argv.append("--detach")
         if offline:
             # tt-model would otherwise pull the bundle from the Hub.
             argv.append("--local-only")

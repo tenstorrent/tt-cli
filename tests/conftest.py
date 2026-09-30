@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from tenstorrent.backends.serving import boot as serving_boot
 from tenstorrent.telemetry.env import CI_ENV_VARS
 from tenstorrent.tools import registry as registry_module
 
@@ -155,6 +156,9 @@ def inference_bin(isolated_dirs, hardware_mode, monkeypatch, tmp_path) -> Path |
         "TT_TOOL_BIN_TT_INFERENCE_SERVER", str(FAKES_DIR / "inference-repo" / "run.py")
     )
     monkeypatch.setenv("FAKE_INFERENCE_LOG", str(log))
+    # The fake binds nothing, and whatever the developer is serving on 20000
+    # must not move the port a test asserts on.
+    monkeypatch.setattr(serving_boot, "port_is_free", lambda port: True)
     return log
 
 
@@ -225,6 +229,9 @@ def isolated_dirs(request, tmp_path, monkeypatch):
     # known everywhere; tests exercising the fetch/cache/unknown paths delete it.
     # Under --hardware the override stays unset so the real fetch is exercised.
     if not request.config.getoption("--hardware"):
+        # tt serve places models on the chips under /dev/tenstorrent; the fake
+        # suite must not see the developer's own board.
+        monkeypatch.setenv("TT_DEVICE_ROOT", str(tmp_path / "dev-tenstorrent"))
         monkeypatch.setenv("TT_GOLDEN_PATH", str(FAKES_DIR / "data" / "golden.json"))
         # Redirect HOME too: tt reports on paths install.sh hardcodes under
         # ~/.local/lib, so without this the suite would describe the developer's own
@@ -292,6 +299,18 @@ def fakes_dir():
 @pytest.fixture
 def fake_bin():
     return FAKE_BIN
+
+
+@pytest.fixture(autouse=True)
+def bundle_docker_is_fake(hardware_mode, monkeypatch):
+    """Bundle serves find docker through ModelManagerBackend._docker; in fake mode
+    that is the fake, so no test depends on this machine's real containers."""
+    if hardware_mode:
+        return
+    monkeypatch.setattr(
+        "tenstorrent.backends.serving.model_manager.ModelManagerBackend._docker",
+        lambda self: str(FAKE_BIN / "docker"),
+    )
 
 
 @pytest.fixture

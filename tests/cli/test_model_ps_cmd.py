@@ -404,3 +404,12 @@ def test_ps_quiet_prints_nothing(runner, fake_docker):
     result = runner.invoke(app, ["model", "ps", "--no-probe", "--quiet"])
     assert result.exit_code == 0
     assert result.output == ""
+
+
+@pytest.mark.fakes_only
+def test_ps_names_prints_one_stoppable_name_per_line(runner, fake_docker):
+    set_containers, _ = fake_docker
+    set_containers([_inference_server(), _tt_model(), _tt_model()])
+    result = runner.invoke(app, ["model", "ps", "-n"])
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == ["Qwen3-32B", "raahemnabeel/qwen3-coder-30b-a3b"]

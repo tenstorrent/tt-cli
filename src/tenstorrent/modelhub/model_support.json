@@ -26,7 +26,8 @@
      "version": "0.3.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -40,7 +41,8 @@
      "version": "0.3.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -68,7 +70,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -82,7 +85,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -96,7 +100,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -110,7 +115,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -138,7 +144,8 @@
      "version": "0.20.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": "/home/container_app_user/app/server/venv-worker/lib/python3.12/site-packages/pjrt_plugin_tt/tt-metal/tt_metal/fabric/mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto"
     }
    }
   },
@@ -166,7 +173,8 @@
      "version": "0.12.0",
      "tool_call_parser": "deepseek_v3",
      "reasoning_parser": "deepseek_r1",
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "dual_galaxy": {
      "engines": [
@@ -188,7 +196,8 @@
        "DEEPSEEK_V3_CACHE",
        "DEEPSEEK_V3_HF_MODEL"
       ]
-     }
+     },
+     "mesh_graph_desc": null
     },
     "quad_galaxy": {
      "engines": [
@@ -210,7 +219,8 @@
        "DEEPSEEK_V3_CACHE",
        "DEEPSEEK_V3_HF_MODEL"
       ]
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -240,7 +250,8 @@
      "reasoning_parser": "deepseek_r1",
      "override_tt_config": {
       "trace_region_size": 30000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -256,7 +267,8 @@
      "reasoning_parser": "deepseek_r1",
      "override_tt_config": {
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -276,7 +288,8 @@
       "fabric_config": "FABRIC_1D_RING",
       "worker_l1_size": 1344544,
       "trace_region_size": 215000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150x4": {
      "engines": [
@@ -293,6 +306,7 @@
      "override_tt_config": {
       "trace_region_size": 30000000
      },
+     "mesh_graph_desc": null,
      "unsupported": {
       "reason": "broken",
       "details": "Does not deploy. Both four-chip Blackhole meshes are known bad for this model, so neither is offered.",
@@ -314,7 +328,8 @@
      "reasoning_parser": "deepseek_r1",
      "override_tt_config": {
       "trace_region_size": 268435456
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -331,6 +346,7 @@
      "override_tt_config": {
       "trace_region_size": 402653184
      },
+     "mesh_graph_desc": null,
      "unsupported": {
       "reason": "broken",
       "details": "Non-functional deploy (tt-studio#869).",
@@ -370,6 +386,7 @@
       "trace_mode": "all",
       "trace_region_size": 3758096384
      },
+     "mesh_graph_desc": null,
      "serve_as": "p300x2",
      "support_source": "mesh-equivalent"
     },
@@ -390,7 +407,8 @@
       "enable_model_warmup": true,
       "trace_mode": "all",
       "trace_region_size": 3758096384
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -418,7 +436,8 @@
      "version": "0.17.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -432,7 +451,8 @@
      "version": "0.17.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -446,7 +466,8 @@
      "version": "0.17.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -460,7 +481,8 @@
      "version": "0.17.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p150": {
      "engines": [
@@ -474,7 +496,8 @@
      "version": "0.15.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto"
     },
     "p150x4": {
      "engines": [
@@ -489,6 +512,7 @@
      "tool_call_parser": null,
      "reasoning_parser": null,
      "override_tt_config": null,
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto",
      "serve_as": "p150",
      "support_source": "single-chip"
     },
@@ -504,7 +528,8 @@
      "version": "0.15.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_x2_mesh_graph_descriptor.textproto"
     }
    }
   },
@@ -532,7 +557,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -546,7 +572,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -574,7 +601,8 @@
      "version": "0.18.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -602,7 +630,8 @@
      "version": "0.10.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -616,7 +645,8 @@
      "version": "0.10.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p150x4": {
      "engines": [
@@ -631,6 +661,7 @@
      "tool_call_parser": null,
      "reasoning_parser": null,
      "override_tt_config": null,
+     "mesh_graph_desc": null,
      "serve_overrides": {
       "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10"
      }
@@ -647,7 +678,8 @@
      "version": "0.10.1",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p300": {
      "engines": [
@@ -661,7 +693,8 @@
      "version": "0.10.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -677,7 +710,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 55000000
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -705,7 +739,8 @@
      "version": "0.10.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -719,7 +754,8 @@
      "version": "0.10.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p150x4": {
      "engines": [
@@ -734,6 +770,7 @@
      "tool_call_parser": null,
      "reasoning_parser": null,
      "override_tt_config": null,
+     "mesh_graph_desc": null,
      "serve_overrides": {
       "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.18.0-c49bb76"
      }
@@ -750,7 +787,8 @@
      "version": "0.10.1",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p300": {
      "engines": [
@@ -764,7 +802,8 @@
      "version": "0.10.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -780,7 +819,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 55000000
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -811,7 +851,8 @@
      "override_tt_config": {
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -843,7 +884,8 @@
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D",
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -861,7 +903,8 @@
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D",
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -879,7 +922,8 @@
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D_RING",
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -910,7 +954,8 @@
      "override_tt_config": {
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -927,7 +972,8 @@
      "override_tt_config": {
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -960,6 +1006,7 @@
       "trace_region_size": 200000000,
       "sample_on_device_mode": "decode_only"
      },
+     "mesh_graph_desc": null,
      "serve_as": "p300x2",
      "support_source": "mesh-equivalent"
     },
@@ -979,7 +1026,8 @@
       "fabric_config": "FABRIC_1D",
       "trace_region_size": 200000000,
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -1009,7 +1057,8 @@
      "reasoning_parser": "openai_gptoss",
      "override_tt_config": {
       "trace_region_size": 134217728
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -1026,7 +1075,8 @@
      "override_tt_config": {
       "sample_on_device_mode": "all",
       "trace_region_size": 134217728
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -1044,6 +1094,7 @@
       "trace_region_size": 58000000,
       "sample_on_device_mode": "decode_only"
      },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_x2_mesh_graph_descriptor.textproto",
      "unsupported": {
       "reason": "broken",
       "details": "The vLLM container never reaches a healthy state.",
@@ -1077,7 +1128,8 @@
      "version": "0.10.0",
      "tool_call_parser": "openai",
      "reasoning_parser": "openai_gptoss",
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -1091,7 +1143,8 @@
      "version": "0.10.0",
      "tool_call_parser": "openai",
      "reasoning_parser": "openai_gptoss",
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -1105,7 +1158,8 @@
      "version": "0.10.0",
      "tool_call_parser": "openai",
      "reasoning_parser": "openai_gptoss",
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -1135,7 +1189,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 30000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -1151,7 +1206,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -1171,7 +1227,8 @@
       "fabric_config": "FABRIC_1D_RING",
       "worker_l1_size": 1344544,
       "trace_region_size": 215000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150x4": {
      "engines": [
@@ -1188,6 +1245,7 @@
      "override_tt_config": {
       "trace_region_size": 30000000
      },
+     "mesh_graph_desc": null,
      "unsupported": {
       "reason": "broken",
       "details": "Does not deploy. Both four-chip Blackhole meshes are known bad for this model, so neither is offered.",
@@ -1209,7 +1267,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 268435456
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -1226,6 +1285,7 @@
      "override_tt_config": {
       "trace_region_size": 402653184
      },
+     "mesh_graph_desc": null,
      "unsupported": {
       "reason": "broken",
       "details": "Deploy does not resolve a usable image (tt-studio#904).",
@@ -1261,7 +1321,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 30000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -1277,7 +1338,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -1297,7 +1359,8 @@
       "fabric_config": "FABRIC_1D_RING",
       "worker_l1_size": 1344544,
       "trace_region_size": 215000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150x4": {
      "engines": [
@@ -1314,6 +1377,7 @@
      "override_tt_config": {
       "trace_region_size": 30000000
      },
+     "mesh_graph_desc": null,
      "unsupported": {
       "reason": "broken",
       "details": "Does not deploy. Both four-chip Blackhole meshes are known bad for this model, so neither is offered.",
@@ -1335,7 +1399,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 268435456
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -1352,6 +1417,7 @@
      "override_tt_config": {
       "trace_region_size": 402653184
      },
+     "mesh_graph_desc": null,
      "unsupported": {
       "reason": "broken",
       "details": "Deploy needs a docker image override tt cannot express (tt-studio#904). Use Llama-3.3-70B-Instruct instead.",
@@ -1387,7 +1453,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 52000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -1403,7 +1470,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 70000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -1419,7 +1487,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 117000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -1435,7 +1504,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -1452,7 +1522,8 @@
      "override_tt_config": {
       "trace_region_size": 50000000,
       "sample_on_device_mode": "all"
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p100": {
      "engines": [
@@ -1468,7 +1539,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 90000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150": {
      "engines": [
@@ -1484,7 +1556,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 900000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150x4": {
      "engines": [
@@ -1501,7 +1574,8 @@
      "override_tt_config": {
       "sample_on_device_mode": "decode_only",
       "trace_region_size": 70000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150x8": {
      "engines": [
@@ -1517,7 +1591,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p300": {
      "engines": [
@@ -1534,7 +1609,8 @@
      "override_tt_config": {
       "sample_on_device_mode": "decode_only",
       "trace_region_size": 56000000
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_mesh_graph_descriptor.textproto"
     },
     "p300x2": {
      "engines": [
@@ -1551,7 +1627,8 @@
      "override_tt_config": {
       "sample_on_device_mode": "decode_only",
       "trace_region_size": 155000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "gpu": {
      "engines": [
@@ -1565,7 +1642,8 @@
      "version": "0.9.0",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -1596,7 +1674,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 52000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -1612,7 +1691,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 70000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -1628,7 +1708,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 117000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -1644,7 +1725,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -1661,7 +1743,8 @@
      "override_tt_config": {
       "trace_region_size": 50000000,
       "sample_on_device_mode": "all"
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p100": {
      "engines": [
@@ -1677,7 +1760,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 90000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150": {
      "engines": [
@@ -1694,7 +1778,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 900000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150x4": {
      "engines": [
@@ -1711,7 +1796,8 @@
      "override_tt_config": {
       "sample_on_device_mode": "decode_only",
       "trace_region_size": 70000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150x8": {
      "engines": [
@@ -1727,7 +1813,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p300": {
      "engines": [
@@ -1744,7 +1831,8 @@
      "override_tt_config": {
       "sample_on_device_mode": "decode_only",
       "trace_region_size": 56000000
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_mesh_graph_descriptor.textproto"
     },
     "p300x2": {
      "engines": [
@@ -1761,7 +1849,8 @@
      "override_tt_config": {
       "sample_on_device_mode": "decode_only",
       "trace_region_size": 155000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "gpu": {
      "engines": [
@@ -1775,7 +1864,8 @@
      "version": "0.9.0",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -1803,7 +1893,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -1817,7 +1908,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -1845,7 +1937,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -1859,7 +1952,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -1887,7 +1981,8 @@
      "version": "0.11.1",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -1901,7 +1996,8 @@
      "version": "0.11.1",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -1915,7 +2011,8 @@
      "version": "0.11.1",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -1943,7 +2040,8 @@
      "version": "0.11.1",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -1957,7 +2055,8 @@
      "version": "0.11.1",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -1971,7 +2070,8 @@
      "version": "0.11.1",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2003,7 +2103,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 10000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -2018,7 +2119,8 @@
      "version": "0.3.0",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -2032,7 +2134,8 @@
      "version": "0.3.0",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2062,7 +2165,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 10000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -2076,7 +2180,8 @@
      "version": "0.3.0",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -2090,7 +2195,8 @@
      "version": "0.3.0",
      "tool_call_parser": "llama3_json",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2118,7 +2224,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2146,7 +2253,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2176,7 +2284,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 30000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -2192,7 +2301,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -2212,7 +2322,8 @@
       "fabric_config": "FABRIC_1D_RING",
       "worker_l1_size": 1344544,
       "trace_region_size": 215000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150x4": {
      "engines": [
@@ -2229,6 +2340,7 @@
      "override_tt_config": {
       "trace_region_size": 402653184
      },
+     "mesh_graph_desc": null,
      "serve_as": "p300x2",
      "support_source": "mesh-equivalent",
      "note": "its own p150x4 spec is unusable: Trace region size is set to 30MB; this model needs at least 57MB. Its p300x2 spec is unaffected and stays available."
@@ -2247,7 +2359,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 268435456
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -2263,7 +2376,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 402653184
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2295,7 +2409,8 @@
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D",
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -2313,7 +2428,8 @@
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D",
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -2331,7 +2447,8 @@
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D_RING",
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2362,7 +2479,8 @@
      "override_tt_config": {
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -2379,7 +2497,8 @@
      "override_tt_config": {
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2407,7 +2526,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -2421,7 +2541,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -2435,7 +2556,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2463,7 +2585,8 @@
      "version": "0.13.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -2477,7 +2600,8 @@
      "version": "0.13.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2505,7 +2629,8 @@
      "version": "0.10.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -2519,7 +2644,8 @@
      "version": "0.10.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p150x4": {
      "engines": [
@@ -2536,6 +2662,7 @@
      "override_tt_config": {
       "trace_region_size": 30000000
      },
+     "mesh_graph_desc": null,
      "unsupported": {
       "reason": "broken",
       "details": "Does not deploy on p150x4 either, for the same reason as its p300x2 entry: no image override is known that makes it work on a four-chip Blackhole mesh.",
@@ -2557,7 +2684,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 30000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -2574,6 +2702,7 @@
      "override_tt_config": {
       "trace_region_size": 30000000
      },
+     "mesh_graph_desc": null,
      "unsupported": {
       "reason": "broken",
       "details": "Deploy fails with the spec-pinned image; needs a newer media image plus a spec-level env override the release artifact does not carry.",
@@ -2607,7 +2736,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -2621,7 +2751,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p150x8": {
      "engines": [
@@ -2635,7 +2766,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -2650,6 +2782,7 @@
      "tool_call_parser": null,
      "reasoning_parser": null,
      "override_tt_config": null,
+     "mesh_graph_desc": null,
      "unsupported": {
       "reason": "broken",
       "details": "The media container never reaches a healthy state.",
@@ -2683,7 +2816,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -2697,7 +2831,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2725,7 +2860,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -2739,7 +2875,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2769,7 +2906,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 66000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -2786,7 +2924,8 @@
      "override_tt_config": {
       "trace_region_size": 40000000,
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -2802,7 +2941,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 66000000
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2832,7 +2972,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 66000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -2849,7 +2990,8 @@
      "override_tt_config": {
       "trace_region_size": 40000000,
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -2865,7 +3007,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 66000000
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2893,7 +3036,8 @@
      "version": "0.9.0",
      "tool_call_parser": "hermes",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -2909,7 +3053,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 60000000
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2937,7 +3082,8 @@
      "version": "0.9.0",
      "tool_call_parser": "hermes",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -2953,7 +3099,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 60000000
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -2983,7 +3130,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 56000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -2999,7 +3147,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     }
    }
   },
@@ -3027,7 +3176,8 @@
      "version": "0.9.0",
      "tool_call_parser": "hermes",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3055,7 +3205,8 @@
      "version": "0.9.0",
      "tool_call_parser": "hermes",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -3069,7 +3220,8 @@
      "version": "0.9.0",
      "tool_call_parser": "hermes",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3099,7 +3251,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 28467200
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3127,7 +3280,8 @@
      "version": "0.9.0",
      "tool_call_parser": "hermes",
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -3143,7 +3297,8 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 10000000
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3173,7 +3328,8 @@
      "reasoning_parser": "qwen3",
      "override_tt_config": {
       "trace_region_size": 54000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -3189,7 +3345,8 @@
      "reasoning_parser": "qwen3",
      "override_tt_config": {
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -3209,7 +3366,8 @@
       "fabric_config": "FABRIC_1D_RING",
       "worker_l1_size": 1344544,
       "trace_region_size": 184915840
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p150x4": {
      "engines": [
@@ -3226,6 +3384,7 @@
      "override_tt_config": {
       "trace_region_size": 402653184
      },
+     "mesh_graph_desc": null,
      "serve_as": "p300x2",
      "support_source": "mesh-equivalent"
     },
@@ -3243,7 +3402,8 @@
      "reasoning_parser": "qwen3",
      "override_tt_config": {
       "trace_region_size": 61341696
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -3259,7 +3419,8 @@
      "reasoning_parser": "qwen3",
      "override_tt_config": {
       "trace_region_size": 402653184
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3287,7 +3448,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -3301,7 +3463,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3331,7 +3494,8 @@
      "reasoning_parser": "qwen3",
      "override_tt_config": {
       "trace_region_size": 51000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -3347,7 +3511,8 @@
      "reasoning_parser": "qwen3",
      "override_tt_config": {
       "trace_region_size": 65000000
-     }
+     },
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -3361,7 +3526,8 @@
      "version": "0.10.0",
      "tool_call_parser": "hermes",
      "reasoning_parser": "qwen3",
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -3377,7 +3543,8 @@
      "reasoning_parser": "qwen3",
      "override_tt_config": {
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -3391,7 +3558,8 @@
      "version": "0.10.0",
      "tool_call_parser": "hermes",
      "reasoning_parser": "qwen3",
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p300": {
      "engines": [
@@ -3405,7 +3573,8 @@
      "version": "0.10.0",
      "tool_call_parser": "hermes",
      "reasoning_parser": "qwen3",
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3433,7 +3602,8 @@
      "version": "0.20.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": "/home/container_app_user/app/server/venv-worker/lib/python3.12/site-packages/pjrt_plugin_tt/tt-metal/tt_metal/fabric/mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto"
     }
    }
   },
@@ -3461,7 +3631,8 @@
      "version": "0.20.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -3475,7 +3646,8 @@
      "version": "0.20.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -3489,7 +3661,8 @@
      "version": "0.20.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -3503,7 +3676,8 @@
      "version": "0.20.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -3517,7 +3691,8 @@
      "version": "0.20.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": "/home/container_app_user/app/server/venv-worker/lib/python3.12/site-packages/pjrt_plugin_tt/tt-metal/tt_metal/fabric/mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto"
     }
    }
   },
@@ -3545,7 +3720,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -3559,7 +3735,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -3573,7 +3750,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -3587,7 +3765,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3615,7 +3794,8 @@
      "version": "0.14.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3649,6 +3829,7 @@
       "l1_small_size": 24576,
       "sample_on_device_mode": "decode_only"
      },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_x2_mesh_graph_descriptor.textproto",
      "serve_as": "p300x2",
      "support_source": "mesh-equivalent"
     },
@@ -3669,7 +3850,8 @@
       "trace_region_size": 1073741824,
       "l1_small_size": 24576,
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
@@ -3688,7 +3870,8 @@
       "trace_region_size": 1073741824,
       "l1_small_size": 24576,
       "sample_on_device_mode": "decode_only"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_x2_mesh_graph_descriptor.textproto"
     }
    }
   },
@@ -3716,7 +3899,8 @@
      "version": "0.9.0",
      "tool_call_parser": "hermes",
      "reasoning_parser": "deepseek_r1",
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy_t3k": {
      "engines": [
@@ -3732,7 +3916,8 @@
      "reasoning_parser": "deepseek_r1",
      "override_tt_config": {
       "fabric_config": "FABRIC_1D"
-     }
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
     },
     "galaxy": {
      "engines": [
@@ -3748,7 +3933,8 @@
      "reasoning_parser": "deepseek_r1",
      "override_tt_config": {
       "trace_region_size": 27381760
-     }
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3776,7 +3962,8 @@
      "version": "0.13.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -3790,7 +3977,8 @@
      "version": "0.13.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3818,7 +4006,8 @@
      "version": "0.13.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -3832,7 +4021,8 @@
      "version": "0.13.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3860,7 +4050,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -3874,7 +4065,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p150": {
      "engines": [
@@ -3888,7 +4080,8 @@
      "version": "0.15.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto"
     },
     "p150x4": {
      "engines": [
@@ -3903,6 +4096,7 @@
      "tool_call_parser": null,
      "reasoning_parser": null,
      "override_tt_config": null,
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto",
      "serve_as": "p150",
      "support_source": "single-chip"
     },
@@ -3918,7 +4112,8 @@
      "version": "0.15.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_x2_mesh_graph_descriptor.textproto"
     }
    }
   },
@@ -3946,7 +4141,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -3960,7 +4156,8 @@
      "version": "0.9.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -3988,7 +4185,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -4002,7 +4200,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -4016,7 +4215,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -4030,7 +4230,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -4058,7 +4259,8 @@
      "version": "0.11.1",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -4072,7 +4274,8 @@
      "version": "0.11.1",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -4086,7 +4289,8 @@
      "version": "0.11.1",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -4100,7 +4304,8 @@
      "version": "0.11.1",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -4128,7 +4333,8 @@
      "version": "0.11.1",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -4142,7 +4348,8 @@
      "version": "0.11.1",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -4156,7 +4363,8 @@
      "version": "0.11.1",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -4170,7 +4378,8 @@
      "version": "0.11.1",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -4198,7 +4407,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -4212,7 +4422,8 @@
      "version": "0.12.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -4240,7 +4451,8 @@
      "version": "0.13.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -4254,7 +4466,8 @@
      "version": "0.13.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -4282,7 +4495,8 @@
      "version": "0.13.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -4296,7 +4510,8 @@
      "version": "0.13.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -4325,6 +4540,7 @@
      "tool_call_parser": null,
      "reasoning_parser": null,
      "override_tt_config": null,
+     "mesh_graph_desc": null,
      "serve_overrides": {
       "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10"
      }
@@ -4342,6 +4558,7 @@
      "tool_call_parser": null,
      "reasoning_parser": null,
      "override_tt_config": null,
+     "mesh_graph_desc": null,
      "serve_overrides": {
       "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10"
      }
@@ -4361,6 +4578,7 @@
      "override_tt_config": {
       "trace_region_size": 30000000
      },
+     "mesh_graph_desc": null,
      "serve_overrides": {
       "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10"
      }
@@ -4380,6 +4598,7 @@
      "override_tt_config": {
       "trace_region_size": 30000000
      },
+     "mesh_graph_desc": null,
      "serve_overrides": {
       "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10"
      }
@@ -4399,6 +4618,7 @@
      "override_tt_config": {
       "trace_region_size": 30000000
      },
+     "mesh_graph_desc": null,
      "serve_overrides": {
       "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10"
      }
@@ -4429,7 +4649,8 @@
      "version": "0.17.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "n300": {
      "engines": [
@@ -4443,7 +4664,8 @@
      "version": "0.17.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "t3k": {
      "engines": [
@@ -4457,7 +4679,8 @@
      "version": "0.17.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "galaxy": {
      "engines": [
@@ -4471,7 +4694,8 @@
      "version": "0.17.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p150": {
      "engines": [
@@ -4485,7 +4709,8 @@
      "version": "0.15.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto"
     },
     "p150x4": {
      "engines": [
@@ -4500,6 +4725,7 @@
      "tool_call_parser": null,
      "reasoning_parser": null,
      "override_tt_config": null,
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto",
      "serve_as": "p150",
      "support_source": "single-chip"
     },
@@ -4515,7 +4741,8 @@
      "version": "0.15.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_x2_mesh_graph_descriptor.textproto"
     }
    }
   },
@@ -4543,7 +4770,8 @@
      "version": "0.18.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     },
     "p150": {
      "engines": [
@@ -4557,7 +4785,8 @@
      "version": "0.18.0",
      "tool_call_parser": null,
      "reasoning_parser": null,
-     "override_tt_config": null
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -4586,6 +4815,7 @@
      "tool_call_parser": null,
      "reasoning_parser": null,
      "override_tt_config": null,
+     "mesh_graph_desc": null,
      "unsupported": {
       "reason": "broken",
       "details": "Wedges Blackhole p300 devices during warmup (eth-core init timeout, or a hard device hang mid kernel-compile) badly enough that the host needs a board reset. Re-check once the media image ships a tt-metal/firmware combination validated on firmware 19.7.0.",

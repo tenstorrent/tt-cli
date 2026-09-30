@@ -30,7 +30,10 @@ def env(tmp_path):
     env.update(
         TT_CONFIG_DIR=str(tmp_path / "config"),
         TT_DATA_DIR=str(tmp_path / "data"),
+        # serving an uncached model needs one; preflight refuses without it
+        HF_TOKEN="hf_token_for_tests",
         TT_CACHE_DIR=str(tmp_path / "cache"),
+        TT_DEVICE_ROOT=str(tmp_path / "dev-tenstorrent"),
         TT_TOOL_BIN_TT_SMI=str(FAKES / "bin" / "tt-smi"),
         TT_TOOL_BIN_TT_INSTALLER=str(FAKES / "install.sh"),
         TT_TOOL_BIN_TT_INFERENCE_SERVER=str(FAKES / "inference-repo" / "run.py"),
@@ -132,10 +135,14 @@ def test_demo_flow(env, tmp_path):
     names = {m["name"] for m in json.loads(models.stdout)["models"]}
     assert "Llama-3.1-8B-Instruct" in names
 
-    # serve via fake run.py (docker check must pass or fail visibly)
+    # serve via fake run.py (docker check must pass or fail visibly). The boot is
+    # rendered as a checklist, so the server's own output is teed to a log file
+    # rather than printed — the run is only honest if that file has it.
     serve = tt(env, "serve", "Llama-3.1-8B-Instruct", check=False)
     if serve.returncode == 0:
-        assert "listening" in serve.stdout
+        assert "Raw output:" in serve.stderr
+        logs = sorted((tmp_path / "data" / "logs").glob("serve-Llama-3.1-8B-Instruct-*.log"))
+        assert logs and "listening" in logs[-1].read_text()
     else:
         assert serve.returncode == 4  # TOOL_MISSING: no docker on this machine
         assert "container runtime" in serve.stderr

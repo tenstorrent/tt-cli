@@ -253,7 +253,7 @@ class Ui:
         if not self.enabled:
             return
         with _TERM_LOCK:
-            if self._activity is not None and self._activity.running():
+            if (self._activity is not None and self._activity.running()) or "step" in _ACTIVE_LIVE:
                 self._erase_row()
             self.out.status_console.print(renderable)
 

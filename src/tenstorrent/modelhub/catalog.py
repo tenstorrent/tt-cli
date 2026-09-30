@@ -102,6 +102,7 @@ def _device_support(device: str, raw: dict, origin: str) -> DeviceSupport:
         override_tt_config=raw.get("override_tt_config"),
         serve_overrides=raw.get("serve_overrides"),
         serve_as=raw.get("serve_as"),
+        mesh_graph_desc=raw.get("mesh_graph_desc"),
         support_source=str(raw.get("support_source", "spec")),
         note=str(raw.get("note", "")),
     )

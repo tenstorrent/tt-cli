@@ -150,8 +150,11 @@ weights alone do not make a model servable.
 | `TT_MODEL_SUPPORT_PATH` | Override the bundled generated model support list |
 | `TT_UV_BIN` | Use a specific `uv` binary |
 | `TT_TOOL_BIN_<CLIENT>` | Also how `tt launch` finds a client (`TT_TOOL_BIN_OPENCODE`, `TT_TOOL_BIN_AIDER`, …), or `tt config set tools.override.<client> <path>` |
+| `TT_SERVE_READY_TIMEOUT` | How long `tt serve` waits for a catalog model's server to answer, in seconds (default 3600). A cold boot compiles kernels and can take most of an hour |
+| `SERVICE_PORT` | Default host port for `tt serve` on the tt-inference-server path when `--port` is not given (tt's own default is 20000) |
 | `TT_NO_UPDATE_CHECK` | Skip the daily "newer tt available?" lookup for this run (`tt config set update.check false` to turn it off for good) |
 | `TT_UPDATE_CHECK_URL` | Where that lookup reads PyPI-shaped project JSON from (URL or local file; default `https://pypi.org/pypi/tenstorrent/json`) |
+| `HF_TOKEN` | Hugging Face token handed to tt-inference-server, which requires one for every containerized serve. Falls back to the token `hf auth login` stores; `tt serve` refuses up front when neither exists |
 | `HF_HOME` | Weights cache root when `paths.hf_model_cache_directory` is unset; exported to tt-model and passed to tt-inference-server so every tool shares one cache |
 | `XDG_CACHE_HOME` | Where tt-model keeps its installed-bundle index (`$XDG_CACHE_HOME/tt-model`), which `tt model list --community` reads |
 | `TT_STUDIO_MODELS_PATH` | Override the bundled copy of TT-Studio's model catalog |
