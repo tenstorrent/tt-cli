@@ -136,9 +136,7 @@ def _validate_hardware(hardware: str) -> str:
 _MODEL_CAPTION = (
     "source: tt-inference-server/tt-studio catalog vs. HuggingFace/local community. "
     "profiles: smallest board/mesh tag per capability. "
-    "via: the paths `tt serve` offers — inference-server (its released spec, the "
-    "default), studio (TT-Studio's catalog; `--studio` picks it), tt-model for a "
-    "bundle. `tt model list --help` for details."
+    "`tt model list --help` for details."
 )
 
 
@@ -196,6 +194,7 @@ def _catalog_row(m: dict) -> dict:
         "source": source,
         "type": m["model_type"],
         "hardware": bundles.drop_superseded_hardware(profiles),
+        "verified": True,
     }
 
 
@@ -223,25 +222,28 @@ _SCOPE_TITLE = {
 }
 
 
-def _model_table(payload: dict, *, hardware: str | None, detected: bool) -> Table:
+def _model_table(
+    payload: dict, *, hardware: str | None, detected: bool, show_verified: bool = False
+) -> Table:
     title = f"Models ({_SCOPE_TITLE[payload['scope']]})"
     if hardware:
         title += f" for {hardware}"
         if detected:
             title += " (detected — `tt model list --all` for every device/bundle)"
     table = Table(title=title, caption=_MODEL_CAPTION, caption_justify="left")
-    _add_columns(
-        table, ("name", "source", "engine", "serving profiles", "via", "weights")
-    )
+    columns = ("name", "source", "engine", "serving profiles", "weights")
+    _add_columns(table, columns + (("verified",) if show_verified else ()))
     for row in payload["models"]:
-        table.add_row(
+        cells = [
             row["name"],
             row["source"],
             _engines_cell(row),
             _hardware_cell(row, hardware),
-            ", ".join(row["backends"]),
             _cached_cell(row),
-        )
+        ]
+        if show_verified:
+            cells.append("✓" if row["verified"] else "—")
+        table.add_row(*cells)
     return table
 
 
@@ -280,6 +282,12 @@ def list_models(
         help="Only the released model catalog (tt-inference-server) — skip "
         "community bundles. The opposite of --community.",
     ),
+    include_unverified: bool = typer.Option(
+        False,
+        "--include-unverified",
+        help="Also list community bundles on the Hub that are not verified, "
+        "with a verified column. They serve only after a confirmation prompt.",
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
     verbose: VerboseFlag = False,
@@ -294,6 +302,9 @@ def list_models(
     anyone has packaged with tt-model-manager, not tested or maintained by
     Tenstorrent; `local` is installed here — a bundle on both shows up twice,
     once per source. Pass --catalog or --community to see just one source.
+    verified: only verified community bundles are listed by default;
+    --include-unverified adds the rest of the Hub's community catalog, with a
+    verified column. Unverified bundles serve only after a confirmation prompt.
     profiles: the board/mesh target(s) a model supports, collapsed to the
     smallest tag per capability (a bigger board that adds nothing over a
     smaller one is left out). Every entry serves with `tt serve <name>`
@@ -307,6 +318,13 @@ def list_models(
             why="One shows only community bundles, the other only the released "
             "catalog.",
             next_step="Pass at most one, or neither to see both.",
+            exit_code=ExitCode.USAGE,
+        )
+    if include_unverified and catalog_only:
+        raise TTError(
+            "--include-unverified and --catalog cannot be combined.",
+            why="Unverified bundles are community bundles, which --catalog skips.",
+            next_step="Drop one of them.",
             exit_code=ExitCode.USAGE,
         )
     detected = not hardware and not all_devices
@@ -331,26 +349,39 @@ def list_models(
     # Community bundles publish no model type, so --type simply drops them —
     # same outcome as any other filter they cannot match, no special-casing.
     if show_community and not model_type:
-        rows.extend(_community_rows(appctx, cached=cached, hardware=device))
+        rows.extend(
+            _community_rows(
+                appctx, cached=cached, hardware=device, include_unverified=include_unverified
+            )
+        )
     rows.sort(key=lambda r: (r["name"].lower(), r["source"]))
     scope = "community" if community else "catalog" if catalog_only else "all"
     appctx.output.emit(
         {"device": device, "scope": scope, "models": rows},
-        renderer=lambda payload: _model_table(payload, hardware=device, detected=detected),
+        renderer=lambda payload: _model_table(
+            payload, hardware=device, detected=detected, show_verified=include_unverified
+        ),
         page=True,
     )
 
 
-def _community_rows(appctx, *, cached: bool, hardware: str | None) -> list[dict]:
+def _community_rows(
+    appctx, *, cached: bool, hardware: str | None, include_unverified: bool = False
+) -> list[dict]:
     """Community bundles published on the Hub, or installed locally.
 
     Filtered the same way as the catalog side: detected device by default,
     --hw for an explicit one, --all for everything (see
     bundles.hardware_satisfies for what counts as a match). """
-    # Local installs first: they need no network, and they are the only source for a
-    # bundle nobody published — someone shares an id, you pull it, the Hub shows
-    # nothing. Catalog rows win on name, since a listed bundle is the richer record.
-    local = bundles.local_bundles(config=appctx.config)
+    # Local installs first: they need no network. Unverified bundles, installed or
+    # not, are listed only with --include-unverified.
+    try:
+        local = bundles.local_bundles(config=appctx.config)
+    except TTError as err:
+        appctx.output.warn(f"community bundles skipped ({err.what}) — showing the catalog only.")
+        return []
+    if not include_unverified:
+        local = [b for b in local if b.verified]
     if appctx.offline:
         # The catalog is a Hub index with no bundled copy, but local installs are
         # entirely on disk — show those rather than refusing the whole command.
@@ -375,6 +406,16 @@ def _community_rows(appctx, *, cached: bool, hardware: str | None) -> list[dict]
             # Refresh the shell-completion cache: tab-time must never touch the
             # Hub, so this listing is where `tt serve <TAB>` learns bundle ids.
             bundles.save_community_cache([b.name for b in listed])
+        if include_unverified:
+            try:
+                unverified = bundles.search_unverified(config=appctx.config)
+            except TTError as err:
+                appctx.output.warn(
+                    f"unverified bundles skipped ({err.what}) — showing verified ones only."
+                )
+            else:
+                bundles.add_to_community_cache([b.name for b in unverified])
+                listed += unverified
     # Not merged by name: a bundle that is both published and installed gets one
     # row per source, so the listing shows both facts instead of picking one.
     found = sorted(local + listed, key=lambda b: (b.name.lower(), b.source))

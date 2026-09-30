@@ -48,7 +48,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 
 | Model serving | Functionality |
 |---|---|
-| `tt model list` | Models that run on this machine's detected hardware, from two sources: the released catalog (models Tenstorrent ships and tests via tt-inference-server) and community bundles; the `via` column shows how each is served (inference-server, studio or tt-model) (`--all` for every device; `--cached`, `--type`, `--hw` filters) |
+| `tt model list` | Models that run on this machine's detected hardware, from two sources: the released catalog (models Tenstorrent ships and tests via tt-inference-server) and community bundles (`--all` for every device; `--cached`, `--type`, `--hw` filters) |
 | `tt model list --catalog` / `--community` | Narrow to one source: `--catalog` for the released catalog only; `--community` for bundles anyone has published with tt-model-manager on the Hugging Face Hub, not tested or maintained by Tenstorrent (served with `tt serve <namespace>/<name>`); `--community --cached` for the ones installed here |
 | `tt model search [QUERY]` | Search the Hub for published tt-model bundles (`--catalog` for community-catalog listings only; `--arch`, `--limit`) |
 | `tt model info NAME` | Model metadata: engines, per-device support/status, requirements, cache state; for a tt-model bundle id, its manifest and compatibility verdict (or catalog row) |
@@ -114,11 +114,11 @@ tt launch stop openwebui               # stop it, keeping its data
 
 `tt serve NAME` picks the serving path from the model:
 
-- **inference-server** — every model `tt model list` shows with `via inference-server`, driven through tt-inference-server's `run.py`. Preferred whenever it knows the model.
+- **inference-server** — every model `tt model list` shows with source `tt-inference-server`, driven through tt-inference-server's `run.py`. Preferred whenever it knows the model.
 - **studio** — every model in [TT-Studio](https://github.com/tenstorrent/tt-studio)'s catalog: most are tt-inference-server's, which studio deploys from the same images, plus the few only studio carries (today `Qwen3.5-9B` and `Qwen3.8-27B`), for which it is the default. `tt serve NAME --studio` picks it for any of them. tt clones studio's latest tagged release on first use and runs `run.py run NAME` from it, which brings the stack up, deploys the model and reports the endpoint; `tt model stop NAME` runs its `--stop-model` for anything studio deployed, then `--stop` to take studio's containers and services down with it; a deploy that fails is followed by the same `--stop`, so a broken deploy leaves nothing of studio's running. Single-chip models (a `P150` entry) are listed for the multi-card Blackhole boards too, the way studio runs them — one chip of a P300. Studio allocates chips and ports itself, so `--device` and `--port` are ignored there with a warning.
 - **model-manager** — tt-model bundles (`namespace/name`) neither catalog knows.
 
-`tt model list` shows the paths in its `via` column (`inference-server, studio` for a model both offer); `tt model info` says the same. `--inference-server`, `--studio` or `--model-manager` forces a path and refuses one the model does not offer. With no model, `tt serve --studio` (or `--inference-server`, `--model-manager`) lists what that path serves on this machine — for studio, its whole catalog — and asks for a number; the picker needs a terminal and is off under `--json`/`--quiet`.
+`tt model info` shows the paths a model is served by (`inference-server, studio` for a model both offer). `--inference-server`, `--studio` or `--model-manager` forces a path and refuses one the model does not offer. With no model, `tt serve --studio` (or `--inference-server`, `--model-manager`) lists what that path serves on this machine — for studio, its whole catalog — and asks for a number; the picker needs a terminal and is off under `--json`/`--quiet`.
 
 Every path inherits a Hugging Face token: `HF_TOKEN` from the shell if set, else the token `hf auth login` stored (`HF_TOKEN_PATH`, then `<HF_HOME>/token`). `tt serve --dry-run` names the source without printing the token.
 

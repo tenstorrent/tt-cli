@@ -1485,7 +1485,7 @@ def test_ctrl_c_during_a_watched_serve_is_recorded_as_interrupted(
         lambda name: "/usr/bin/docker" if name == "docker" else None,
     )
     monkeypatch.setenv("HF_TOKEN", "hf_token_for_tests")
-    result = runner.invoke(app, ["serve", model])
+    result = runner.invoke(app, ["serve", model, "--yes"])
     assert result.exit_code == 130, result.output
     props = _props(collected)
     assert props["exit_code_name"] == "INTERRUPTED"

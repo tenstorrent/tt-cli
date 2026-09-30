@@ -312,6 +312,16 @@ def test_serve_not_installed_clone_failure_surfaces(
     assert "git" in result.output
 
 
+@pytest.fixture(autouse=True)
+def verified_test_bundles(curated_catalog):
+    """The bundle ids these tests serve are verified, so the unverified-bundle prompt
+    stays out of the way; the tests for that prompt write their own catalog."""
+    curated_catalog(
+        "ns/bundle", "acme/demo", "acme/never-pulled", "acme/some-bundle",
+        "raahemnabeel/qwen3-coder-30b-a3b",
+    )
+
+
 @pytest.fixture
 def fake_model_manager(model_manager_bin):
     """Recorded-argv log for the fake tt-model binary (fake mode)."""
@@ -408,6 +418,101 @@ def test_serve_tt_model_warns_that_device_is_not_its_flag(
     assert "--device is a tt-inference-server option" in result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
     assert "--device" not in record["argv"]
+
+
+@pytest.fixture
+def unverified(curated_catalog, monkeypatch):
+    """ns/bundle is unverified and stdin is a terminal, so serving it prompts."""
+    curated_catalog("ns/other")
+    monkeypatch.setattr("tenstorrent.commands.serve._stdin_isatty", lambda: True)
+
+
+SERVED_NS_BUNDLE = ["--verbose", "serve", "ns/bundle", "--detach"]
+
+
+def _served(log) -> list[list[str]]:
+    records = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    return [r["argv"] for r in records if "serve" in r["argv"]]
+
+
+@pytest.mark.fakes_only
+def test_serve_tt_model_serves_an_unverified_bundle_once_confirmed(
+    runner, fake_model_manager, unverified, isolated_dirs
+):
+    result = runner.invoke(app, ["serve", "ns/bundle"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert "ns/bundle is not a verified community bundle" in result.output
+    assert "Untested" in result.output and "security issues" in result.output
+    assert "[y/N]" in result.output
+    assert _served(fake_model_manager) == [SERVED_NS_BUNDLE]
+
+
+@pytest.mark.fakes_only
+def test_serve_tt_model_declining_the_prompt_serves_nothing(
+    runner, fake_model_manager, unverified, isolated_dirs
+):
+    result = runner.invoke(app, ["serve", "ns/bundle"], input="n\n")
+    assert result.exit_code == 0, result.output
+    assert "Nothing was served" in result.output
+    assert _served(fake_model_manager) == []
+
+
+@pytest.mark.fakes_only
+def test_serve_tt_model_yes_skips_the_prompt(
+    runner, fake_model_manager, unverified, isolated_dirs
+):
+    result = runner.invoke(app, ["serve", "ns/bundle", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "[y/N]" not in result.output
+    assert _served(fake_model_manager) == [SERVED_NS_BUNDLE]  # --yes is tt's, not passed on
+
+
+@pytest.mark.fakes_only
+def test_serve_tt_model_refuses_an_unverified_bundle_without_a_terminal(
+    runner, fake_model_manager, curated_catalog, isolated_dirs
+):
+    curated_catalog("ns/other")  # CliRunner's stdin is not a TTY
+    result = runner.invoke(app, ["serve", "ns/bundle"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "--yes" in result.output
+    assert _served(fake_model_manager) == []
+
+
+@pytest.mark.fakes_only
+@pytest.mark.parametrize("flag", ["--dry-run", "--print"])
+def test_serve_tt_model_does_not_prompt_when_nothing_starts(
+    runner, fake_model_manager, unverified, isolated_dirs, flag
+):
+    result = runner.invoke(app, ["serve", "ns/bundle", flag])
+    assert result.exit_code == 0, result.output
+    assert "not a verified community bundle" in result.output
+    assert "[y/N]" not in result.output
+
+
+@pytest.mark.fakes_only
+def test_serve_tt_model_does_not_warn_about_a_curated_bundle(
+    runner, fake_model_manager, curated_catalog, isolated_dirs
+):
+    curated_catalog("NS/Bundle")
+    result = runner.invoke(app, ["serve", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    assert "not a verified community bundle" not in result.output
+
+
+@pytest.mark.fakes_only
+def test_serve_tt_model_treats_a_broken_catalog_as_unverified(
+    runner, fake_model_manager, tmp_path, monkeypatch, isolated_dirs
+):
+    """Fail closed: a catalog that cannot be read must not skip the confirmation."""
+    monkeypatch.setenv("TT_COMMUNITY_CATALOG_PATH", str(tmp_path / "absent.json"))
+    refused = runner.invoke(app, ["serve", "ns/bundle"])
+    assert refused.exit_code == ExitCode.USAGE
+    assert "treating ns/bundle as unverified" in refused.output
+    assert "security issues" in refused.output
+    assert _served(fake_model_manager) == []
+    confirmed = runner.invoke(app, ["serve", "ns/bundle", "--yes"])
+    assert confirmed.exit_code == 0, confirmed.output
+    assert _served(fake_model_manager) == [SERVED_NS_BUNDLE]
 
 
 @pytest.mark.fakes_only

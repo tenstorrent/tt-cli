@@ -1,0 +1,417 @@
+# Community bundles `tt model list --community` shows: those that passed the
+# QuietBox 2 validation sweep of 2026-09-25, or were validated separately.
+#
+# INPUT, never generated. scripts/build_community_catalog.py validates this file
+# and writes community_catalog.json, which tt reads and each release publishes;
+# rebuild and commit both together (CI fails on a stale output).
+#
+# TEMPORARY: hand-curated while the whitelisting process is built. Once it ships,
+# the build reads the Hub instead and this file is deleted; the JSON stays.
+#
+# Bundles not listed here can still be served; `tt serve` warns that they are
+# not in the catalog.
+#
+# repo          Hub repo id, namespace/name.
+# kind          container | self-contained | thin. Omit when unknown.
+# engine        vllm-plugin | vllm-fork | tt-dit-server. Omit when unknown.
+# hardware      Boards/meshes it was validated on ("p150", "p300x2"); arch is
+#               derived from these.
+# validation    sweep (the QuietBox 2 sweep) | separate (validated on its own).
+# validated_on  YYYY-MM-DD, when known.
+
+schema_version = 1
+
+[[bundle]]
+repo = "anirud/devstral-small-2-24b-instruct-2512"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x4", "p300", "p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/Alpamayo2-Super-p300x2"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/depth-anything-3-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/gaze-lle-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/GR00T-N1.5-3B-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/GR00T-N1.6-3B-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/GR00T-N1.7-3B-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/hamer-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/locate-anything-3b-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/mast3r-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/moge-2-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/qwen-image-2.1-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/qwen3.8-27b-dflash2-p300x2"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/qwen3.8-27b-p150x2"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/qwen3.8-27b-p300x2"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/rf-detr-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/RLDX-1-PT-IMG-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/RLDX-1-PT-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/sam3-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/superpoint-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/vggt-1b-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "changh95/xvla-base-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "jashansinghTT/kimi-linear-48b-a3b-instruct-blackhole"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p300", "p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "jashansinghTT/minimax-music3-blackhole"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "jashansinghTT/olmo-3.1-32b-instruct-blackhole"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150", "p300", "p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "jashansinghTT/s2-pro-blackhole"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150", "p300", "p300x2", "p300x4"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "mando2222/laguna-s-2.1-v51"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x4"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "mando2222/llama-3.2-3b-blackhole-v51"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "mando2222/qwen3-32b-blackhole-v51"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x4"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "mando2222/qwen3.8-27b-dflash2-p300x2-q4kv"
+engine = "vllm-plugin"
+hardware = ["p300x2"]
+validation = "separate"
+validated_on = "2026-09-17"
+
+[[bundle]]
+repo = "mando2222/vibethinker-3b-blackhole-v51"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "ndaly/Mistral-Small-4-119B-2603-tt-p300x2"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "ndaly/Nemotron-3.5-Lightning-30B-A3B-NVFP4-tt-p300x2-vllm026"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "raahemnabeel/ornith-1.5-35b-a3b"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150", "p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "raahemnabeel/qwen3-coder-30b-a3b"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x4", "p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "sjettTT/qwen3.8-flash-next_p150x4"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150x4", "p300x2"]
+validation = "separate"
+
+[[bundle]]
+repo = "stisiTT/flux2-dev-qb2"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "stisiTT/gemma-4-12b-it-p150"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "stisiTT/llama-3.2-3b-blackhole-v51"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "stisiTT/smollm2-135m-instruct-p150"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "tt-hous/gemma-4-26B-A4B-it_p150_p150x2_p150x4"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150", "p150x2", "p150x4"]
+validation = "separate"
+
+[[bundle]]
+repo = "tt-hous/gpt-oss-120b-p150x4"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x4"]
+validation = "separate"
+
+[[bundle]]
+repo = "tt-hous/gpt-oss-20b-p150"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150", "p150x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "tt-hous/laguna-xs-2.1"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x2", "p150x4"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "tt-hous/muse-glimmer-30b"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "tt-hous/ornith-1.0-35b-p150"
+kind = "container"
+engine = "vllm-fork"
+hardware = ["p150", "p150x2", "p150x4"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "tt-hous/ornith-1.5-9b"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150", "p150x2", "p150x4"]
+validation = "separate"
+
+[[bundle]]
+repo = "tt-hous/qwen3.6-27b-p150x4"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x4"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "tt-hous/qwen3.8-27b-p150x4"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x4"]
+validation = "sweep"
+validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "tt-hous/qwen3.8-flash-next-p300x2"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p300x2"]
+validation = "sweep"
+validated_on = "2026-09-25"

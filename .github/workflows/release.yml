@@ -112,7 +112,7 @@ jobs:
           /tmp/tt-smoke/venv/bin/tt --help > /dev/null
           # The bundled manifest and catalog are data files, not modules, so a
           # packaging slip drops them from the wheel without breaking any import.
-          /tmp/tt-smoke/venv/bin/python -c "from tenstorrent.config.paths import get_paths; from tenstorrent.tools.manifest import LocalManifestSource; from tenstorrent.modelhub.catalog import ModelCatalog; LocalManifestSource(get_paths()).load(); ModelCatalog(); print('bundled data files OK')"
+          /tmp/tt-smoke/venv/bin/python -c "from tenstorrent.config.paths import get_paths; from tenstorrent.tools.manifest import LocalManifestSource; from tenstorrent.modelhub.catalog import ModelCatalog; from tenstorrent.modelhub.bundles import curated_ids; LocalManifestSource(get_paths()).load(); ModelCatalog(); assert curated_ids(); print('bundled data files OK')"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -203,7 +203,11 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.changelog }}
-          files: dist/*
+          # Formats for model catalogs are documented in scripts/build_model_support.py and scripts/build_community_catalog.py.
+          files: |
+            dist/*
+            src/tenstorrent/modelhub/model_support.json
+            src/tenstorrent/modelhub/community_catalog.json
           draft: false
           # 0.1.0.dev0, 1.0.0rc1 and friends are flagged so they do not become the
           # repo's "Latest release".

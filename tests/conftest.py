@@ -211,6 +211,7 @@ def isolated_dirs(request, tmp_path, monkeypatch):
         "TT_MANIFEST_PATH",
         "TT_GOLDEN_PATH",
         "TT_STUDIO_MODELS_PATH",
+        "TT_COMMUNITY_CATALOG_PATH",
         "HF_TOKEN",
         "HF_TOKEN_PATH",
     ):
@@ -289,6 +290,22 @@ def isolated_dirs(request, tmp_path, monkeypatch):
 @pytest.fixture
 def runner():
     return CliRunner()
+
+
+@pytest.fixture
+def curated_catalog(tmp_path, monkeypatch):
+    """Write a community_catalog.json of bundles (repo ids, or dicts of its
+    fields) and point tt at it. A bare repo id gets a board, as every built entry
+    has one; without it, listing would fetch the bundle's manifest from the Hub."""
+
+    def write(*bundles: str | dict) -> Path:
+        rows = [{"repo": b, "hardware": ["p150"]} if isinstance(b, str) else b for b in bundles]
+        path = tmp_path / "community_catalog.json"
+        path.write_text(json.dumps({"schema_version": 1, "bundles": rows}))
+        monkeypatch.setenv("TT_COMMUNITY_CATALOG_PATH", str(path))
+        return path
+
+    return write
 
 
 @pytest.fixture

@@ -37,7 +37,7 @@ from ..backends.serving.model_manager import (
     looks_like_bundle_id,
 )
 from ..backends.serving.studio import StudioBackend
-from .._compat import IntRange, prompt
+from .._compat import IntRange, confirm, prompt
 from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
@@ -197,6 +197,13 @@ def serve(
         "them itself.",
         rich_help_panel=PANEL_BUNDLE,
     ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Bundles: serve an unverified bundle without asking.",
+        rich_help_panel=PANEL_BUNDLE,
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
     verbose: VerboseFlag = False,
@@ -246,6 +253,7 @@ def serve(
             appctx, model, catalog_origin=catalog.origin,
             workflow=workflow, device=device, offline=offline,
             port=port, serve_flags=serve_flags, extra_args=extra_args, dry_run=dry_run,
+            yes=yes,
         )
         return
     if serve_flags:
@@ -593,6 +601,35 @@ def _token_cell(source: str | None) -> str:
     return "none [dim](gated models need `hf auth login` or HF_TOKEN)[/dim]"
 
 
+# Printed under the unverified-bundle warning, so the [y/N] after it is an informed
+# choice: "unverified" means both untested and unreviewed.
+_UNVERIFIED_RISKS = (
+    "  Untested: Tenstorrent hasn't run it on hardware, so it may not work.\n"
+    "  Unreviewed: Tenstorrent hasn't checked its code for security issues.\n"
+    "  We recommend a verified bundle instead (`tt model list` shows them)."
+)
+
+
+def _confirm_unverified(appctx, model: str, *, yes: bool) -> None:
+    """Ask before serving an unverified bundle. Non-interactive without --yes is a
+    usage error rather than a silent yes; declining is a clean exit 0."""
+    if yes:
+        return
+    if appctx.output.json_mode or appctx.output.quiet or not _stdin_isatty():
+        raise TTError(
+            f"Refusing to serve unverified bundle {model} without confirmation.",
+            why="stdin is not a terminal (or --json/--quiet is in effect), so there "
+            "is no way to ask.",
+            next_step="Re-run with --yes to serve it anyway.",
+            exit_code=ExitCode.USAGE,
+        )
+    if not confirm(f"Serve unverified bundle {model}?"):
+        # A plain line, not a TTError: declining is not a failure, and a TTError
+        # renders as a red error card whatever its exit code.
+        appctx.output.status("Nothing was served.", style="red")
+        raise typer.Exit(int(ExitCode.OK))
+
+
 def _serve_with_tt_model_manager(
     appctx,
     model: str,
@@ -605,6 +642,7 @@ def _serve_with_tt_model_manager(
     extra_args: list[str],
     serve_flags: list[str] | None = None,
     dry_run: bool = False,
+    yes: bool = False,
 ) -> None:
     """Fallback path: a name the released spec does not know. Only Hub-style bundle
     ids route here — anything else is a catalog typo and gets the catalog's error."""
@@ -620,12 +658,28 @@ def _serve_with_tt_model_manager(
             "--device is a tt-inference-server option; tt-model detects the machine "
             "itself (override with its own --arch)."
         )
+    try:
+        verified = model.lower() in bundles.curated_ids()
+    except TTError as err:
+        # Fail closed: an unreadable catalog must not skip the confirmation.
+        appctx.output.warn(
+            f"could not check the community catalog ({err.what}); "
+            f"treating {model} as unverified.\n{_UNVERIFIED_RISKS}"
+        )
+        verified = False
+    else:
+        if not verified:
+            appctx.output.warn(
+                f"{model} is not a verified community bundle.\n{_UNVERIFIED_RISKS}"
+            )
     if dry_run:
         plan = backend.plan(
             model, offline=offline, port=port, serve_flags=serve_flags, extra_args=extra_args
         )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
+    if not verified and "--print" not in (serve_flags or []):
+        _confirm_unverified(appctx, model, yes=yes)
     ui = appctx.output.ui
     origin = f" ({catalog_origin})" if appctx.output.verbose else ""
     ui.note(f"{model} is not in the model catalog{origin} — serving it as a tt-model bundle")

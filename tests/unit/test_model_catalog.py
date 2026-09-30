@@ -362,7 +362,7 @@ def test_an_unknown_future_engine_kind_is_still_recognized():
         assert (engine, arch) == (tag, ["blackhole"]), tag
 
 
-def test_the_manifest_wins_when_a_tag_disagrees(tmp_path, monkeypatch):
+def test_the_manifest_wins_when_a_tag_disagrees(tmp_path, curated_catalog, monkeypatch):
     """Tags live in the model card and can be edited after packaging; the manifest
     is the artifact, so a pulled bundle trusts it."""
     from tenstorrent.modelhub import bundles
@@ -376,14 +376,7 @@ def test_the_manifest_wins_when_a_tag_disagrees(tmp_path, monkeypatch):
     )
     (root / "installed.json").write_text(json.dumps({"ns/dit": {"repo_id": "ns/dit"}}))
 
-    class _Repo:
-        id = "ns/dit"
-        tags = ["blackhole", "vllm-plugin"]  # stale card says vLLM
-        downloads = 0
-
-    monkeypatch.setattr(
-        "huggingface_hub.HfApi.list_models", lambda self, **kw: iter([_Repo()])
-    )
+    curated_catalog({"repo": "ns/dit", "engine": "vllm-plugin"})  # stale entry says vLLM
     (found,) = bundles.search_community()
     assert found.engine == "tt-dit-server"
 

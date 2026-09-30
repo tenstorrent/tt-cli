@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from tenstorrent.modelhub import bundles
 from tenstorrent.modelhub.bundles import (
     MANIFEST_NAME,
     _classify,
@@ -187,22 +190,15 @@ def test_hardware_from_hub_manifest_is_empty_on_any_failure(monkeypatch):
     assert hardware_from_hub_manifest("ns/gone") == []
 
 
-class _Repo:
-    def __init__(self, id, tags):
-        self.id = id
-        self.tags = tags
-        self.downloads = 0
-
-
-def test_search_community_fetches_the_manifest_for_an_untagged_bundle(monkeypatch):
+def test_search_community_fetches_the_manifest_for_an_untagged_bundle(
+    curated_catalog, monkeypatch
+):
     """No board tag and never pulled here: the manifest on the Hub is the only
     source left, so it is fetched — but only for this one bundle, not the
     tagged one beside it."""
-    monkeypatch.setattr(
-        "huggingface_hub.HfApi.list_models",
-        lambda self, **kw: iter(
-            [_Repo("ns/untagged", ["blackhole"]), _Repo("ns/tagged", ["blackhole", "p300"])]
-        ),
+    curated_catalog(
+        {"repo": "ns/untagged", "arch": "blackhole"},
+        {"repo": "ns/tagged", "arch": "blackhole", "hardware": ["p300"]},
     )
     calls = []
 
@@ -220,7 +216,7 @@ def test_search_community_fetches_the_manifest_for_an_untagged_bundle(monkeypatc
 
 
 def test_search_community_skips_the_hub_manifest_for_an_installed_bundle(
-    tmp_path, monkeypatch
+    tmp_path, curated_catalog, monkeypatch
 ):
     """A bundle pulled here already has a local manifest — hardware_for reads
     that, so the untagged fallback must not also hit the Hub."""
@@ -235,10 +231,7 @@ def test_search_community_skips_the_hub_manifest_for_an_installed_bundle(
     )
     (root / "installed.json").write_text(json.dumps({"ns/untagged": {"repo_id": "ns/untagged"}}))
 
-    monkeypatch.setattr(
-        "huggingface_hub.HfApi.list_models",
-        lambda self, **kw: iter([_Repo("ns/untagged", ["blackhole"])]),
-    )
+    curated_catalog({"repo": "ns/untagged", "arch": "blackhole"})
 
     def boom(repo_id):  # pragma: no cover - must never run
         raise AssertionError("the Hub manifest fallback ran for an installed bundle")
@@ -246,3 +239,122 @@ def test_search_community_skips_the_hub_manifest_for_an_installed_bundle(
     monkeypatch.setattr("tenstorrent.modelhub.bundles.hardware_from_hub_manifest", boom)
     (found,) = bundles.search_community()
     assert found.hardware == ["p300x2"]
+
+
+# -- curated community catalog ------------------------------------------------------
+def test_the_bundled_community_catalog_loads():
+    from tenstorrent.modelhub import bundles
+
+    bundles._load_curated()  # a malformed shipped file would raise here
+
+
+def test_search_community_lists_only_curated_bundles_filtered_by_query(curated_catalog):
+    curated_catalog("ns/Alpha-7B", "ns/beta", "other/alpha-2")
+    assert [b.name for b in search_community()] == ["ns/Alpha-7B", "ns/beta", "other/alpha-2"]
+    assert [b.name for b in search_community(query="ALPHA")] == ["ns/Alpha-7B", "other/alpha-2"]
+    assert [b.name for b in search_community(limit=1)] == ["ns/Alpha-7B"]
+
+
+def test_curated_ids_are_lowercased(curated_catalog):
+    from tenstorrent.modelhub.bundles import curated_ids
+
+    curated_catalog("NS/Mixed")
+    assert curated_ids() == {"ns/mixed"}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"schema_version": 2, "bundles": []}',
+        '{"schema_version": 1, "bundles": [{"kind": "container"}]}',
+        '{"schema_version": 1, "bundles": [',
+    ],
+    ids=["schema", "entry", "json"],
+)
+def test_a_malformed_community_catalog_is_a_config_error(tmp_path, monkeypatch, text):
+    from tenstorrent.errors import ExitCode, TTError
+    from tenstorrent.modelhub.bundles import curated_ids
+
+    path = tmp_path / "catalog.json"
+    path.write_text(text)
+    monkeypatch.setenv("TT_COMMUNITY_CATALOG_PATH", str(path))
+    with pytest.raises(TTError) as err:
+        curated_ids()
+    assert err.value.exit_code == ExitCode.CONFIG
+
+
+def test_a_missing_community_catalog_override_is_a_config_error(tmp_path, monkeypatch):
+    from tenstorrent.errors import ExitCode, TTError
+    from tenstorrent.modelhub.bundles import curated_ids
+
+    monkeypatch.setenv("TT_COMMUNITY_CATALOG_PATH", str(tmp_path / "absent.json"))
+    with pytest.raises(TTError) as err:
+        curated_ids()
+    assert err.value.exit_code == ExitCode.CONFIG
+
+
+# -- unverified bundles (the Hub's community catalog) -------------------------------
+class _HubRepo:
+    def __init__(self, id, tags, downloads=0):
+        self.id, self.tags, self.downloads = id, tags, downloads
+
+
+def test_search_unverified_lists_hub_bundles_outside_the_curated_catalog(
+    curated_catalog, monkeypatch
+):
+    curated_catalog("ns/Verified")
+    monkeypatch.setattr(
+        "huggingface_hub.HfApi.list_models",
+        lambda self, **kw: iter([
+            _HubRepo("NS/verified", ["p150"]),
+            _HubRepo("ns/other", ["tt-model-container", "vllm-plugin", "blackhole", "p300x2"], 7),
+        ]),
+    )
+    (found,) = bundles.search_unverified()
+    assert (found.name, found.kind, found.engine, found.arch, found.hardware) == (
+        "ns/other", "container", "vllm-plugin", ["blackhole"], ["p300x2"]
+    )
+    assert (found.downloads, found.verified) == (7, False)
+
+
+def test_search_community_rows_are_verified(curated_catalog):
+    curated_catalog({"repo": "ns/v", "hardware": ["p150"]})
+    assert [b.verified for b in search_community()] == [True]
+
+
+def test_local_bundles_are_verified_by_the_curated_catalog(
+    tmp_path, curated_catalog, monkeypatch
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    (tmp_path / "tt-model").mkdir()
+    (tmp_path / "tt-model" / "installed.json").write_text(
+        json.dumps({"ns/v": {"repo_id": "ns/v"}, "ns/u": {"repo_id": "ns/u"}})
+    )
+    curated_catalog("NS/V")
+    assert {b.name: b.verified for b in bundles.local_bundles()} == {"ns/v": True, "ns/u": False}
+
+
+def test_search_unverified_is_a_tt_error_when_the_hub_is_unreachable(
+    curated_catalog, monkeypatch
+):
+    from tenstorrent.errors import TTError
+
+    curated_catalog()
+
+    def boom(self, **kw):
+        raise OSError("network down")
+
+    monkeypatch.setattr("huggingface_hub.HfApi.list_models", boom)
+    with pytest.raises(TTError, match="Could not reach the Hugging Face Hub"):
+        bundles.search_unverified()
+
+
+def test_search_unverified_limit_counts_only_unverified_bundles(curated_catalog, monkeypatch):
+    """Verified rows are filtered out after the Hub applies its limit, so they must
+    not use up slots the unverified rows need."""
+    curated_catalog("ns/v1", "ns/v2")
+    hub = [_HubRepo(f"ns/{name}", ["p150"]) for name in ("v1", "v2", "u1", "u2", "u3")]
+    monkeypatch.setattr(
+        "huggingface_hub.HfApi.list_models", lambda self, limit, **kw: iter(hub[:limit])
+    )
+    assert [b.name for b in bundles.search_unverified(limit=2)] == ["ns/u1", "ns/u2"]
