@@ -299,7 +299,7 @@ def report_bundle(
     """Collect a support bundle and open a pre-filled email to Tenstorrent support with it attached.
 
     The bundle holds environment, tt-smi snapshot, config, tt and inference-server
-    logs and container logs; known secrets (HF tokens, JWT_SECRET, telemetry keys)
+    logs and container logs; known secrets (tokens, API keys, passwords, JWT_SECRET, telemetry keys)
     are redacted. It keeps hostnames and local paths, so it is meant for
     support@tenstorrent.com, not a public issue. Every source that is missing or
     broken is noted in manifest.json instead of failing the command.

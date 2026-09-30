@@ -47,17 +47,62 @@ _ENV_ALWAYS = ("HF_TOKEN", "JWT_SECRET", "SERVICE_PORT")
 _ENV_SECRET_MARKERS = ("KEY", "TOKEN", "SECRET")
 
 _REDACTED = "<redacted>"
+# Env-style names that hold credentials: HF_TOKEN, HUGGING_FACE_HUB_TOKEN, VLLM_API_KEY,
+# OPENAI_API_KEY, JWT_SECRET, DB_PASSWORD … The marker must end the name, so
+# MAX_NUM_BATCHED_TOKENS or TOKENIZER_PATH keep their values.
+_SECRET_NAME = r"[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)"
+_SECRET_FLAGS = ("--api-key", "--hf-token", "--token", "--password")
 # Values already rendered as a placeholder (<set>, <redacted>) are left alone.
 _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
-        re.compile(r"\b(JWT_SECRET|HF_TOKEN)\b(\s*[=:]\s*[\"']?)[^\s\"'<]+", re.IGNORECASE),
+        re.compile(rf"\b({_SECRET_NAME})\b([\"']?\s*[=:]\s*[\"']?)[^\s\"'<,]+"),
+        rf"\1\2{_REDACTED}",
+    ),
+    (
+        re.compile(
+            r"\b(api[_-]?key|access[_-]?token|auth[_-]?token|hf[_-]?token|password|secret)\b"
+            r"([\"']?\s*[=:]\s*[\"']?)[^\s\"'<,]+",
+            re.IGNORECASE,
+        ),
+        rf"\1\2{_REDACTED}",
+    ),
+    (
+        re.compile(rf"({'|'.join(_SECRET_FLAGS)})(=|\s+)[^\s\"'<]+"),
         rf"\1\2{_REDACTED}",
     ),
     (re.compile(r"(Authorization:\s*Bearer\s+)\S+", re.IGNORECASE), rf"\1{_REDACTED}"),
     (re.compile(r"(\btoken=)[^\s&\"'<]+", re.IGNORECASE), rf"\1{_REDACTED}"),
-    # HuggingFace tokens and PostHog project keys (telemetry.posthog_project_key).
+    # HuggingFace tokens, PostHog project keys (telemetry.posthog_project_key) and
+    # OpenAI-style keys, wherever they turn up bare.
     (re.compile(r"\b(?:hf|phc)_[A-Za-z0-9]{20,}\b"), _REDACTED),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"), _REDACTED),
 )
+_SECRET_NAME_RE = re.compile(rf"{_SECRET_NAME}")
+
+
+def scrub_container_record(record: dict) -> dict:
+    """Redact an `inspect` record field by field before it is dumped as JSON: env
+    values of secret-looking names, and the argument after a secret flag. The
+    text pass cannot catch the latter, since the flag and its value land on
+    separate JSON lines."""
+    record = json.loads(json.dumps(record))  # deep copy, JSON-shaped
+    config = record.get("Config") or {}
+    env = config.get("Env")
+    if isinstance(env, list):
+        scrubbed = []
+        for item in env:
+            name, sep, _ = str(item).partition("=")
+            secret = sep and _SECRET_NAME_RE.fullmatch(name.upper())
+            scrubbed.append(f"{name}={_REDACTED}" if secret else item)
+        config["Env"] = scrubbed
+    for holder, key in ((record, "Args"), (config, "Cmd"), (config, "Entrypoint")):
+        argv = holder.get(key)
+        if isinstance(argv, list):
+            holder[key] = [
+                _REDACTED if i and str(argv[i - 1]) in _SECRET_FLAGS else a
+                for i, a in enumerate(argv)
+            ]
+    return record
 
 
 def redact(text: str) -> str:
@@ -233,7 +278,7 @@ def collect_containers(appctx: AppContext, note: Note) -> list[BundleEntry]:
     listed = appctx.runner.capture([runtime, "ps", "-a", "--format", "{{.ID}}"], tool=runtime)
     ids = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
     records = [r for r in backend.inspect_containers(ids) if _is_tt_container(r)]
-    entries = [_json_entry("containers/ps.json", records)]
+    entries = [_json_entry("containers/ps.json", [scrub_container_record(r) for r in records])]
     for record in records:
         cid = str(record.get("Id") or "")[:12]
         name = str(record.get("Name") or "").lstrip("/") or cid
