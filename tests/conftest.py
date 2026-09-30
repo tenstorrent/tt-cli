@@ -319,6 +319,15 @@ def fake_bin():
 
 
 @pytest.fixture(autouse=True)
+def no_verified_copies(monkeypatch):
+    """The Tenstorrent-copies half of the community listing is a Hub query. The
+    suite never makes it: tests that want copies stub it themselves."""
+    monkeypatch.setattr(
+        "tenstorrent.modelhub.bundles.search_verified_copies", lambda **kw: []
+    )
+
+
+@pytest.fixture(autouse=True)
 def bundle_docker_is_fake(hardware_mode, monkeypatch):
     """Bundle serves find docker through ModelManagerBackend._docker; in fake mode
     that is the fake, so no test depends on this machine's real containers."""

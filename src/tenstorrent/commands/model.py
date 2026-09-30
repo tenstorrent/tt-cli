@@ -302,9 +302,11 @@ def list_models(
     anyone has packaged with tt-model-manager, not tested or maintained by
     Tenstorrent; `local` is installed here — a bundle on both shows up twice,
     once per source. Pass --catalog or --community to see just one source.
-    verified: only verified community bundles are listed by default;
-    --include-unverified adds the rest of the Hub's community catalog, with a
-    verified column. Unverified bundles serve only after a confirmation prompt.
+    verified: only verified community bundles are listed by default: the
+    curated catalog, plus copies Tenstorrent reviewed into its Hugging Face org
+    (`--json` gives each copy's original as `copy_of`). --include-unverified
+    adds the rest of the Hub's community catalog, with a verified column.
+    Unverified bundles serve only after a confirmation prompt.
     profiles: the board/mesh target(s) a model supports, collapsed to the
     smallest tag per capability (a bigger board that adds nothing over a
     smaller one is left out). Every entry serves with `tt serve <name>`
@@ -406,6 +408,17 @@ def _community_rows(
             # Refresh the shell-completion cache: tab-time must never touch the
             # Hub, so this listing is where `tt serve <TAB>` learns bundle ids.
             bundles.save_community_cache([b.name for b in listed])
+        # Copies `tt-model verify` made in the Tenstorrent org. Unlike the curated
+        # rows these need the Hub, so an outage drops only them.
+        try:
+            copies = bundles.search_verified_copies(config=appctx.config)
+        except TTError as err:
+            appctx.output.warn(f"Tenstorrent copies skipped ({err.what}).")
+        else:
+            curated = {b.name.lower() for b in listed}
+            copies = [b for b in copies if b.name.lower() not in curated]
+            bundles.add_to_community_cache([b.name for b in copies])
+            listed += copies
         if include_unverified:
             try:
                 unverified = bundles.search_unverified(config=appctx.config)

@@ -500,6 +500,17 @@ def test_serve_tt_model_does_not_warn_about_a_curated_bundle(
 
 
 @pytest.mark.fakes_only
+def test_serve_tt_model_does_not_ask_about_a_tenstorrent_copy(
+    runner, fake_model_manager, tmp_path, monkeypatch, isolated_dirs
+):
+    """Verified by its id: no prompt, even when the curated catalog is unreadable."""
+    monkeypatch.setenv("TT_COMMUNITY_CATALOG_PATH", str(tmp_path / "absent.json"))
+    result = runner.invoke(app, ["serve", "Tenstorrent/bundle"])
+    assert result.exit_code == 0, result.output
+    assert "unverified" not in result.output
+
+
+@pytest.mark.fakes_only
 def test_serve_tt_model_treats_a_broken_catalog_as_unverified(
     runner, fake_model_manager, tmp_path, monkeypatch, isolated_dirs
 ):

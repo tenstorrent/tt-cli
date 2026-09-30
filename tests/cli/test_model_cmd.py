@@ -1405,6 +1405,63 @@ def test_model_list_include_unverified_degrades_when_the_hub_is_down(
     assert _community(result) == {"ns/good": True}
 
 
+def _stub_copies(monkeypatch, entries):
+    from tenstorrent.modelhub.bundles import BundleInfo
+
+    made = [BundleInfo(verified=True, **e) for e in entries]
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_verified_copies", lambda **kw: made)
+    return made
+
+
+def test_model_list_shows_tenstorrent_copies_as_verified_by_default(
+    runner, monkeypatch, isolated_dirs
+):
+    """A copy tt-model-manager's `verify` made needs no entry in the curated
+    catalog, and --json links it to the bundle it came from."""
+    _stub_bundles(monkeypatch, [{"name": "ns/good", "verified": True}])
+    _stub_copies(monkeypatch, [{"name": "Tenstorrent/Qwen3-32B", "copy_of": "ns/qwen"}])
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    assert result.exit_code == 0, result.output
+    assert _community(result) == {"ns/good": True, "Tenstorrent/Qwen3-32B": True}
+    rows = {m["name"]: m for m in _json_payload(result.output)["models"]}
+    assert rows["Tenstorrent/Qwen3-32B"]["copy_of"] == "ns/qwen"
+    assert rows["ns/good"]["copy_of"] is None
+
+
+def test_model_list_keeps_the_curated_rows_when_the_copies_cannot_be_fetched(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [{"name": "ns/good", "verified": True}])
+
+    def boom(**kw):
+        raise TTError("Could not reach the Hugging Face Hub.")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_verified_copies", boom)
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    assert result.exit_code == 0, result.output
+    assert "Tenstorrent copies skipped" in result.output
+    assert _community(result) == {"ns/good": True}
+
+
+def test_model_list_lists_a_curated_copy_once(runner, monkeypatch, isolated_dirs):
+    _stub_bundles(monkeypatch, [{"name": "Tenstorrent/x", "verified": True}])
+    _stub_copies(monkeypatch, [{"name": "tenstorrent/X", "copy_of": "ns/x"}])
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    names = [m["name"] for m in _json_payload(result.output)["models"]]
+    assert [n for n in names if n.lower() == "tenstorrent/x"] == ["Tenstorrent/x"]
+
+
+def test_model_list_offline_does_not_ask_for_copies(runner, monkeypatch, isolated_dirs):
+    _stub_bundles(monkeypatch, [])
+
+    def boom(**kw):  # pragma: no cover - must not be reached
+        raise AssertionError("asked the Hub for copies under --offline")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_verified_copies", boom)
+    result = runner.invoke(app, ["--offline", "model", "list", "--all", "--json"])
+    assert result.exit_code == 0, result.output
+
+
 def test_model_list_include_unverified_conflicts_with_catalog(runner, isolated_dirs):
     result = runner.invoke(app, ["model", "list", "--catalog", "--include-unverified"])
     assert result.exit_code == ExitCode.USAGE
