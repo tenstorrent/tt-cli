@@ -14,6 +14,12 @@ from tenstorrent.errors import ExitCode, TTError
 from tenstorrent.models.device import DeviceSnapshot, SystemSnapshot
 from tenstorrent.tools.state import ToolState
 
+# The fake suite's golden.json (TT_GOLDEN_PATH, see conftest) — read rather than
+# spelled out so a manifest bump does not leave the "already current" device behind.
+GOLDEN_FIRMWARE = json.loads(
+    (Path(__file__).parents[1] / "fakes" / "data" / "golden.json").read_text()
+)["firmware"]
+
 
 @pytest.mark.parametrize(
     ("value", "expected"),
@@ -55,7 +61,7 @@ def firmware_snapshot(monkeypatch):
     The default is already at the golden firmware; confirmation-specific tests
     replace the list entry with an older snapshot.
     """
-    snapshots = [snapshot_with_firmware("19.13.1.0")]
+    snapshots = [snapshot_with_firmware(f"{GOLDEN_FIRMWARE}.0")]
 
     class FakeDeviceBackend:
         def snapshot(self):
@@ -193,7 +199,7 @@ def test_update_older_firmware_declined_changes_nothing(
     )
     result = runner.invoke(app, ["update"], input="n\n")
     assert result.exit_code == 0, result.output
-    assert "Firmware 19.13.1 is newer" in result.output
+    assert f"Firmware {GOLDEN_FIRMWARE} is newer" in result.output
     assert "running AI model" in result.output
     assert "Continue with tt update?" in result.output
     assert not fake_uv.exists()

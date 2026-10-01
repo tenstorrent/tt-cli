@@ -226,7 +226,7 @@ def isolated_dirs(request, tmp_path, monkeypatch):
     )
     # Golden versions come from tt-sw-manifest's golden.json, which `tt update`
     # fetches at the pinned tag — a network call the fake suite must never make.
-    # Point TT_GOLDEN_PATH at a verbatim captured copy (v1.0.0) so versions are
+    # Point TT_GOLDEN_PATH at a verbatim captured copy (v3.0.0) so versions are
     # known everywhere; tests exercising the fetch/cache/unknown paths delete it.
     # Under --hardware the override stays unset so the real fetch is exercised.
     if not request.config.getoption("--hardware"):
