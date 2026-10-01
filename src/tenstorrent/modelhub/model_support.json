@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "release_version": "0.22.0",
+ "release_version": "0.23.0",
  "models": [
   {
    "name": "AFM-4.5B",
@@ -993,18 +993,18 @@
      "engines": [
       "vLLM"
      ],
-     "status": "EXPERIMENTAL",
-     "max_context": 49152,
+     "status": "COMPLETE",
+     "max_context": 262144,
      "supported": true,
-     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.18.0-c49bb76-6b4a3a7",
-     "impl_id": "tt_transformers",
-     "version": "0.18.0",
-     "tool_call_parser": "gemma4",
-     "reasoning_parser": "gemma4",
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.23.0-2fd9445-7250ddf",
+     "impl_id": "gemma4_31b_qb2",
+     "version": "0.23.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
      "override_tt_config": {
-      "fabric_config": "FABRIC_1D",
-      "trace_region_size": 200000000,
-      "sample_on_device_mode": "decode_only"
+      "sample_on_device_mode": "all",
+      "trace_region_size": 536870912,
+      "l1_small_size": 16384
      },
      "mesh_graph_desc": null,
      "serve_as": "p300x2",
@@ -1014,18 +1014,18 @@
      "engines": [
       "vLLM"
      ],
-     "status": "EXPERIMENTAL",
-     "max_context": 49152,
+     "status": "COMPLETE",
+     "max_context": 262144,
      "supported": true,
-     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.18.0-c49bb76-6b4a3a7",
-     "impl_id": "tt_transformers",
-     "version": "0.18.0",
-     "tool_call_parser": "gemma4",
-     "reasoning_parser": "gemma4",
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.23.0-2fd9445-7250ddf",
+     "impl_id": "gemma4_31b_qb2",
+     "version": "0.23.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
      "override_tt_config": {
-      "fabric_config": "FABRIC_1D",
-      "trace_region_size": 200000000,
-      "sample_on_device_mode": "decode_only"
+      "sample_on_device_mode": "all",
+      "trace_region_size": 536870912,
+      "l1_small_size": 16384
      },
      "mesh_graph_desc": null
     }
