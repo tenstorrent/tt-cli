@@ -394,7 +394,7 @@
     "p300x2"
    ],
    "validation": "separate",
-   "validated_on": null
+   "validated_on": "2026-10-01"
   },
   {
    "repo": "raahemnabeel/qwen3-coder-30b-a3b",
