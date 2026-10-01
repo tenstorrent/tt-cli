@@ -13,26 +13,26 @@ def load(name):
     return json.loads((DATA / f"snapshot_{name}.json").read_text())
 
 
-# normal/multi/empty are verbatim captures of `tt-smi -s` (tt-smi 5.3.0, QuietBox
-# with 2x P300, 2026-07-20) — real value shapes: telemetry strings with leading
+# normal/multi are verbatim captures of `tt-smi -s` (tt-smi 6.6.0, QuietBox with
+# 2x P300, 2026-10-01; empty is from tt-smi 5.3.0) — real value shapes: telemetry strings with leading
 # spaces, dram_status as a bool, pcie_speed as an int, per-asic entries.
 
 
 def test_parse_normal_snapshot():
     snap = parse_snapshot(load("normal"))
     assert snap.warnings == []
-    assert snap.host["Driver"] == "TT-KMD 2.9.0"
+    assert snap.host["Driver"] == "TT-KMD 2.10.0"
     assert len(snap.devices) == 1
     dev = snap.devices[0]
     assert dev.index == 0
     assert dev.board_type == "p300c"
     assert dev.bus_id == "0000:01:00.0"
-    assert dev.temperature_c == 33.8
-    assert dev.power_w == 13.0  # parsed from " 13.0" (leading space)
-    assert dev.aiclk_mhz == 800
+    assert dev.temperature_c == 39.1
+    assert dev.power_w == 0.0  # parsed from "  0.0" (leading spaces)
+    assert dev.aiclk_mhz == 1350
     assert dev.dram_status == "True"  # bool in the snapshot, normalized to str
     assert dev.pcie_speed == "4"  # int in the snapshot, normalized to str
-    assert dev.firmware["fw_bundle_version"] == "19.11.0.0"
+    assert dev.firmware["fw_bundle_version"] == "19.15.0.0"
 
 
 def test_parse_multi_snapshot():

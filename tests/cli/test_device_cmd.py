@@ -44,7 +44,7 @@ def test_status_json_schema(runner):
         "aiclk_mhz", "temperature_c", "firmware",
     }
     assert dev["board_type"] == "p300c"
-    assert data["host"]["Driver"] == "TT-KMD 2.9.0"
+    assert data["host"]["Driver"] == "TT-KMD 2.10.0"
 
 
 @pytest.mark.fakes_only
@@ -98,7 +98,7 @@ def test_status_missing_smi_exits_4(runner, monkeypatch):
 def test_info_shows_metadata(runner):
     result = runner.invoke(app, ["device", "info"])
     assert result.exit_code == 0
-    assert "0000046131924027" in result.output
+    assert "0000046131934118" in result.output
     assert "fw.cm_fw" in result.output
 
 
