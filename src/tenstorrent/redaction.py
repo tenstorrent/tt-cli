@@ -24,6 +24,7 @@ negative costs the user a credential.
 
 from __future__ import annotations
 
+import base64
 import bisect
 import functools
 import json
@@ -87,7 +88,8 @@ _BENIGN_FIRST = frozenset(
     "max min num total count bos eos pad unk cls sep mask eot eom sos image video "
     "audio vision start end stop special prompt completion input output decoder "
     "encoder no disable enable skip use allow require with without ignore time first "
-    "last next per inter avg mean median".split()
+    "last next per inter avg mean median forward backward second third multi single "
+    "one two render shader compile build test".split()
 )
 _VERSION_WORD = re.compile(r"v\d+")
 _KEY_KINDS = frozenset(
@@ -102,12 +104,22 @@ def _words(name: str) -> list[str]:
     return [word.lower() for word in _WORD_SPLIT.split(name) if word]
 
 
+def _unglue(word: str) -> str:
+    """secret2 -> secret; v2, b64 and plain numbers stay as they are."""
+    stem = word.rstrip("0123456789")
+    if len(stem) < 3 or stem == word or word in _QUALIFIERS or _VERSION_WORD.fullmatch(word):
+        return word
+    return stem
+
+
 @functools.lru_cache(maxsize=8192)  # a log repeats the same few hundred names
 def is_secret_name(name: str, *, flag: bool = False, query: bool = False) -> bool:
     """Whether a variable, key, header, label or flag name (without its dashes) holds
     a credential. `flag` admits --pass and --pwd; `query` admits URL parameters that
     only mean a credential there (?key=, &sig=, X-Amz-Signature=)."""
-    words = _words(name)
+    # A digit glued to a word qualifies it like a separate one: clientSecret2, TOKEN1.
+    words = [_unglue(word) for word in _words(name)]
+    compound = len(words) > 1  # before qualifiers go: pass_prod is not a lone PASS
     while len(words) > 1 and (
         words[-1] in _QUALIFIERS or words[-1].isdigit() or _VERSION_WORD.fullmatch(words[-1])
     ):
@@ -127,10 +139,12 @@ def is_secret_name(name: str, *, flag: bool = False, query: bool = False) -> boo
     if last.endswith("keys"):
         # api_keys, SSH_KEYS; not object-keys or result_keys
         return last != "keys" or any(word in _KEY_KINDS for word in words[:-1])
-    if last in ("pass", "pwd", "pw", "pat"):
-        # DB_PASS, MYSQL_PWD, GITHUB_PAT: env style only, so first_pass and the
-        # shell's own PWD keep their values.
-        return query or (flag and last != "pat") or (name.isupper() and len(words) > 1)
+    if last in ("pass", "pwd", "pw"):
+        # DB_PASS, MYSQL_PWD, slack_pass, litellmPwd. Never on its own, so the shell's
+        # PWD and a test's PASS keep their values; forward_pass is a first-word case.
+        return query or flag or compound
+    if last == "pat":
+        return query or (name.isupper() and len(words) > 1)  # GITHUB_PAT
     if last.endswith("pass"):
         return name.isupper()  # PGPASS
     return query and last in ("sig", "signature")
@@ -143,14 +157,14 @@ _EOL = re.compile(r"\r\n|[\r\n]")
 # which `re` only has from 3.11), so a name is never re-tried from its tail.
 _ASSIGNMENT = re.compile(
     r"(?<![\w.-])(?=(?P<name>[A-Za-z_][\w.-]*))(?P=name)"
-    r"(?P<keyquote>\\?[\"'])?\]?[ \t]*(?P<sep>=>|:=|=|:)[ \t]*"
+    r"(?P<keyquote>\\*[\"'])?\]?[ \t]*(?P<sep>=>|:=|=|:)[ \t]*"
 )
 # `ENV HF_TOKEN value` in a Dockerfile, and an env-style NAME, a space or a tab and
 # its value, as `env | column` or a settings table prints it. Not when the next word
 # is plain English: "HF_TOKEN is not set" keeps its words.
 _SPACED = re.compile(
     r"(?<![\w.$-])(?P<name>[A-Za-z_][\w-]*)"
-    r"(?=(?P<sep>[ \t]+)(?P<v>[^\s\"'`=:<>()\[\]{},;|&]+))"
+    r"(?=(?P<sep>[ \t]+)(?P<v>[^\s\"'`=:<>()\[\]{},;|&][^\s\"'`]*?)[,;.)\]}]*(?:\s|$))"
 )
 # A name in that position must look like an identifier, not a word of prose
 # ("token budget", "Password reset"): it has a `_` or `-`, a camelCase hump, or is
@@ -173,7 +187,7 @@ _XML = re.compile(r"<(?P<name>[A-Za-z_][\w.:-]*)(?:[ \t][^<>]*)?>(?P<v>[^<\r\n]+
 # when it is logged: "--api-key", "value" or '--api-key', 'value'.
 _FLAG = re.compile(
     r"(?<![\w.-])--?(?=(?P<name>[A-Za-z][\w.-]*))(?P=name)"
-    r"(?P<sep>=|[ \t]+|\\?[\"'][ \t]*,[ \t]*(?P<quote>\\?[\"']))"
+    r"(?P<sep>=|[ \t]+|\\*[\"'][ \t]*,[ \t]*(?P<quote>\\*[\"']))"
 )
 # An auth scheme is kept so the redacted header still says what it was.
 _SCHEME = re.compile(
@@ -181,10 +195,15 @@ _SCHEME = re.compile(
     r"Signature|SharedAccessSignature|AWS4-HMAC-SHA256)[ \t]+(?=[^\s\"'])"
 )
 _LITERALS = frozenset({"null", "none", "true", "false", "nil", "undefined"})
-_WORD_VALUE = re.compile(r"[^\s\"'`]+")
-_LINE_VALUE = re.compile(r"[^\"'`\r\n]*")
+# A value ends at whitespace, written or escaped: `\n` inside a JSON string or a
+# bytes repr ends the line it is on.
+_WORD_VALUE = re.compile(r"(?:[^\s\"'`\\]|\\(?![nrt]))+")
+_LINE_VALUE = re.compile(r"(?:[^\"'`\r\n\\]|\\(?![nrt]))*")
 _QUERY_VALUE = re.compile(r"[^&#\s\"'`<>]*")
 _CLOSERS = {"{": "}", "[": "]", "(": ")"}
+_OPENER = re.compile(r"\\*[\"']|`")
+# Terminal colour and cursor codes: `\x1b[0mHF_TOKEN=…` must still read as a name.
+_ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
 
 # user:password@ in any URL. The password may hold an unescaped `@`: the greedy group
 # backs off to the last one.
@@ -258,6 +277,8 @@ _CONTEXT_RULES = (
     ),
     # …or a `password …` line of its own, as in a multi-line .netrc entry
     re.compile(r"(?m)^[ \t]*(?:password|passwd)[ \t]+(?P<v>[^\s\"'`=:][^\s\"'`]*)[ \t]*$"),
+    # .pgpass: host:port:database:user:password
+    re.compile(r"(?m)^[^\s:#]+:(?:\d+|\*):[^\s:]+:[^\s:]+:(?P<v>\S+)[ \t]*$"),
     # proxy credentials with no scheme: --proxy user:pass@host, HTTPS_PROXY=user:pass@host
     re.compile(
         r"(?i)proxy[\w-]*(?:[ \t]*[=:][ \t]*|[ \t]+)[\"']?[^\s:@/\"']+:(?P<v>[^\s@/\"']+)@"
@@ -339,8 +360,9 @@ def _value_span(
     eol = eols.after(pos)
     if pos >= eol:
         return None
-    opener = text[pos : pos + 2] if text.startswith(("\\\"", "\\'"), pos) else text[pos]
-    if opener in ("\"", "'", "`", "\\\"", "\\'"):
+    quoted = _OPENER.match(text, pos, eol)
+    opener = quoted.group() if quoted else text[pos]
+    if quoted:  # "…", '…', `…`, and \"…\" at any depth of JSON-in-JSON escaping
         start = pos + len(opener)
         end = _closing_quote(text, start, eol, opener)
     elif opener in _CLOSERS:
@@ -411,6 +433,19 @@ def _assignment_spans(text: str, eols: _LineEnds) -> Iterator[Span]:
             pos == eol or _BLOCK_SCALAR.fullmatch(text, pos, eol)
         ):
             yield from _block_spans(text, eols, pos)
+            continue
+        outer = text[found.start() - 1] if found.start() > 0 else ""
+        if (
+            sep == "="
+            and outer in "\"'"
+            and not found.group("keyquote")
+            and not text.startswith(outer, pos)
+        ):
+            # "NAME=a value" as one quoted item (docker -e "…", an env list): the
+            # value runs to the quote that opened before the name.
+            end = _closing_quote(text, pos, eol, outer)
+            if end > pos and not text.startswith(PLACEHOLDERS, pos):
+                yield pos, end
             continue
         if sep == "=" and text[found.start("sep") - 1] in " \t" and pos > found.end("sep"):
             sep = ":"  # INI and TOML style `password = two words`: the rest of the line
@@ -622,6 +657,9 @@ def _merge(spans: Iterable[Span]) -> list[Span]:
 
 
 # -- known values -------------------------------------------------------------------------
+_PATH = re.compile(r"(?:~|\.{1,2})?/[\w./+-]*")
+
+
 def _learnable(value: str) -> bool:
     """Specific enough to scrub from everywhere once seen. Never a short word, a bare
     number, a path or a URL: replacing those everywhere would take ordinary text
@@ -630,7 +668,7 @@ def _learnable(value: str) -> bool:
         return False
     if any(value in mark or mark in value for mark in PLACEHOLDERS):
         return False
-    if value.isdigit() or value.startswith(("/", "~", "./", "../")) or "://" in value:
+    if value.isdigit() or _PATH.fullmatch(value) or "://" in value:
         return False
     return len(value) >= 16 or not value.isalpha()
 
@@ -644,7 +682,12 @@ def _forms(value: str) -> list[str]:
         quote_plus(value),
         quote_plus(value, safe="/"),
         json.dumps(value)[1:-1],
+        value.encode().hex(),
     }
+    raw = value.encode()
+    for encoded in (base64.b64encode(raw), base64.urlsafe_b64encode(raw)):
+        forms.add(encoded.decode())
+        forms.add(encoded.decode().rstrip("="))
     return sorted((form for form in forms if len(form) >= 8), key=len, reverse=True)
 
 
@@ -683,7 +726,11 @@ class Redactor:
             self.learn(value)
 
     def text(self, text: str) -> str:
-        """Redact by rule. Line breaks are never touched, so line counts survive."""
+        """Redact by rule. Line breaks are never touched, so line counts survive.
+        Terminal escape codes are dropped first: they would hide a name from the
+        rules, and a support engineer reads the bundle without a terminal anyway."""
+        if "\x1b" in text:
+            text = _ANSI.sub("", text)
         spans = _merge(_spans(text))
         if not spans:
             return text
@@ -716,7 +763,12 @@ class Redactor:
         if isinstance(value, (list, tuple)):
             if value and all(isinstance(item, str) for item in value):
                 return self.argv(list(value))
-            return [self.obj(item) for item in value]
+            # Mixed: the strings still read as one argv ([{…}, "--api-key", "v"]).
+            out_list = [None if isinstance(item, str) else self.obj(item) for item in value]
+            strings = [i for i, item in enumerate(value) if isinstance(item, str)]
+            for i, item in zip(strings, self.argv([value[i] for i in strings])):
+                out_list[i] = item
+            return out_list
         if isinstance(value, str):
             return self.text(value)
         return value

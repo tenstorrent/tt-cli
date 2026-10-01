@@ -100,6 +100,20 @@ TITLE_TOKEN = "hf_" + "TitlePastedToken" + "Y" * 20
 CUT = "s3cr3t-cut-at-th" "e-tail-93"
 
 
+# Shapes container output takes that a plain log line does not: colour codes stuck to
+# a name, a docker JSON log line, an escaped request dump, triple-escaped JSON.
+COLOURED_SECRETS = [f"fzColour{i}Value{i * 7919}q" for i in range(5)]
+COLOURED = (
+    f"\x1b[32mINFO\x1b[0mHF_TOKEN={COLOURED_SECRETS[0]}\n"
+    f"\x1b[36mapi_key\x1b[0m: {COLOURED_SECRETS[1]}\n"
+    + json.dumps({"log": f"export VLLM_API_KEY={COLOURED_SECRETS[2]}\n", "stream": "stdout"})
+    + "\nsend: b'GET / HTTP/1.1\\r\\nAuthori"
+    + f"zation: Bearer {COLOURED_SECRETS[3]}\\r\\n'\n"
+    + json.dumps(json.dumps(json.dumps({"client_secret": COLOURED_SECRETS[4]})))
+    + "\n"
+)
+
+
 def _plant(tmp_path: Path, monkeypatch) -> tuple[list[str], list[str]]:
     """Plant everything; return (secrets that must vanish, controls that must stay)."""
     secrets: list[str] = []
@@ -250,7 +264,7 @@ def _plant(tmp_path: Path, monkeypatch) -> tuple[list[str], list[str]]:
         json.dumps(
             {
                 "aaaaaaaaaaaa": {
-                    "stdout": corpus_text + f"jwt in use {JWT_HEX}\n",
+                    "stdout": corpus_text + f"jwt in use {JWT_HEX}\n" + COLOURED,
                     "stderr": "ERROR: " "login(token=" "'s3cr3t-ctr-stderr-125') failed\n"
                     f"studio secret printed bare: " f"{DJANGO}\n",
                 }
@@ -258,6 +272,7 @@ def _plant(tmp_path: Path, monkeypatch) -> tuple[list[str], list[str]]:
         ),
     )
     secrets.append("s3cr3t-ctr-stderr-125")
+    secrets += COLOURED_SECRETS
     controls.append("MODEL=" "Qwen/Qwen3-8B")
     return sorted(set(secrets)), controls
 
