@@ -83,6 +83,10 @@ OUTPUT_PATH = MODELHUB / "model_support.json"
 SUPPORT_SCHEMA_VERSION = 1
 OVERRIDES_SCHEMA_VERSION = 1
 VALID_REASONS = ("broken", "unsupported")
+# docker_image / override_tt_config become run.py flags of their own; the parsers
+# replace the spec's metadata, which tt already turns into --vllm-override-args.
+SERVE_OVERRIDE_KEYS = ("docker_image", "override_tt_config", "tool_call_parser", "reasoning_parser")
+_PARSER_KEYS = ("tool_call_parser", "reasoning_parser")
 
 
 class BuildError(Exception):
@@ -164,10 +168,10 @@ def load_overrides(path: Path) -> Overrides:
     for entry in serve:
         if not entry.get("model") or not entry.get("details"):
             raise BuildError(f"{path.name}: serve_override {entry!r} needs model and details.")
-        if not (entry.get("docker_image") or entry.get("override_tt_config")):
+        if not any(entry.get(key) for key in SERVE_OVERRIDE_KEYS):
             raise BuildError(
                 f"{path.name}: serve_override for {entry['model']} sets nothing; "
-                "give it a docker_image or an override_tt_config."
+                f"give it one of {', '.join(SERVE_OVERRIDE_KEYS)}."
             )
     return Overrides(marks=entries, fallbacks=fallbacks, serve=serve)
 
@@ -413,11 +417,20 @@ def apply_serve_overrides(
                 f"{entry['model']}: serve_override device {device!r} is not one of its "
                 f"devices {sorted(model['devices'])}.{hint}"
             )
-        applied = {
-            key: entry[key] for key in ("docker_image", "override_tt_config") if entry.get(key)
-        }
+        applied = {key: entry[key] for key in SERVE_OVERRIDE_KEYS if entry.get(key)}
         for target in targets:
-            model["devices"][target]["serve_overrides"] = applied
+            record = model["devices"][target]
+            for key in _PARSER_KEYS:
+                if key not in applied:
+                    continue
+                # Upstream shipping its own parser is the signal to drop the entry.
+                if record[key]:
+                    warnings.append(
+                        f"{entry['model']} / {target}: the spec now sets {key} "
+                        f"{record[key]!r}; the serve_override for it can be removed."
+                    )
+                record[key] = applied[key]
+            record["serve_overrides"] = applied
     return warnings
 
 

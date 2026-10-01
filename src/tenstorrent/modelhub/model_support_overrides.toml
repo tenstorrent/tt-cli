@@ -209,6 +209,9 @@ quarters of the board rather than fix anything."""
 # Only what run.py can express:
 #   docker_image       -> --override-docker-image
 #   override_tt_config -> --override-tt-config  (vLLM only, see below)
+#   tool_call_parser   -> --vllm-override-args, with enable-auto-tool-choice
+#   reasoning_parser   -> --vllm-override-args  (both replace the spec's
+#                         metadata; the build warns once the spec has its own)
 #
 # NOT here, deliberately:
 #   * Llama-3.3-70B-Instruct / p150x4 trace region. tt-studio carries one, but it
@@ -247,3 +250,18 @@ docker_image = "ghcr.io/tenstorrent/tt-media-inference-server:0.18.0-c49bb76"
 verified_on = "2026-08-14"
 source = "tt-studio"
 details = "The p150x4 spec resolves to 0.10.0-555f240, whose API tt cannot drive."
+
+[[serve_override]]
+model = "gemma-4-31B-it"
+tool_call_parser = "gemma4"
+reasoning_parser = "gemma4"
+verified_on = "2026-10-01"
+source = "tt-cli"
+details = """
+tt-inference-server v0.23.0 (#5212) made the gemma4_31b_qb2 impl the default on \
+p300x2, and its spec entry carries no tool-call parser (metadata is empty; \
+vllm_args set only reasoning-parser), so tt would start it without \
+--enable-auto-tool-choice and tool_choice "auto" requests get empty replies. \
+Verified on p300x2: tool calls parse (streamed and not), tool results round-trip, \
+and plain prompts are unaffected. p150x4 borrows p300x2, so this covers both. \
+Remove once the qb2 entry sets tool_call_parser_name upstream."""

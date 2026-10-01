@@ -38,7 +38,7 @@ url = "https://github.com/tenstorrent/tt-installer/releases/download/v3.6.1/inst
 # (e.g. to downgrade the system stack). Only the golden version is sha256-pinned;
 # user-requested versions are fetched unpinned (with a warning).
 url_template = "https://github.com/tenstorrent/tt-installer/releases/download/v{version}/install.sh"
-# sha256 of the released v3.5.4 asset (pinned 2026-08-18; matches GitHub's
+# sha256 of the released v3.6.1 asset (pinned 2026-10-01; matches GitHub's
 # published asset digest for the release).
 sha256 = "c90c17139f33e796b4141400de0a2da17be39f4a787292c05ccb2a2d13ee3fab"
 needs_sudo = true # install.sh sudo's internally
