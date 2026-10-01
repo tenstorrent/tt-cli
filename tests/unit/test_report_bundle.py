@@ -11,6 +11,7 @@ from __future__ import annotations
 # secret scanners that read this source (GitHub push protection, Cycode) do not take
 # the fake credentials for real ones. Python joins the pieces into the same strings.
 
+import hashlib
 import os
 from types import SimpleNamespace
 
@@ -25,6 +26,9 @@ from tenstorrent.commands.report_bundle import (
     known_secrets,
 )
 from tenstorrent.redaction import Redactor
+
+# A fake hex JWT_SECRET, derived so that no hex literal sits in the source.
+FAKE_HEX = hashlib.sha256(b"tt-cli test jwt secret").hexdigest()[:32]
 
 
 def test_tail_bytes_truncates_from_the_end(tmp_path):
@@ -67,14 +71,14 @@ def test_dotenv_secrets_takes_only_credential_names(tmp_path):
     env.write_text(
         "# comment\n"
         "HF_TOKEN=" "hf_dote" "nv_value_1234567890\n"
-        'export JWT_SECRET=' '"ab12cd34ef56ab12' 'cd34ef56ab12cd34"\n'
+        f'export JWT_SECRET="{FAKE_HEX}"\n'
         "DJANGO_SECRET_KEY=" "'django-value-123'\n"
         "TT_STUDIO_ROOT=" "/" "home/me/tt-studio\n"
         "EMPTY_TOKEN=" "\n"
     )
     assert _dotenv_secrets(env) == [
         "hf_dotenv_value_" "1234567890",
-        "ab12cd34ef56ab12" "cd34ef56ab12cd34",
+        FAKE_HEX,
         "django-value-123",
         "",
     ]

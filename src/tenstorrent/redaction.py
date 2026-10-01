@@ -29,6 +29,7 @@ import bisect
 import functools
 import json
 import math
+import os
 import re
 from collections import Counter
 from typing import Any, Callable, Iterable, Iterator
@@ -657,18 +658,28 @@ def _merge(spans: Iterable[Span]) -> list[Span]:
 
 
 # -- known values -------------------------------------------------------------------------
-_PATH = re.compile(r"(?:~|\.{1,2})?/[\w./+-]*")
+def _names_a_file(value: str) -> bool:
+    """A credential variable that points at a key file (GOOGLE_APPLICATION_CREDENTIALS
+    =/home/me/key.json) names the secret rather than holding it; the path itself
+    stays readable everywhere else. Anything else that merely looks like a path, a
+    password starting with `/`, is learned like any other value."""
+    if not value.startswith(("/", "~", "./", "../")):
+        return False
+    try:
+        return os.path.exists(os.path.expanduser(value))
+    except (OSError, ValueError):
+        return False
 
 
 def _learnable(value: str) -> bool:
     """Specific enough to scrub from everywhere once seen. Never a short word, a bare
-    number, a path or a URL: replacing those everywhere would take ordinary text
-    down with them."""
+    number or the path of an existing file: replacing those everywhere would take
+    ordinary text down with them."""
     if len(value) < 8 or "\n" in value:
         return False
     if any(value in mark or mark in value for mark in PLACEHOLDERS):
         return False
-    if value.isdigit() or _PATH.fullmatch(value) or "://" in value:
+    if value.isdigit() or _names_a_file(value):
         return False
     return len(value) >= 16 or not value.isalpha()
 

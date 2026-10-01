@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import email
+import hashlib
 import importlib.util
 import io
 import json
@@ -91,7 +92,7 @@ def _retest_lines() -> list[tuple[str, list[str]]]:
 # Values that only the machine-wide "known secrets" pass can catch: no rule can tell
 # a bare hex JWT_SECRET from a hash, so each is labelled in one place and printed
 # bare in another.
-JWT_HEX = "9f8e7d6c5b4a3928" "1706f5e4d3c2b1a0" "9f8e7d6c5b4a3928" "1706f5e4d3c2b1a0"
+JWT_HEX = hashlib.sha256(b"tt-cli e2e jwt secret").hexdigest()
 DJANGO = "django-insecure-" "s3cr3tDjangoKey77"
 HF_LOGIN = "hf_" + "LoginStoreToken" + "Z" * 20
 SHELL_PASS = "s3cr3t-shell-pas" "s-bare-91"

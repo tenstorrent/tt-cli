@@ -21,6 +21,7 @@ from __future__ import annotations
 # secret scanners that read this source (GitHub push protection, Cycode) do not take
 # the fake credentials for real ones. Python joins the pieces into the same strings.
 
+import hashlib
 import itertools
 import json
 import re
@@ -44,6 +45,8 @@ def _leaks(text: str, secrets: list[str], known: tuple[str, ...] = ()) -> list[s
 
 # Fake provider tokens are assembled at import time: written out whole, GitHub's push
 # protection takes them for real ones and refuses the push.
+# A fake 64-char hex JWT_SECRET, derived so that no hex literal sits in the source.
+FAKE_HEX = hashlib.sha256(b"tt-cli test jwt secret").hexdigest()
 SLACK_BOT = "xo" + "xb-1234567890-09" "87654321-SlackBo" "tPPPPPPPPPP"
 AWS_KEY_ID = "AK" + "IAIOSFODNN7EXAMPLQ"
 
@@ -269,7 +272,7 @@ GRID_VALUES = [
     "p" "@ss:" "w0rd/with,comma;semi",
     "abc+/def=" "=",
     "Zm9vYmFyYmF6cXV4",
-    "ab12cd34ef56ab12" "cd34ef56ab12cd34" "ef56ab12cd34ef56" "ab12cd34ef56ab12",  # a JWT_SECRET's hex
+    FAKE_HEX,  # a JWT_SECRET's hex
     "hunter22",
     "x-y_z.1-2_3",
     "1234567890",
@@ -485,7 +488,7 @@ def test_argv_after_login_and_secret_flags():
 # -- known values -------------------------------------------------------------------------
 def test_a_value_learned_once_is_gone_everywhere():
     """The JWT hex labelled in one file and printed bare in another."""
-    hexed = "ab12cd34ef56ab12" "cd34ef56ab12cd34" "ef56ab12cd34ef56" "ab12cd34ef56ab12"
+    hexed = FAKE_HEX
     redactor = Redactor()
     first = redactor.text(f"JWT_SECRET=" f"{hexed}")
     second = redactor.text(f"signing with {hexed} now")
@@ -507,10 +510,20 @@ def test_known_values_in_every_encoding():
         assert redactor.final(text).count("w0rd") == 0, text
 
 
-def test_known_values_skip_what_would_wreck_ordinary_text():
-    redactor = Redactor(["true", "1", "8000", "/home/me", "short", "https:" "//x.example", "<set>"])
-    text = "true 1 8000 /home/me short https:" "//x.example <set>"
+def test_known_values_skip_what_would_wreck_ordinary_text(tmp_path):
+    key_file = tmp_path / "service-account.json"
+    key_file.write_text("{}")
+    redactor = Redactor(["true", "1", "8000", "12345678", "short", "<set>", str(key_file)])
+    text = f"true 1 8000 12345678 short <set> {key_file}"
     assert redactor.final(text) == text
+
+
+def test_known_urls_and_path_shaped_values_are_learned():
+    """From a secret-named variable, a URL is a webhook or a DSN, and a `/…` value
+    that names no file is a password."""
+    webhook = "https:" "//hooks.example/T000/B000/fakeWebhookPath42"
+    for value in (webhook, "/C.ozeEXAJqI", "/JsdoAU3BKBW+vtY", "/home/nobody/not-a-file-x"):
+        assert value not in Redactor([value]).final(f"posting to {value} now")
 
 
 # -- what must survive --------------------------------------------------------------------
