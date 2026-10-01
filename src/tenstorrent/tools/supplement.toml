@@ -21,8 +21,9 @@ url_template = "https://github.com/tenstorrent/tt-sw-manifest/releases/download/
 kind = "script"
 # Supports --versions=<channel|.ttis path>; the older --import-schema flag is gone.
 # Flag contract (--mode-non-interactive, --versions, --reboot-option,
-# --update-firmware=force) re-verified against the v3.5.4 script on 2026-08-18
-# (unchanged; --use-uv/--python-version=3.12/--update-firmware=force are now the
+# --no-install-inference-server, --no-install-studio, --use-uv, --python-version,
+# --update-firmware=on|force) re-verified against the v3.6.1 script on 2026-10-01
+# (unchanged; --use-uv/--python-version=3.12/--update-firmware=force are still the
 # upstream defaults). tt-cli explicitly passes --update-firmware=on for a normal
 # update so current or newer firmware is never reflashed; --force opts back into
 # the upstream force behavior.
