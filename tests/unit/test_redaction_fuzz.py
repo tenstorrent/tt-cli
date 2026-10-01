@@ -42,17 +42,20 @@ class _Seeded:
         word, self._pool = self._pool[:8], self._pool[8:]
         return int.from_bytes(word, "big")
 
-    def random(self) -> float:
+    def fraction(self) -> float:
+        """In [0, 1)."""
         return self._draw() / 2**64
 
-    def randrange(self, stop: int) -> int:
+    def below(self, stop: int) -> int:
+        """In [0, stop)."""
         return self._draw() % stop
 
-    def randint(self, low: int, high: int) -> int:
-        return low + self.randrange(high - low + 1)
+    def between(self, low: int, high: int) -> int:
+        """In [low, high]."""
+        return low + self.below(high - low + 1)
 
-    def choice(self, items):
-        return items[self.randrange(len(items))]
+    def pick(self, items):
+        return items[self.below(len(items))]
 
 
 def _scrub(text: str, known: tuple[str, ...] = ()) -> str:
@@ -89,11 +92,11 @@ _CONTEXTS = ["", "2026-10-01 12:00:00,123 INFO ", "app-1  | ", "[2026-10-01T12:0
 _ENDINGS = ["", " ", " done", "\r", " \x1b[0m", ", next=1"]
 
 
-def _name(rng: _Seeded) -> str:
-    raw = "_".join(w for w in (rng.choice(_PREFIXES), rng.choice(_CORES)) if w)
-    raw += rng.choice(_SUFFIXES)
+def _name(stream: _Seeded) -> str:
+    raw = "_".join(w for w in (stream.pick(_PREFIXES), stream.pick(_CORES)) if w)
+    raw += stream.pick(_SUFFIXES)
     parts = raw.lower().split("_")
-    style = rng.choice(["upper", "lower", "camel", "pascal", "kebab", "header"])
+    style = stream.pick(["upper", "lower", "camel", "pascal", "kebab", "header"])
     if style == "upper":
         return raw
     if style == "lower":
@@ -107,17 +110,17 @@ def _name(rng: _Seeded) -> str:
     return "-".join(p.title() for p in parts)
 
 
-def _value(rng: _Seeded, quoted: bool) -> str:
+def _value(stream: _Seeded, quoted: bool) -> str:
     alphabet = _SAFE * 3 + (_QUOTED_SYMBOLS if quoted else _SYMBOLS)
-    middle = "".join(rng.choice(alphabet) for _ in range(rng.randint(6, 46)))
-    return rng.choice(_SAFE) + middle + rng.choice(_SAFE)
+    middle = "".join(stream.pick(alphabet) for _ in range(stream.between(6, 46)))
+    return stream.pick(_SAFE) + middle + stream.pick(_SAFE)
 
 
 def _cases(seed: int, count: int):
-    rng = _Seeded(seed)
+    stream = _Seeded(seed)
     while count:
-        syntax, quoted = rng.choice(_SYNTAXES)
-        name, value = _name(rng), _value(rng, quoted)
+        syntax, quoted = stream.pick(_SYNTAXES)
+        name, value = _name(stream), _value(stream, quoted)
         if quoted:
             quote_mark = '"' if '"{v}"' in syntax else "'"
             value = value.replace(quote_mark, "")
@@ -129,10 +132,10 @@ def _cases(seed: int, count: int):
             continue  # a lone PASS / PWD is the shell's or a test's, by design
         if syntax.startswith(("--{n}", '["--')) and not re.fullmatch(r"[A-Za-z][\w.-]*", name):
             continue
-        context = rng.choice(_CONTEXTS)
+        context = stream.pick(_CONTEXTS)
         if "\n" in syntax and context.strip() == "" and context:
             continue  # a key indented past its own value is not YAML
-        yield context + syntax.format(n=name, v=value) + rng.choice(_ENDINGS), value
+        yield context + syntax.format(n=name, v=value) + stream.pick(_ENDINGS), value
         count -= 1
 
 
@@ -153,11 +156,11 @@ def test_fuzz_names_syntaxes_values_and_contexts(seed):
 
 def test_fuzz_known_values_in_every_encoding():
     """A value found on the machine, however odd its characters, goes in every form."""
-    rng = _Seeded(7)
+    stream = _Seeded(7)
     alphabet = _SAFE + "-_.+/=@%!*~^$&:;,?#[]{}()<>| "
     failures = []
     for _ in range(3000):
-        value = "".join(rng.choice(alphabet) for _ in range(rng.randint(10, 40))).strip()
+        value = "".join(stream.pick(alphabet) for _ in range(stream.between(10, 40))).strip()
         if len(value) < 10 or value.isalpha():
             continue
         forms = [
@@ -175,31 +178,31 @@ _JSON_NAMES = ["api_key", "password", "token", "HF_TOKEN", "clientSecret", "auth
                "privateKey", "x-api-key", "Authorization", "refresh_token", "DB_PASS"]
 
 
-def _document(rng: _Seeded, depth: int, planted: list[str]):
+def _document(stream: _Seeded, depth: int, planted: list[str]):
     def fresh(kind: str) -> str:
-        value = f"fz{kind}{rng.randrange(10**12)}q"
+        value = f"fz{kind}{stream.below(10**12)}q"
         planted.append(value)
         return value
 
-    if depth == 0 or rng.random() < 0.25:
-        return rng.choice([f"plain{rng.randrange(99)}", rng.randrange(10**6), True, None])
-    if rng.random() < 0.5:
+    if depth == 0 or stream.fraction() < 0.25:
+        return stream.pick([f"plain{stream.below(99)}", stream.below(10**6), True, None])
+    if stream.fraction() < 0.5:
         out: dict = {}
-        for _ in range(rng.randint(1, 4)):
-            if rng.random() < 0.4:
+        for _ in range(stream.between(1, 4)):
+            if stream.fraction() < 0.4:
                 value = fresh("Key")
-                out[rng.choice(_JSON_NAMES)] = rng.choice(
+                out[stream.pick(_JSON_NAMES)] = stream.pick(
                     [value, [value], {"value": value}, f"Bearer {value}"]
                 )
             else:
-                out[f"field{rng.randrange(99)}"] = _document(rng, depth - 1, planted)
+                out[f"field{stream.below(99)}"] = _document(stream, depth - 1, planted)
         return out
-    items = [_document(rng, depth - 1, planted) for _ in range(rng.randint(0, 3))]
-    if rng.random() < 0.4:
-        items.append(f"{rng.choice(['HF_TOKEN', 'API_KEY', 'DB_PASSWORD'])}={fresh('Env')}")
-    if rng.random() < 0.4:
-        items += [rng.choice(["--api-key", "--hf-token", "--password"]), fresh("Arg")]
-    if rng.random() < 0.2:
+    items = [_document(stream, depth - 1, planted) for _ in range(stream.between(0, 3))]
+    if stream.fraction() < 0.4:
+        items.append(f"{stream.pick(['HF_TOKEN', 'API_KEY', 'DB_PASSWORD'])}={fresh('Env')}")
+    if stream.fraction() < 0.4:
+        items += [stream.pick(["--api-key", "--hf-token", "--password"]), fresh("Arg")]
+    if stream.fraction() < 0.2:
         items.append("curl -H 'Authori" f"zation: Bearer {fresh('Hdr')}' x")
     return items
 
@@ -207,11 +210,11 @@ def _document(rng: _Seeded, depth: int, planted: list[str]):
 def test_fuzz_nested_json_documents():
     """Secrets at any depth of an inspect-record-like document: under a credential
     key, in env lists, after argv flags, in header strings, in mixed lists."""
-    rng = _Seeded(11)
+    stream = _Seeded(11)
     failures = []
     for _ in range(2000):
         planted: list[str] = []
-        doc = _document(rng, 5, planted)
+        doc = _document(stream, 5, planted)
         redactor = Redactor()
         out = redactor.final(json.dumps(redactor.obj(doc)))
         leaked = [value for value in planted if value in out]
