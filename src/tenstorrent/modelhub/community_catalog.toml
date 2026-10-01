@@ -293,6 +293,14 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
+repo = "raahemnabeel/qwen3-5-122b-a10b-blackholex4"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x4", "p300x2"]
+validation = "separate"
+validated_on = "2026-10-01"
+
+[[bundle]]
 repo = "raahemnabeel/qwen3-coder-30b-a3b"
 kind = "container"
 engine = "vllm-plugin"
