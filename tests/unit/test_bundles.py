@@ -294,6 +294,22 @@ def test_a_missing_community_catalog_override_is_a_config_error(tmp_path, monkey
 
 
 # -- unverified bundles (the Hub's community catalog) -------------------------------
+def _hub_down(self, **kw):
+    """What the pinned huggingface_hub raises with no network: an httpx2 error
+    (httpx on 1.x), which is not an OSError."""
+    import httpx2
+
+    raise httpx2.ConnectError("[Errno 111] Connection refused")
+
+
+@pytest.mark.parametrize("module", ["httpx", "httpx2"])
+def test_hub_transport_errors_cover_each_http_stack(module):
+    """huggingface_hub 1.x raises httpx errors and 2.x httpx2 errors; neither is
+    an OSError, so the listing must name both."""
+    lib = pytest.importorskip(module)
+    assert issubclass(lib.ConnectError, bundles._transport_errors())
+
+
 class _HubRepo:
     def __init__(self, id, tags, downloads=0):
         self.id, self.tags, self.downloads = id, tags, downloads
@@ -340,11 +356,7 @@ def test_search_unverified_is_a_tt_error_when_the_hub_is_unreachable(
     from tenstorrent.errors import TTError
 
     curated_catalog()
-
-    def boom(self, **kw):
-        raise OSError("network down")
-
-    monkeypatch.setattr("huggingface_hub.HfApi.list_models", boom)
+    monkeypatch.setattr("huggingface_hub.HfApi.list_models", _hub_down)
     with pytest.raises(TTError, match="Could not reach the Hugging Face Hub"):
         bundles.search_unverified()
 
@@ -418,10 +430,7 @@ def test_search_unverified_leaves_out_tenstorrent_copies(curated_catalog, monkey
 def test_search_verified_copies_is_a_tt_error_when_the_hub_is_unreachable(monkeypatch):
     from tenstorrent.errors import TTError
 
-    def boom(self, **kw):
-        raise OSError("network down")
-
-    monkeypatch.setattr("huggingface_hub.HfApi.list_models", boom)
+    monkeypatch.setattr("huggingface_hub.HfApi.list_models", _hub_down)
     with pytest.raises(TTError, match="Could not reach the Hugging Face Hub"):
         _real_copies()
 

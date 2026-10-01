@@ -9,6 +9,12 @@ import pytest
 from tenstorrent.cli import app
 from tenstorrent.errors import ExitCode, TTError
 
+# The real Hub listings: autouse stubs replace the module attributes to keep the
+# suite offline, and the outage tests need the real ones back.
+from tenstorrent.modelhub.bundles import search_community as _real_community
+from tenstorrent.modelhub.bundles import search_unverified as _real_unverified
+from tenstorrent.modelhub.bundles import search_verified_copies as _real_copies
+
 
 
 @pytest.fixture(autouse=True)
@@ -1449,6 +1455,33 @@ def test_model_list_lists_a_curated_copy_once(runner, monkeypatch, isolated_dirs
     result = runner.invoke(app, ["model", "list", "--all", "--json"])
     names = [m["name"] for m in _json_payload(result.output)["models"]]
     assert [n for n in names if n.lower() == "tenstorrent/x"] == ["Tenstorrent/x"]
+
+
+@pytest.mark.parametrize("module", ["httpx", "httpx2"])
+@pytest.mark.parametrize("flags", [[], ["--include-unverified"]])
+def test_model_list_survives_a_hub_outage(
+    runner, monkeypatch, curated_catalog, isolated_dirs, flags, module
+):
+    """huggingface_hub raises httpx (1.x) or httpx2 (2.x) errors, not OSErrors,
+    when the Hub is unreachable. The listing keeps the catalog and the curated
+    rows and warns."""
+    lib = pytest.importorskip(module)
+
+    from tenstorrent.modelhub import bundles
+
+    def down(self, **kw):
+        raise lib.ConnectError("[Errno 111] Connection refused")
+
+    curated_catalog("ns/good")
+    monkeypatch.setattr(bundles, "search_community", _real_community)
+    monkeypatch.setattr(bundles, "search_unverified", _real_unverified)
+    monkeypatch.setattr(bundles, "search_verified_copies", _real_copies)
+    monkeypatch.setattr("huggingface_hub.HfApi.list_models", down)
+    result = runner.invoke(app, ["model", "list", "--all", *flags, "--json"])
+    assert result.exit_code == 0, result.output
+    assert "Could not reach the Hugging Face Hub" in result.output
+    assert _community(result) == {"ns/good": True}
+    assert any(m["source"] == "tt-inference-server" for m in _json_payload(result.output)["models"])
 
 
 def test_model_list_offline_does_not_ask_for_copies(runner, monkeypatch, isolated_dirs):

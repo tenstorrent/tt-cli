@@ -271,47 +271,38 @@ def list_models(
     community: bool = typer.Option(
         False,
         "--community",
-        help="Only community bundles (Hub + local installs) — skip the released "
-        "catalog. Community bundles are models anyone has packaged with "
-        "tt-model-manager and published on the Hugging Face Hub; they are not "
-        "tested or maintained by Tenstorrent. The opposite of --catalog.",
+        help="Only community bundles (on the Hub or installed here). The "
+        "opposite of --catalog.",
     ),
     catalog_only: bool = typer.Option(
         False,
         "--catalog",
-        help="Only the released model catalog (tt-inference-server) — skip "
-        "community bundles. The opposite of --community.",
+        help="Only the released catalog. The opposite of --community.",
     ),
     include_unverified: bool = typer.Option(
         False,
         "--include-unverified",
-        help="Also list community bundles on the Hub that are not verified, "
-        "with a verified column. They serve only after a confirmation prompt.",
+        help="Also list community bundles Tenstorrent has not verified, with a "
+        "verified column.",
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """Browse models that run on this machine: the released catalog plus
-    community tt-model bundles from the Hub (default: detected hardware only).
+    """Browse models that run on this machine (or every device with --all).
 
-    source: `tt-inference-server` is the released catalog — models Tenstorrent
-    ships and tests, with known per-device support (`tt model info NAME` for
-    details); `HuggingFace` is the community catalog on the Hub — bundles
-    anyone has packaged with tt-model-manager, not tested or maintained by
-    Tenstorrent; `local` is installed here — a bundle on both shows up twice,
-    once per source. Pass --catalog or --community to see just one source.
-    verified: only verified community bundles are listed by default: the
-    curated catalog, plus copies Tenstorrent reviewed into its Hugging Face org
-    (`--json` gives each copy's original as `copy_of`). --include-unverified
-    adds the rest of the Hub's community catalog, with a verified column.
-    Unverified bundles serve only after a confirmation prompt.
-    profiles: the board/mesh target(s) a model supports, collapsed to the
-    smallest tag per capability (a bigger board that adds nothing over a
-    smaller one is left out). Every entry serves with `tt serve <name>`
-    (`tt serve <namespace>/<name>` for a bundle); weights are referenced
-    rather than shipped."""
+    Two sources: the released catalog, which Tenstorrent ships and tests, and
+    community bundles packaged with tt-model-manager, from the Hugging Face Hub
+    or installed here. A bundle that is both is listed once per source.
+
+    Only verified community bundles are listed by default: those in
+    Tenstorrent's curated list, and copies Tenstorrent reviewed into its own
+    Hugging Face org. --include-unverified adds the rest. An unverified bundle
+    asks for confirmation before it serves.
+
+    Serving profiles are the smallest board or mesh each capability needs.
+    Serve any row with `tt serve <name>`; `tt model info <name>` has details."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     if community and catalog_only:

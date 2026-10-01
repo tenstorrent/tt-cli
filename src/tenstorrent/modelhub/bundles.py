@@ -524,6 +524,22 @@ def _listed_repos(query: str | None, limit: int) -> list[_ListedRepo]:
     return [repo for repo in _load_curated() if wanted in repo.id.lower()][:limit]
 
 
+def _transport_errors() -> tuple[type[Exception], ...]:
+    """What huggingface_hub raises when it cannot reach the Hub at all.
+
+    `huggingface_hub>=0.23` spans three HTTP stacks: requests (0.x, whose errors
+    are OSErrors), httpx (1.x) and httpx2 (2.x). Neither httpx's errors nor
+    httpx2's are OSErrors, so each is caught by name when it is installed;
+    otherwise an outage escapes as a traceback."""
+    errors: list[type[Exception]] = []
+    for module in ("httpx", "httpx2"):
+        try:
+            errors.append(__import__(module).HTTPError)
+        except (ImportError, AttributeError):
+            pass
+    return tuple(errors)
+
+
 def _hub_repos(
     query: str | None, limit: int, *, author: str | None = None
 ) -> list[_ListedRepo]:
@@ -544,7 +560,7 @@ def _hub_repos(
                 cardData=author is not None,
             )
         )
-    except (HfHubHTTPError, OSError) as exc:
+    except (HfHubHTTPError, OSError, *_transport_errors()) as exc:
         raise TTError(
             "Could not reach the Hugging Face Hub.",
             why=str(exc),
