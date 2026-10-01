@@ -385,6 +385,18 @@
    "validated_on": "2026-09-25"
   },
   {
+   "repo": "raahemnabeel/qwen3-5-122b-a10b-blackholex4",
+   "kind": "container",
+   "engine": "vllm-plugin",
+   "arch": "blackhole",
+   "hardware": [
+    "p150x4",
+    "p300x2"
+   ],
+   "validation": "separate",
+   "validated_on": "2026-10-01"
+  },
+  {
    "repo": "raahemnabeel/qwen3-coder-30b-a3b",
    "kind": "container",
    "engine": "vllm-plugin",

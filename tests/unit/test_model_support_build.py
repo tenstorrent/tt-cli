@@ -289,6 +289,33 @@ def test_a_serve_override_without_a_device_applies_to_every_board():
     assert all(d["serve_overrides"] for d in _devices(document, "Media-1").values())
 
 
+def test_a_serve_override_supplies_a_parser_the_spec_left_out():
+    """tt turns the parser fields into --vllm-override-args, so filling them is all
+    it takes to start the server with auto tool choice."""
+    entry = {
+        "model": "Media-1",
+        "tool_call_parser": "gemma4",
+        "reasoning_parser": "gemma4",
+        "details": "Spec entry has no parser metadata.",
+    }
+    document, warnings = build.build_document(SPEC, build.Overrides(serve=[entry]))
+    assert warnings == []
+    for record in _devices(document, "Media-1").values():
+        assert record["tool_call_parser"] == "gemma4"
+        assert record["reasoning_parser"] == "gemma4"
+        assert record["serve_overrides"] == {
+            "tool_call_parser": "gemma4",
+            "reasoning_parser": "gemma4",
+        }
+
+
+def test_a_parser_override_warns_once_the_spec_ships_its_own():
+    entry = {"model": "Demo-8B", "device": "t3k", "tool_call_parser": "hermes", "details": "x"}
+    document, warnings = build.build_document(SPEC, build.Overrides(serve=[entry]))
+    assert _devices(document, "Demo-8B")["t3k"]["tool_call_parser"] == "hermes"
+    assert any("can be removed" in w for w in warnings)
+
+
 def test_a_serve_override_that_sets_nothing_is_rejected(tmp_path):
     path = tmp_path / "o.toml"
     path.write_text(
