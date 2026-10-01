@@ -299,8 +299,9 @@ def report_bundle(
     """Collect a support bundle and open a pre-filled email to Tenstorrent support with it attached.
 
     The bundle holds environment, tt-smi snapshot, config, tt and inference-server
-    logs and container logs; known secrets (tokens, API keys, passwords, JWT_SECRET, telemetry keys)
-    are redacted. It keeps hostnames and local paths, so it is meant for
+    logs and container logs. Secrets (tokens, API keys, passwords, private keys, credentials
+    in URLs, and any credential found on this machine) are redacted from the archive, the
+    email and the output. It keeps hostnames and local paths, so it is meant for
     support@tenstorrent.com, not a public issue. Every source that is missing or
     broken is noted in manifest.json instead of failing the command.
 
@@ -310,7 +311,7 @@ def report_bundle(
     triage assignee. --json prints the details and never opens anything.
     """
     from . import report_email
-    from .report_bundle import default_output_path, write_bundle
+    from .report_bundle import default_output_path, make_redactor, scrub, write_bundle
 
     appctx = get_app_context(ctx)
     out = appctx.output
@@ -321,20 +322,27 @@ def report_bundle(
         title = typer.prompt(
             "Subject for the support email", default=report_email.DEFAULT_TITLE
         )
-    title = report_email.clean_title(title)
-
     out.status("Collecting environment, config, logs and container output …")
     archive = output or default_output_path(ref)
-    payload = write_bundle(appctx, archive, ref=ref)
+    # One redactor for the bundle and the email: a value it removed from a log is
+    # also removed from a title pasted out of the same failing command.
+    redactor = make_redactor(appctx)
+    payload = write_bundle(appctx, archive, ref=ref, redactor=redactor)
 
+    # The title goes into the subject, the .eml body and the mailto: link, and a
+    # title pasted from a failing command can carry its token into all three.
+    title = report_email.clean_title(scrub(redactor, report_email.clean_title(title)))
     assignee = report_email.assignee_for_date()
     subject = report_email.build_subject(title, ref)
-    body = report_email.build_body(
-        ref=ref,
-        assignee=assignee,
-        title=title,
-        environment_lines=_environment_lines(appctx),
-        archive_name=archive.name,
+    body = scrub(
+        redactor,
+        report_email.build_body(
+            ref=ref,
+            assignee=assignee,
+            title=title,
+            environment_lines=_environment_lines(appctx),
+            archive_name=archive.name,
+        ),
     )
     mailto_url = report_email.build_mailto_url(subject, body, archive.name)
     eml = report_email.eml_path_for(archive, ref)

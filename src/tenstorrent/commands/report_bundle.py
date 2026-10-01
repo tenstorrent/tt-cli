@@ -5,7 +5,9 @@
 
 Every collector is fenced: a broken stack is exactly when someone needs a bundle,
 so a source that fails becomes a note in manifest.json instead of a failed command.
-Every text member passes through redact() before it is written. Unlike
+Collectors return raw content; write_bundle redacts every member with one shared
+Redactor (see redaction.py) before anything is written, and leaves out a member it
+cannot redact rather than shipping it raw. Unlike
 `tt report issue`, the bundle keeps hostnames and absolute paths: it is meant to be
 handed to Tenstorrent support, not pasted into a public issue.
 """
@@ -21,7 +23,7 @@ import re
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Any, Callable, Mapping
 
 from .. import __version__
 from ..backends.device import get_device_backend
@@ -29,7 +31,9 @@ from ..backends.serving.inference_server import CONTAINER_PREFIX, InferenceServe
 from ..backends.smi import parse_snapshot
 from ..context import AppContext
 from ..errors import ExitCode, TTError
+from ..modelhub.hub import hf_token
 from ..output import to_jsonable
+from ..redaction import Redactor, is_secret_name
 
 # Per-file tail cap for tt-cli and workflow logs; a long serve can leave logs of
 # hundreds of MB, and the end is where the failure is.
@@ -44,82 +48,19 @@ _STUDIO_IMAGE_PREFIX = "ghcr.io/tenstorrent/tt-studio/studio_images"
 
 _ENV_PREFIXES = ("TT_", "HF_")
 _ENV_ALWAYS = ("HF_TOKEN", "JWT_SECRET", "SERVICE_PORT")
-_ENV_SECRET_MARKERS = ("KEY", "TOKEN", "SECRET")
-
-_REDACTED = "<redacted>"
-# Env-style names that hold credentials: HF_TOKEN, HUGGING_FACE_HUB_TOKEN, VLLM_API_KEY,
-# OPENAI_API_KEY, JWT_SECRET, DB_PASSWORD … The marker must end the name, so
-# MAX_NUM_BATCHED_TOKENS or TOKENIZER_PATH keep their values.
-_SECRET_NAME = r"[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)"
-_SECRET_FLAGS = ("--api-key", "--hf-token", "--token", "--password")
-# Values already rendered as a placeholder (<set>, <redacted>) are left alone.
-_REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (
-        re.compile(rf"\b({_SECRET_NAME})\b([\"']?\s*[=:]\s*[\"']?)[^\s\"'<,]+"),
-        rf"\1\2{_REDACTED}",
-    ),
-    (
-        re.compile(
-            r"\b(api[_-]?key|access[_-]?token|auth[_-]?token|hf[_-]?token|password|secret)\b"
-            r"([\"']?\s*[=:]\s*[\"']?)[^\s\"'<,]+",
-            re.IGNORECASE,
-        ),
-        rf"\1\2{_REDACTED}",
-    ),
-    (
-        re.compile(rf"({'|'.join(_SECRET_FLAGS)})(=|\s+)[^\s\"'<]+"),
-        rf"\1\2{_REDACTED}",
-    ),
-    (re.compile(r"(Authorization:\s*Bearer\s+)\S+", re.IGNORECASE), rf"\1{_REDACTED}"),
-    (re.compile(r"(\btoken=)[^\s&\"'<]+", re.IGNORECASE), rf"\1{_REDACTED}"),
-    # HuggingFace tokens, PostHog project keys (telemetry.posthog_project_key) and
-    # OpenAI-style keys, wherever they turn up bare.
-    (re.compile(r"\b(?:hf|phc)_[A-Za-z0-9]{20,}\b"), _REDACTED),
-    (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"), _REDACTED),
-)
-_SECRET_NAME_RE = re.compile(rf"{_SECRET_NAME}")
-
-
-def scrub_container_record(record: dict) -> dict:
-    """Redact an `inspect` record field by field before it is dumped as JSON: env
-    values of secret-looking names, and the argument after a secret flag. The
-    text pass cannot catch the latter, since the flag and its value land on
-    separate JSON lines."""
-    record = json.loads(json.dumps(record))  # deep copy, JSON-shaped
-    config = record.get("Config") or {}
-    env = config.get("Env")
-    if isinstance(env, list):
-        scrubbed = []
-        for item in env:
-            name, sep, _ = str(item).partition("=")
-            secret = sep and _SECRET_NAME_RE.fullmatch(name.upper())
-            scrubbed.append(f"{name}={_REDACTED}" if secret else item)
-        config["Env"] = scrubbed
-    for holder, key in ((record, "Args"), (config, "Cmd"), (config, "Entrypoint")):
-        argv = holder.get(key)
-        if isinstance(argv, list):
-            holder[key] = [
-                _REDACTED if i and str(argv[i - 1]) in _SECRET_FLAGS else a
-                for i, a in enumerate(argv)
-            ]
-    return record
-
-
-def redact(text: str) -> str:
-    """Blank out known secret shapes, line by line, keeping the line count intact."""
-    return "\n".join(_redact_line(line) for line in text.split("\n"))
-
-
-def _redact_line(line: str) -> str:
-    for pattern, replacement in _REDACTIONS:
-        line = pattern.sub(replacement, line)
-    return line
+# Where the serving tools keep the credentials they were given (HF_TOKEN, JWT_SECRET,
+# DJANGO_SECRET_KEY …), relative to their checkout.
+_TOOL_DOTENVS = (".env", "app/.env")
+_STUDIO_TOOL = "tt-studio"
 
 
 @dataclasses.dataclass
 class BundleEntry:
+    """One archive member, unredacted: write_bundle redacts it on the way out."""
+
     name: str  # path inside the archive, e.g. "tt-logs/run.log"
-    data: bytes
+    text: str | None = None
+    obj: Any = None  # a JSON document, scrubbed field by field instead of as text
     notes: list[str] = dataclasses.field(default_factory=list)
 
 
@@ -127,11 +68,11 @@ Note = Callable[[str], None]
 
 
 def _text_entry(name: str, text: str, notes: list[str] | None = None) -> BundleEntry:
-    return BundleEntry(name, redact(text).encode("utf-8"), list(notes or []))
+    return BundleEntry(name, text=text, notes=list(notes or []))
 
 
 def _json_entry(name: str, obj, notes: list[str] | None = None) -> BundleEntry:
-    return _text_entry(name, json.dumps(to_jsonable(obj), indent=2, sort_keys=True), notes)
+    return BundleEntry(name, obj=to_jsonable(obj), notes=list(notes or []))
 
 
 def _tail_bytes(path: Path, limit: int) -> tuple[bytes, bool]:
@@ -146,8 +87,27 @@ def _tail_bytes(path: Path, limit: int) -> tuple[bytes, bool]:
 
 def _file_entry(name: str, path: Path, *, limit: int = MAX_LOG_BYTES) -> BundleEntry:
     data, truncated = _tail_bytes(path, limit)
-    notes = [f"truncated to the last {limit} bytes"] if truncated else []
+    notes = []
+    if truncated:
+        # The cut lands mid-line: `KEN=hf_…` has lost the name that marks its
+        # value as a secret, so the partial first line goes.
+        newline = data.find(b"\n")
+        data = data[newline + 1 :] if newline != -1 else b""
+        notes.append(f"truncated to the last {limit} bytes, starting at a whole line")
     return _text_entry(name, data.decode("utf-8", errors="replace"), notes)
+
+
+def _log_files(root: Path, pattern: str) -> list[Path]:
+    """Regular files under `root`, never through a symlink: a stray link to
+    ~/.ssh/id_rsa in a logs directory must not end up in the bundle."""
+    real_root = root.resolve()
+    return [
+        path
+        for path in root.rglob(pattern)
+        if not path.is_symlink()
+        and path.is_file()
+        and path.resolve().is_relative_to(real_root)
+    ]
 
 
 def _why(exc: BaseException) -> str:
@@ -224,8 +184,7 @@ def collect_tt_logs(appctx: AppContext, note: Note) -> list[BundleEntry]:
         return []
     return [
         _file_entry(f"tt-logs/{path.relative_to(logs_dir).as_posix()}", path)
-        for path in sorted(logs_dir.rglob("*"))
-        if path.is_file()
+        for path in sorted(_log_files(logs_dir, "*"))
     ]
 
 
@@ -240,7 +199,7 @@ def collect_workflow_logs(appctx: AppContext, note: Note) -> list[BundleEntry]:
         note("inference-server: no workflow_logs directory")
         return []
     files = sorted(
-        (p for p in logs_dir.rglob("*.log") if p.is_file()),
+        _log_files(logs_dir, "*.log"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
@@ -278,7 +237,7 @@ def collect_containers(appctx: AppContext, note: Note) -> list[BundleEntry]:
     listed = appctx.runner.capture([runtime, "ps", "-a", "--format", "{{.ID}}"], tool=runtime)
     ids = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
     records = [r for r in backend.inspect_containers(ids) if _is_tt_container(r)]
-    entries = [_json_entry("containers/ps.json", [scrub_container_record(r) for r in records])]
+    entries = [_json_entry("containers/ps.json", records)]
     for record in records:
         cid = str(record.get("Id") or "")[:12]
         name = str(record.get("Name") or "").lstrip("/") or cid
@@ -299,14 +258,14 @@ def collect_env_vars(
     appctx: AppContext, note: Note, environ: Mapping[str, str] | None = None
 ) -> list[BundleEntry]:
     """Which TT_* / HF_* knobs are set. Values are shown only for names that cannot
-    hold a secret (paths, flags); anything with KEY/TOKEN/SECRET in it is just <set>."""
+    hold a secret (paths, flags); a credential's name (see is_secret_name) is just <set>."""
     environ = os.environ if environ is None else environ
     names = sorted({n for n in environ if n.startswith(_ENV_PREFIXES)} | set(_ENV_ALWAYS))
     lines = []
     for name in names:
         if name not in environ:
             lines.append(f"{name}=<unset>")
-        elif any(marker in name for marker in _ENV_SECRET_MARKERS):
+        elif is_secret_name(name):
             lines.append(f"{name}=<set>")
         else:
             lines.append(f"{name}={environ[name]}")
@@ -323,6 +282,97 @@ COLLECTORS = (
 )
 
 
+# -- redaction ----------------------------------------------------------------------------
+def _dotenv_secrets(path: Path) -> list[str]:
+    values = []
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        name, sep, value = line.strip().removeprefix("export ").partition("=")
+        if sep and is_secret_name(name.strip()):
+            values.append(value.strip().strip("\"'"))
+    return values
+
+
+def known_secrets(appctx: AppContext, environ: Mapping[str, str] | None = None) -> list[str]:
+    """Credentials on this machine, so they can be scrubbed wherever they turn up,
+    even bare and unlabelled (a 64-char hex JWT_SECRET is indistinguishable from a
+    hash by shape): secret-named env vars, the Hugging Face login, and the .env
+    files the serving tools write into their checkouts. Every lookup is fenced."""
+    environ = os.environ if environ is None else environ
+    values = [value for name, value in environ.items() if is_secret_name(name)]
+    try:
+        token = hf_token(appctx.config)
+        if token is not None:
+            values.append(token[0])
+    except Exception:
+        pass
+    roots: list[Path] = []
+    try:
+        root = _inference_backend(appctx).checkout_root()
+        if root is not None:
+            roots.append(root)
+    except Exception:
+        pass
+    try:
+        found = appctx.registry._resolve_or_none(_STUDIO_TOOL)
+        if found is not None:
+            roots.append(Path(found[0]).parent)
+    except Exception:
+        pass
+    for root in roots:
+        for rel in _TOOL_DOTENVS:
+            values.extend(_dotenv_secrets(root / rel))
+    return values
+
+
+def make_redactor(appctx: AppContext) -> Redactor:
+    """One per report: everything it redacts in one place it scrubs from the rest."""
+    return Redactor(known_secrets(appctx))
+
+
+def scrub(redactor: Redactor, text: str) -> str:
+    """Rules and known values on one standalone string (a note, an email subject)."""
+    return redactor.final(redactor.text(text))
+
+
+def _redact_entries(
+    entries: list[BundleEntry], redactor: Redactor, notes: list[str]
+) -> list[tuple[BundleEntry, bytes]]:
+    """Two passes: the rules over every member (each teaches the redactor what it
+    removed), then the known values over all of them, so a token labelled in one
+    file is also gone where another printed it bare. A member that fails either
+    pass is left out with a note; it is never written raw."""
+    first: list[tuple[BundleEntry, str]] = []
+    for entry in entries:
+        try:
+            if entry.text is not None:
+                text = redactor.text(entry.text)
+            else:
+                text = json.dumps(redactor.obj(entry.obj), indent=2, sort_keys=True)
+        except Exception as exc:
+            notes.append(f"{entry.name}: left out, redaction failed ({type(exc).__name__})")
+            continue
+        first.append((entry, text))
+    out: list[tuple[BundleEntry, bytes]] = []
+    for entry, text in first:
+        try:
+            data = redactor.final(text).encode("utf-8")
+            # Names come from file and container names, which anyone can choose.
+            entry = dataclasses.replace(
+                entry,
+                name=scrub(redactor, entry.name),
+                notes=[scrub(redactor, n) for n in entry.notes],
+            )
+        except Exception as exc:
+            notes.append(f"{entry.name}: left out, redaction failed ({type(exc).__name__})")
+            continue
+        out.append((entry, data))
+    return out
+
+
 # -- archive ------------------------------------------------------------------------------
 def default_output_path(ref: str) -> Path:
     """`./tt-cli-logs-<ref>.tar.gz`: the reference in the name ties the file to the
@@ -330,9 +380,14 @@ def default_output_path(ref: str) -> Path:
     return Path.cwd() / f"tt-cli-logs-{ref}.tar.gz"
 
 
-def write_bundle(appctx: AppContext, output: Path, *, ref: str) -> dict:
-    """Run every collector and write the tar.gz. The only hard failure is not being
-    able to write `output`; everything else degrades into manifest notes."""
+def write_bundle(
+    appctx: AppContext, output: Path, *, ref: str, redactor: Redactor | None = None
+) -> dict:
+    """Run every collector, redact, and write the tar.gz. The only hard failure is
+    not being able to write `output`; everything else degrades into manifest notes.
+    Pass the redactor that will also scrub the email, so it knows what the bundle
+    removed."""
+    redactor = redactor or make_redactor(appctx)
     now = datetime.now(timezone.utc)
     notes: list[str] = []
     entries: list[BundleEntry] = []
@@ -341,27 +396,31 @@ def write_bundle(appctx: AppContext, output: Path, *, ref: str) -> dict:
             entries.extend(collector(appctx, notes.append))
         except Exception as exc:  # a collector bug must never cost the user the bundle
             notes.append(f"{collector.__name__}: failed ({type(exc).__name__}: {exc})")
+    members = _redact_entries(entries, redactor, notes)
+    # Notes quote error messages, which may quote a command line: they print on
+    # --json too, so they are scrubbed here rather than only inside manifest.json.
+    notes = [scrub(redactor, n) for n in notes]
     manifest = {
         "reference": ref,
         "created": now.isoformat(timespec="seconds"),
         "tt_version": __version__,
         "files": [
-            {"name": e.name, "size_bytes": len(e.data), "notes": e.notes} for e in entries
+            {"name": e.name, "size_bytes": len(data), "notes": e.notes} for e, data in members
         ],
         "notes": notes,
     }
-    entries.append(_json_entry("manifest.json", manifest))
+    members += _redact_entries([_json_entry("manifest.json", manifest)], redactor, notes)
 
     # One top-level directory so extracting never sprays files into the cwd.
     prefix = output.name.removesuffix(".tar.gz").removesuffix(".tgz") or "tt-report"
     try:
         with tarfile.open(output, "w:gz") as tar:
-            for entry in entries:
+            for entry, data in members:
                 info = tarfile.TarInfo(f"{prefix}/{entry.name}")
-                info.size = len(entry.data)
+                info.size = len(data)
                 info.mtime = int(now.timestamp())
                 info.mode = 0o644
-                tar.addfile(info, io.BytesIO(entry.data))
+                tar.addfile(info, io.BytesIO(data))
     except OSError as exc:
         raise TTError(
             f"Cannot write support bundle to {output}.",
@@ -372,7 +431,7 @@ def write_bundle(appctx: AppContext, output: Path, *, ref: str) -> dict:
     return {
         "reference": ref,
         "path": str(output),
-        "files": [e.name for e in entries],
+        "files": [e.name for e, _ in members],
         "size_bytes": output.stat().st_size,
         "notes": notes,
     }

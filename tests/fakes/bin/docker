@@ -12,6 +12,8 @@ one 12-char id per line (what tt asks for).
 FAKE_DOCKER_STOP_LOG collects stopped ids. `logs` records its full argv as one JSON
 line in FAKE_DOCKER_ARGV_LOG and prints a marker line plus a fake HF token, so tests
 can assert exactly which flags tt forwarded and that tt redacts what comes back.
+FAKE_DOCKER_LOGS, a JSON object {"<12-char id>": {"stdout": "...", "stderr": "..."}},
+adds a container's own output after the marker.
 """
 
 import json
@@ -92,6 +94,9 @@ def main() -> int:
                 fh.write(json.dumps({"argv": args}) + "\n")
         print(f"fake docker logs {args[-1]}")
         print("HF_TOKEN=hf_" + "x" * 30)
+        extra = json.loads(os.environ.get("FAKE_DOCKER_LOGS") or "{}").get(args[-1], {})
+        sys.stdout.write(extra.get("stdout", ""))
+        sys.stderr.write(extra.get("stderr", ""))
         return 0
     return 0
 
