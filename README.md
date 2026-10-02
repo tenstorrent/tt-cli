@@ -70,6 +70,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt report issue` | Open a prefilled GitHub issue on tt-cli (environment details auto-collected; `--no-browser` to just print the URL) |
 | `tt report bundle` | Collect a redacted support bundle (environment, tt-smi snapshot, config, tt and inference-server logs, container logs) and open a pre-filled email to support@tenstorrent.com with it attached (`--title` for the subject, `--no-open` to only write the files, `--mailto` for webmail, `--output` to choose the path) |
 | `tt self update` | Upgrade `tt` itself where it owns its environment (`--check` to only look) — see [Keeping tt up to date](/docs/DEVELOPERS.md) |
+| `tt agent [GOAL]` | Set up Claude Code with the Tenstorrent skills for today's task (deploy a model, bring up a model, or develop) and launch it (`--dry-run` to preview; `--no-launch` to only install the plugins) |
 
 For a comprehensive view on packaging, publishing and pulling down community models [read more here](/docs/community-models.md)
 
@@ -121,6 +122,24 @@ tt launch stop openwebui               # stop it, keeping its data
 `tt model info` shows the paths a model is served by (`inference-server, studio` for a model both offer). `--inference-server`, `--studio` or `--model-manager` forces a path and refuses one the model does not offer. With no model, `tt serve --studio` (or `--inference-server`, `--model-manager`) lists what that path serves on this machine — for studio, its whole catalog — and asks for a number; the picker needs a terminal and is off under `--json`/`--quiet`.
 
 Every path inherits a Hugging Face token: `HF_TOKEN` from the shell if set, else the token `hf auth login` stored (`HF_TOKEN_PATH`, then `<HF_HOME>/token`). `tt serve --dry-run` names the source without printing the token.
+
+## Coding agents with `tt agent`
+
+`tt agent` gets Claude Code ready for Tenstorrent work. It checks that Claude Code is installed (and offers the documented installer if not), asks what you are looking to do today, installs the matching plugins from the [tenstorrent/skills](https://github.com/tenstorrent/skills) marketplace, and hands the terminal to `claude`.
+
+| Goal | Plugins loaded |
+|---|---|
+| `deploy` — Deploy a model on your Tenstorrent hardware | `tt-deploy` |
+| `bringup` — Bring up a new model | `tt-model-bringup` and the `tt-autodebug` it requires |
+| `develop` — Actively develop | `tt-skills`, `tt-review-skills`, `tt-autodebug` |
+
+```bash
+tt agent                       # pick interactively, then launch claude
+tt agent deploy --dry-run      # show what would be installed and run
+tt agent develop -- --resume   # anything after -- goes to claude
+```
+
+While developing plugins, point it at a local checkout: `tt config set agent.marketplace_source ~/src/skills` (or `TT_AGENT_MARKETPLACE=~/src/skills` for one run).
 
 ## Configuration
 
