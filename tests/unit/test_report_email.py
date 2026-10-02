@@ -19,6 +19,7 @@ import pytest
 from tenstorrent import __version__
 from tenstorrent.commands import report_email as re_mod
 from tenstorrent.commands.report_email import (
+    EML_PLACEHOLDER_SENDER,
     ROTATION,
     SUPPORT_EMAIL,
     assignee_for_date,
@@ -46,6 +47,8 @@ def test_assignee_rotates_weekly_by_iso_week():
     assert assignee_for_date(datetime.date(2026, 10, 6)) == ROTATION[2]
     assert assignee_for_date(datetime.date(2026, 10, 13)) == ROTATION[0]
     assert assignee_for_date() in ROTATION
+    # Same addresses as tt-studio's rotation, so the shared Jira rule matches.
+    assert ROTATION[0] == ("Anirudh", "aramchandran@tenstorrent.com")
 
 
 def test_subject_prefix_default_and_clipping():
@@ -117,7 +120,10 @@ def test_eml_is_an_unsent_draft_with_the_archive_attached(tmp_path):
     msg = email.message_from_bytes(raw, policy=policy.default)
     assert msg["X-Unsent"] == "1"
     assert msg["To"] == SUPPORT_EMAIL
-    assert msg["From"] is None  # the mail client fills in the sender
+    # Clients only offer Send with a From; the placeholder is undeliverable
+    # (.invalid) and replaced by the user's own account on send.
+    assert msg["From"] == EML_PLACEHOLDER_SENDER
+    assert msg["From"].addresses[0].domain.endswith(".invalid")
     assert msg["Subject"] == "[TT-CLI] serve hangs [ttbr-abc]"
     assert msg["X-TT-Reference"] == "ttbr-abc"
     assert msg["X-Mailer"] == f"tt-cli/{__version__}"

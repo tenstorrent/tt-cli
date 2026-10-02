@@ -43,10 +43,16 @@ PRODUCT = "tt-cli"
 SUBJECT_PREFIX = "[TT-CLI]"
 DEFAULT_TITLE = "Bug report"
 
+# Placeholder sender for the .eml. Mail clients only offer Send on a message
+# that has a From header; on send they replace one that isn't a configured
+# account with the user's own, so this address never actually goes out.
+# `.invalid` is reserved (RFC 2606) and can't be delivered to by mistake.
+EML_PLACEHOLDER_SENDER = "tt-cli user <user@tt-cli.invalid>"
+
 # Weekly DX triage rotation shared with tt-studio: ISO week number % 3 picks the
 # assignee. Harmless discontinuity at ISO-year boundaries (week 52/53 -> week 1).
 ROTATION: tuple[tuple[str, str], ...] = (
-    ("Anirudh", "anirud@tenstorrent.com"),
+    ("Anirudh", "aramchandran@tenstorrent.com"),
     ("Jashan", "jashansingh@tenstorrent.com"),
     ("Raheem", "rnabeel@tenstorrent.com"),
 )
@@ -147,10 +153,12 @@ def build_eml(
     now: datetime.datetime | None = None,
 ) -> bytes:
     """An RFC 5322 message with the bundle attached. `X-Unsent: 1` makes desktop
-    clients open it as an editable draft. No `From:` on purpose: the client fills
-    in the sender's own account."""
+    clients open it as an editable draft. A `From:` is required too: without one
+    clients show no Send button, so a placeholder sender (replaced by the user's
+    account on send) is set."""
     now = now or datetime.datetime.now(datetime.timezone.utc)
     msg = EmailMessage(policy=SMTP)
+    msg["From"] = EML_PLACEHOLDER_SENDER
     msg["To"] = SUPPORT_EMAIL
     msg["Subject"] = subject
     msg["Date"] = format_datetime(now)
