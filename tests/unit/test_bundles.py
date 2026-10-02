@@ -294,6 +294,22 @@ def test_a_missing_community_catalog_override_is_a_config_error(tmp_path, monkey
 
 
 # -- unverified bundles (the Hub's community catalog) -------------------------------
+def _hub_down(self, **kw):
+    """What the pinned huggingface_hub raises with no network: an httpx2 error
+    (httpx on 1.x), which is not an OSError."""
+    import httpx2
+
+    raise httpx2.ConnectError("[Errno 111] Connection refused")
+
+
+@pytest.mark.parametrize("module", ["httpx", "httpx2"])
+def test_hub_transport_errors_cover_each_http_stack(module):
+    """huggingface_hub 1.x raises httpx errors and 2.x httpx2 errors; neither is
+    an OSError, so the listing must name both."""
+    lib = pytest.importorskip(module)
+    assert issubclass(lib.ConnectError, bundles._transport_errors())
+
+
 class _HubRepo:
     def __init__(self, id, tags, downloads=0):
         self.id, self.tags, self.downloads = id, tags, downloads
@@ -340,11 +356,7 @@ def test_search_unverified_is_a_tt_error_when_the_hub_is_unreachable(
     from tenstorrent.errors import TTError
 
     curated_catalog()
-
-    def boom(self, **kw):
-        raise OSError("network down")
-
-    monkeypatch.setattr("huggingface_hub.HfApi.list_models", boom)
+    monkeypatch.setattr("huggingface_hub.HfApi.list_models", _hub_down)
     with pytest.raises(TTError, match="Could not reach the Hugging Face Hub"):
         bundles.search_unverified()
 
@@ -358,3 +370,89 @@ def test_search_unverified_limit_counts_only_unverified_bundles(curated_catalog,
         "huggingface_hub.HfApi.list_models", lambda self, limit, **kw: iter(hub[:limit])
     )
     assert [b.name for b in bundles.search_unverified(limit=2)] == ["ns/u1", "ns/u2"]
+
+
+# -- Tenstorrent copies (tt-model-manager `verify`) -------------------------------------
+# The real function: conftest stubs the module attribute so the suite stays offline.
+from tenstorrent.modelhub.bundles import search_verified_copies as _real_copies  # noqa: E402
+
+
+class _Card(dict):
+    """ModelCardData answers .get, as the Hub's listing returns it."""
+
+
+def test_a_repo_in_the_tenstorrent_org_is_verified_by_its_id():
+    assert bundles.is_verified("Tenstorrent/Qwen3-32B", set())
+    assert bundles.is_verified("tenstorrent/qwen3-32b", set())
+    assert bundles.is_verified("ns/curated", {"ns/curated"})
+    assert not bundles.is_verified("ns/other", {"ns/curated"})
+    assert not bundles.is_verified("Tenstorrent-fan/x", set())
+
+
+def test_search_verified_copies_asks_the_hub_for_the_orgs_listed_repos(monkeypatch):
+    seen = {}
+
+    def list_models(self, **kw):
+        seen.update(kw)
+        repo = _HubRepo("Tenstorrent/Qwen3-32B", ["tt-model-container", "vllm-plugin", "p150x4"])
+        repo.card_data = _Card(tt_verified_source="someone/qwen3-32b-p150x4")
+        return iter([repo])
+
+    monkeypatch.setattr("huggingface_hub.HfApi.list_models", list_models)
+    (copy,) = _real_copies()
+    assert (seen["author"], seen["filter"], seen["cardData"]) == (
+        bundles.VERIFIED_ORG, bundles.CATALOG_TAG, True
+    )
+    assert (copy.name, copy.verified, copy.copy_of, copy.hardware) == (
+        "Tenstorrent/Qwen3-32B", True, "someone/qwen3-32b-p150x4", ["p150x4"]
+    )
+
+
+def test_copy_of_is_ignored_outside_the_org_and_when_malformed():
+    """Anyone can write the key into their own card."""
+    card = _Card(tt_verified_source="someone/original")
+    assert bundles._copy_of("ns/fake-copy", card) is None
+    assert bundles._copy_of("Tenstorrent/x", card) == "someone/original"
+    assert bundles._copy_of("Tenstorrent/x", _Card(tt_verified_source="no-slash")) is None
+    assert bundles._copy_of("Tenstorrent/x", _Card(tt_verified_source=3)) is None
+    assert bundles._copy_of("Tenstorrent/x", None) is None
+
+
+def test_search_unverified_leaves_out_tenstorrent_copies(curated_catalog, monkeypatch):
+    curated_catalog()
+    monkeypatch.setattr(
+        "huggingface_hub.HfApi.list_models",
+        lambda self, **kw: iter([_HubRepo("Tenstorrent/x", ["p150"]), _HubRepo("ns/u", ["p150"])]),
+    )
+    assert [b.name for b in bundles.search_unverified()] == ["ns/u"]
+
+
+def test_search_verified_copies_is_a_tt_error_when_the_hub_is_unreachable(monkeypatch):
+    from tenstorrent.errors import TTError
+
+    monkeypatch.setattr("huggingface_hub.HfApi.list_models", _hub_down)
+    with pytest.raises(TTError, match="Could not reach the Hugging Face Hub"):
+        _real_copies()
+
+
+def test_an_installed_tenstorrent_copy_is_verified(tmp_path, curated_catalog, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    (tmp_path / "tt-model").mkdir()
+    (tmp_path / "tt-model" / "installed.json").write_text(
+        json.dumps({"tenstorrent/x": {"repo_id": "Tenstorrent/x"}})
+    )
+    curated_catalog()
+    assert {b.name: b.verified for b in bundles.local_bundles()} == {"Tenstorrent/x": True}
+
+
+def test_describe_finds_a_tenstorrent_copy(curated_catalog, monkeypatch):
+    curated_catalog()
+    asked = []
+
+    def copies(**kw):
+        asked.append(kw["query"])
+        return [bundles.BundleInfo(name="Tenstorrent/X", verified=True, copy_of="ns/x")]
+
+    monkeypatch.setattr(bundles, "search_verified_copies", copies)
+    found = bundles.describe("tenstorrent/x")
+    assert (found.name, found.copy_of, asked) == ("Tenstorrent/X", "ns/x", ["x"])

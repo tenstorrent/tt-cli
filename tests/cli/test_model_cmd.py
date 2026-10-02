@@ -9,6 +9,12 @@ import pytest
 from tenstorrent.cli import app
 from tenstorrent.errors import ExitCode, TTError
 
+# The real Hub listings: autouse stubs replace the module attributes to keep the
+# suite offline, and the outage tests need the real ones back.
+from tenstorrent.modelhub.bundles import search_community as _real_community
+from tenstorrent.modelhub.bundles import search_unverified as _real_unverified
+from tenstorrent.modelhub.bundles import search_verified_copies as _real_copies
+
 
 
 @pytest.fixture(autouse=True)
@@ -1403,6 +1409,90 @@ def test_model_list_include_unverified_degrades_when_the_hub_is_down(
     assert result.exit_code == 0, result.output
     assert "unverified bundles skipped" in result.output
     assert _community(result) == {"ns/good": True}
+
+
+def _stub_copies(monkeypatch, entries):
+    from tenstorrent.modelhub.bundles import BundleInfo
+
+    made = [BundleInfo(verified=True, **e) for e in entries]
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_verified_copies", lambda **kw: made)
+    return made
+
+
+def test_model_list_shows_tenstorrent_copies_as_verified_by_default(
+    runner, monkeypatch, isolated_dirs
+):
+    """A copy tt-model-manager's `verify` made needs no entry in the curated
+    catalog, and --json links it to the bundle it came from."""
+    _stub_bundles(monkeypatch, [{"name": "ns/good", "verified": True}])
+    _stub_copies(monkeypatch, [{"name": "Tenstorrent/Qwen3-32B", "copy_of": "ns/qwen"}])
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    assert result.exit_code == 0, result.output
+    assert _community(result) == {"ns/good": True, "Tenstorrent/Qwen3-32B": True}
+    rows = {m["name"]: m for m in _json_payload(result.output)["models"]}
+    assert rows["Tenstorrent/Qwen3-32B"]["copy_of"] == "ns/qwen"
+    assert rows["ns/good"]["copy_of"] is None
+
+
+def test_model_list_keeps_the_curated_rows_when_the_copies_cannot_be_fetched(
+    runner, monkeypatch, isolated_dirs
+):
+    _stub_bundles(monkeypatch, [{"name": "ns/good", "verified": True}])
+
+    def boom(**kw):
+        raise TTError("Could not reach the Hugging Face Hub.")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_verified_copies", boom)
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    assert result.exit_code == 0, result.output
+    assert "Tenstorrent copies skipped" in result.output
+    assert _community(result) == {"ns/good": True}
+
+
+def test_model_list_lists_a_curated_copy_once(runner, monkeypatch, isolated_dirs):
+    _stub_bundles(monkeypatch, [{"name": "Tenstorrent/x", "verified": True}])
+    _stub_copies(monkeypatch, [{"name": "tenstorrent/X", "copy_of": "ns/x"}])
+    result = runner.invoke(app, ["model", "list", "--all", "--json"])
+    names = [m["name"] for m in _json_payload(result.output)["models"]]
+    assert [n for n in names if n.lower() == "tenstorrent/x"] == ["Tenstorrent/x"]
+
+
+@pytest.mark.parametrize("module", ["httpx", "httpx2"])
+@pytest.mark.parametrize("flags", [[], ["--include-unverified"]])
+def test_model_list_survives_a_hub_outage(
+    runner, monkeypatch, curated_catalog, isolated_dirs, flags, module
+):
+    """huggingface_hub raises httpx (1.x) or httpx2 (2.x) errors, not OSErrors,
+    when the Hub is unreachable. The listing keeps the catalog and the curated
+    rows and warns."""
+    lib = pytest.importorskip(module)
+
+    from tenstorrent.modelhub import bundles
+
+    def down(self, **kw):
+        raise lib.ConnectError("[Errno 111] Connection refused")
+
+    curated_catalog("ns/good")
+    monkeypatch.setattr(bundles, "search_community", _real_community)
+    monkeypatch.setattr(bundles, "search_unverified", _real_unverified)
+    monkeypatch.setattr(bundles, "search_verified_copies", _real_copies)
+    monkeypatch.setattr("huggingface_hub.HfApi.list_models", down)
+    result = runner.invoke(app, ["model", "list", "--all", *flags, "--json"])
+    assert result.exit_code == 0, result.output
+    assert "Could not reach the Hugging Face Hub" in result.output
+    assert _community(result) == {"ns/good": True}
+    assert any(m["source"] == "tt-inference-server" for m in _json_payload(result.output)["models"])
+
+
+def test_model_list_offline_does_not_ask_for_copies(runner, monkeypatch, isolated_dirs):
+    _stub_bundles(monkeypatch, [])
+
+    def boom(**kw):  # pragma: no cover - must not be reached
+        raise AssertionError("asked the Hub for copies under --offline")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_verified_copies", boom)
+    result = runner.invoke(app, ["--offline", "model", "list", "--all", "--json"])
+    assert result.exit_code == 0, result.output
 
 
 def test_model_list_include_unverified_conflicts_with_catalog(runner, isolated_dirs):

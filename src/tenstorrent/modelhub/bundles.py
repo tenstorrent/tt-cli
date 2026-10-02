@@ -4,7 +4,8 @@
 """Community tt-model bundles published as Hugging Face repos.
 
 tt-model-manager publishes bundles as HF model repos. Which of them the community
-listing shows comes from a curated file (see _listed_repos).
+listing shows comes from a curated file (see _listed_repos), plus the copies
+tt-model-manager's `verify` makes in the Tenstorrent org (see search_verified_copies).
 
 Bundles deliberately do NOT go through ModelCatalog: they share no schema with
 the released compat spec (no per-device status, no max_context). `tt model
@@ -31,6 +32,12 @@ from . import hub
 # command). Tag vocabulary is upstream's, so treat unknown tags as informational
 # rather than an error.
 CATALOG_TAG = "tt-model-catalog"  # opted into the community catalog
+# tt-model-manager's `verify` copies a reviewed bundle into this org. Only Tenstorrent
+# can write there, so a repo in it is verified by its id alone, with no Hub request.
+VERIFIED_ORG = "Tenstorrent"
+# Card key `verify` writes on a copy, naming the bundle it was copied from. Renaming
+# it in tt-model-manager (hub.VERIFIED_SOURCE_KEY) silently drops the link here.
+VERIFIED_SOURCE_KEY = "tt_verified_source"
 BUNDLE_TAG = "tt-model-cache"  # any published bundle
 _KIND_TAGS = {
     "tt-model-container": "container",
@@ -178,7 +185,8 @@ class BundleInfo:
     # without a per-repo Hub fetch this listing deliberately avoids).
     weights_repo: str | None = None
     weights_bytes: int | None = None
-    verified: bool = False  # in the curated community catalog
+    verified: bool = False  # in the curated community catalog, or a Tenstorrent copy
+    copy_of: str | None = None  # for a Tenstorrent copy: the bundle it was copied from
 
 
 def _cache_root() -> Path:
@@ -420,7 +428,7 @@ def local_bundles(config: ConfigStore | None = None) -> list[BundleInfo]:
                 installed=True,
                 weights_repo=weights_repo,
                 weights_bytes=weights_bytes,
-                verified=repo_id.lower() in verified,
+                verified=is_verified(repo_id, verified),
             )
         )
     return found
@@ -440,6 +448,7 @@ class _ListedRepo:
     arch: list[str] = field(default_factory=list)
     hardware: list[str] = field(default_factory=list)
     downloads: int | None = None
+    copy_of: str | None = None
 
 
 def _curated_error(origin: str, what: str, why: str | None = None) -> TTError:
@@ -495,6 +504,16 @@ def curated_ids() -> set[str]:
     return {repo.id.lower() for repo in _load_curated()}
 
 
+def in_verified_org(repo_id: str) -> bool:
+    """A copy tt-model-manager's `verify` made. Decided by the id alone."""
+    return repo_id.split("/", 1)[0].lower() == VERIFIED_ORG.lower()
+
+
+def is_verified(repo_id: str, curated: set[str]) -> bool:
+    """In the curated catalog (`curated`, from curated_ids), or a Tenstorrent copy."""
+    return in_verified_org(repo_id) or repo_id.lower() in curated
+
+
 def _listed_repos(query: str | None, limit: int) -> list[_ListedRepo]:
     """The repos the community listing shows, filtered by `query` (substring of
     the id, as the Hub's `search` matches).
@@ -505,15 +524,43 @@ def _listed_repos(query: str | None, limit: int) -> list[_ListedRepo]:
     return [repo for repo in _load_curated() if wanted in repo.id.lower()][:limit]
 
 
-def _hub_repos(query: str | None, limit: int) -> list[_ListedRepo]:
+def _transport_errors() -> tuple[type[Exception], ...]:
+    """What huggingface_hub raises when it cannot reach the Hub at all.
+
+    `huggingface_hub>=0.23` spans three HTTP stacks: requests (0.x, whose errors
+    are OSErrors), httpx (1.x) and httpx2 (2.x). Neither httpx's errors nor
+    httpx2's are OSErrors, so each is caught by name when it is installed;
+    otherwise an outage escapes as a traceback."""
+    errors: list[type[Exception]] = []
+    for module in ("httpx", "httpx2"):
+        try:
+            errors.append(__import__(module).HTTPError)
+        except (ImportError, AttributeError):
+            pass
+    return tuple(errors)
+
+
+def _hub_repos(
+    query: str | None, limit: int, *, author: str | None = None
+) -> list[_ListedRepo]:
     """Every bundle opted into the Hub's community catalog (the CATALOG_TAG),
-    verified or not, newest first."""
+    verified or not, newest first; only `author`'s with it set."""
     from huggingface_hub import HfApi
     from huggingface_hub.errors import HfHubHTTPError
 
     try:
-        found = list(HfApi().list_models(filter=CATALOG_TAG, search=query or None, limit=limit))
-    except (HfHubHTTPError, OSError) as exc:
+        found = list(
+            HfApi().list_models(
+                filter=CATALOG_TAG,
+                search=query or None,
+                limit=limit,
+                author=author,
+                # The copy's source is on its card; asking for card data here puts
+                # it on this same response, so copy_of costs no extra request.
+                cardData=author is not None,
+            )
+        )
+    except (HfHubHTTPError, OSError, *_transport_errors()) as exc:
         raise TTError(
             "Could not reach the Hugging Face Hub.",
             why=str(exc),
@@ -535,9 +582,26 @@ def _hub_repos(query: str | None, limit: int) -> list[_ListedRepo]:
                 arch=arch,
                 hardware=hardware,
                 downloads=getattr(repo, "downloads", None),
+                copy_of=_copy_of(repo_id, getattr(repo, "card_data", None)),
             )
         )
     return repos
+
+
+def _copy_of(repo_id: str, card_data) -> str | None:
+    """The `namespace/name` a Tenstorrent copy says it came from, or None.
+
+    Ignored outside the Tenstorrent org: anyone can write this key into their own
+    card, so only a repo authors cannot write may claim to be a copy of something.
+    """
+    if not in_verified_org(repo_id) or not hasattr(card_data, "get"):
+        return None
+    raw = card_data.get(VERIFIED_SOURCE_KEY)
+    if not isinstance(raw, str):
+        return None
+    source = raw.strip()
+    parts = source.split("/")
+    return source if len(parts) == 2 and all(parts) else None
 
 
 def _enrich(
@@ -577,6 +641,7 @@ def _enrich(
                 weights_repo=weights_repo,
                 weights_bytes=weights_bytes,
                 verified=verified,
+                copy_of=repo.copy_of,
             )
         )
     return bundles
@@ -605,9 +670,21 @@ def search_unverified(
     ones filtered out never take the unverified ones' place in the limit."""
     verified = curated_ids()
     repos = [
-        r for r in _hub_repos(query, limit + len(verified)) if r.id.lower() not in verified
+        r for r in _hub_repos(query, limit + len(verified)) if not is_verified(r.id, verified)
     ][:limit]
     return _enrich(repos, verified=False, config=config)
+
+
+def search_verified_copies(
+    *,
+    limit: int = 100,
+    query: str | None = None,
+    config: ConfigStore | None = None,
+) -> list[BundleInfo]:
+    """Listed copies in the Tenstorrent org, each with the bundle it came from.
+    Needs the Hub; the curated rows do not, so callers ask for these separately
+    and can degrade when the Hub is down."""
+    return _enrich(_hub_repos(query, limit, author=VERIFIED_ORG), verified=True, config=config)
 
 
 def describe(
@@ -629,10 +706,11 @@ def describe(
         return local
     # The Hub's `search` matches on the id, so narrow by the name half; the exact
     # match is decided here, not by the Hub's substring rule.
+    search = search_verified_copies if in_verified_org(repo_id) else search_community
     listed = next(
         (
             b
-            for b in search_community(query=repo_id.rsplit("/", 1)[-1], config=config)
+            for b in search(query=repo_id.rsplit("/", 1)[-1], config=config)
             if b.name.lower() == wanted
         ),
         None,

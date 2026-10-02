@@ -659,7 +659,8 @@ def _serve_with_tt_model_manager(
             "itself (override with its own --arch)."
         )
     try:
-        verified = model.lower() in bundles.curated_ids()
+        # A Tenstorrent copy is verified by its id, so it needs no catalog read.
+        verified = bundles.in_verified_org(model) or model.lower() in bundles.curated_ids()
     except TTError as err:
         # Fail closed: an unreadable catalog must not skip the confirmation.
         appctx.output.warn(
