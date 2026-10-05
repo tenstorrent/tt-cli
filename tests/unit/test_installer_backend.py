@@ -110,15 +110,19 @@ def test_env_override_script_is_not_checked(backend, monkeypatch, tmp_path):
 def test_user_requested_version_is_not_checked(backend, monkeypatch, tmp_path):
     # `tt update <semver>` runs a non-golden release, which legitimately pins a
     # different tt-sw-manifest tag.
+    # The backend fixture already built the registry (and its ScriptInstaller, which
+    # binds self._fetch at construction), so patch the module-level function that
+    # _fetch_https looks up on every call rather than the class attribute.
+    fetched = []
+
     def fake_fetch(url):
+        fetched.append(url)
         return script_with_tag("v0.0.1-old").encode()
 
-    monkeypatch.setattr(
-        "tenstorrent.tools.installers.ScriptInstaller._fetch_https",
-        staticmethod(fake_fetch),
-    )
+    monkeypatch.setattr("tenstorrent.tools.installers.fetch_https", fake_fetch)
     assert backend._run_system_installer(offline=False, version="3.1.0") is True
     assert backend._recording_runner.streamed
+    assert len(fetched) == 1 and fetched[0].endswith("/v3.1.0/install.sh")
 
 
 # -- refresh_goldens -------------------------------------------------------------------
