@@ -578,3 +578,22 @@ def loopback():
     yield start
     for server in servers:
         server.shutdown()
+
+
+def test_hermes_configures_by_environment_and_writes_nothing(tmp_path, monkeypatch):
+    home = tmp_path / "hermes-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    launcher = LAUNCHERS["hermes"]
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    assert prep.config is None
+    assert prep.env == {
+        "OPENAI_BASE_URL": "http://127.0.0.1:8000/v1",
+        "OPENAI_API_KEY": "tt-local",
+    }
+    assert prep.steps == [
+        ["hermes", "chat", "--provider", "openai", "--model", "Qwen/Qwen3-32B"]
+    ]
+    assert launcher.disconnect_plan(None, None) is None
+    assert list(home.iterdir()) == []

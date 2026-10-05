@@ -591,6 +591,29 @@ def test_qwencode_passes_the_endpoint_as_cli_arguments(
 
 
 @pytest.mark.fakes_only
+def test_hermes_passes_the_endpoint_in_the_environment(
+    runner, served, fake_client_named, monkeypatch
+):
+    exe = fake_client_named("hermes")
+    passed: dict = {}
+
+    def fake_execvpe(file, argv, env):
+        passed["argv"] = list(argv)
+        passed["env"] = env
+        raise SystemExit(0)
+
+    monkeypatch.setattr("tenstorrent.tools.runner.os.execvpe", fake_execvpe)
+    base = served("Qwen/Qwen3-32B")
+    result = runner.invoke(app, ["launch", "hermes", "--url", base])
+    assert result.exit_code == 0, result.output
+    assert passed["argv"] == [
+        str(exe), "chat", "--provider", "openai", "--model", "Qwen/Qwen3-32B"
+    ]
+    assert passed["env"]["OPENAI_BASE_URL"] == base
+    assert passed["env"]["OPENAI_API_KEY"] == "tt-local"
+
+
+@pytest.mark.fakes_only
 def test_pi_refuses_a_model_without_tool_calling(runner, served, fake_client_named):
     fake_client_named("pi")
     base = served("mistralai/Mistral-7B-Instruct-v0.3")
@@ -603,7 +626,7 @@ def test_pi_refuses_a_model_without_tool_calling(runner, served, fake_client_nam
 def test_group_help_lists_every_client(runner):
     result = runner.invoke(app, ["launch", "--help"])
     assert result.exit_code == 0
-    for tool in ("opencode", "pi", "aider", "qwencode", "openwebui", "anythingllm"):
+    for tool in ("opencode", "pi", "aider", "qwencode", "hermes", "openwebui", "anythingllm"):
         assert tool in result.output
     for subcommand in ("list", "stop", "disconnect"):
         assert subcommand in result.output
@@ -617,7 +640,7 @@ def test_list_shows_every_client_without_a_server(runner, monkeypatch):
     monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(app, ["launch", "list"])
     assert result.exit_code == 0, result.output
-    for tool in ("opencode", "pi", "aider", "qwencode", "openwebui", "anythingllm"):
+    for tool in ("opencode", "pi", "aider", "qwencode", "hermes", "openwebui", "anythingllm"):
         assert tool in result.output
     # Rich wraps the column, so match on a fragment rather than the whole phrase.
     assert "needs docker" in result.output.replace("\n", " ")
