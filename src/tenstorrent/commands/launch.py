@@ -235,6 +235,11 @@ def _connect(
         max=65535,
         help="Host port, for a client that runs as a web service.",
     ),
+    web: bool = typer.Option(
+        False,
+        "--web",
+        help="Open the client's web UI instead of its terminal UI, where it has one.",
+    ),
     force: bool = typer.Option(
         False, "--force", help="Connect even if the model cannot do tool calling."
     ),
@@ -257,6 +262,13 @@ def _connect(
     # Which client this is comes from the invoked command name, so every client
     # shares this one implementation.
     launcher = _launcher(ctx.info_name)
+    if web and not getattr(launcher, "web_ui", False):
+        raise TTError(
+            f"{launcher.id} has no web UI to open.",
+            why="--web is for clients that ship their own web interface.",
+            next_step="Drop --web to use its terminal UI.",
+            exit_code=ExitCode.USAGE,
+        )
     if url is None and port is None:
         served = _discover_local(appctx)
     else:
@@ -272,7 +284,7 @@ def _connect(
         else resolve_executable(launcher, appctx.config, appctx.output)
     )
     prep = launcher.plan(
-        target, LaunchOptions(web_port=web_port), executable=executable, runner=appctx.runner
+        target, LaunchOptions(web_port=web_port, web=web), executable=executable, runner=appctx.runner
     )
     # A terminal client is still configured under --no-exec — that is what the flag
     # is for. For a service, starting it is the only action, so it waits for start.

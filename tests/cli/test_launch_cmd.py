@@ -614,6 +614,40 @@ def test_hermes_passes_the_endpoint_in_the_environment(
 
 
 @pytest.mark.fakes_only
+def test_hermes_web_starts_the_dashboard_on_the_same_endpoint(
+    runner, served, fake_client_named, monkeypatch
+):
+    exe = fake_client_named("hermes")
+    passed: dict = {}
+
+    def fake_execvpe(file, argv, env):
+        passed["argv"] = list(argv)
+        passed["env"] = env
+        raise SystemExit(0)
+
+    monkeypatch.setattr("tenstorrent.tools.runner.os.execvpe", fake_execvpe)
+    base = served("Qwen/Qwen3-32B")
+    result = runner.invoke(
+        app, ["launch", "hermes", "--url", base, "--web", "--web-port", "9200"]
+    )
+    assert result.exit_code == 0, result.output
+    assert passed["argv"] == [str(exe), "dashboard", "--port", "9200"]
+    assert passed["env"]["OPENAI_BASE_URL"] == base
+    assert passed["env"]["HERMES_TUI_PROVIDER"] == "openai"
+    assert passed["env"]["HERMES_MODEL"] == "Qwen/Qwen3-32B"
+
+
+@pytest.mark.fakes_only
+def test_web_is_refused_for_a_client_without_a_web_ui(
+    runner, served, fake_client_named
+):
+    fake_client_named("aider")
+    result = runner.invoke(app, ["launch", "aider", "--url", served("Qwen/Qwen3-32B"), "--web"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "no web UI" in result.output
+
+
+@pytest.mark.fakes_only
 def test_pi_refuses_a_model_without_tool_calling(runner, served, fake_client_named):
     fake_client_named("pi")
     base = served("mistralai/Mistral-7B-Instruct-v0.3")

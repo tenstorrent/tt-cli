@@ -597,3 +597,15 @@ def test_hermes_configures_by_environment_and_writes_nothing(tmp_path, monkeypat
     ]
     assert launcher.disconnect_plan(None, None) is None
     assert list(home.iterdir()) == []
+
+
+def test_hermes_web_plans_the_dashboard_and_pins_the_model_by_environment():
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    options = LaunchOptions(web_port=9200, web=True)
+    prep = LAUNCHERS["hermes"].plan(model, options, executable=None, runner=None)
+    assert prep.steps == [["hermes", "dashboard", "--port", "9200"]]
+    assert prep.url == "http://localhost:9200"
+    assert prep.env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
+    assert prep.env["HERMES_TUI_PROVIDER"] == "openai"
+    assert prep.env["HERMES_INFERENCE_MODEL"] == "Qwen/Qwen3-32B"
+

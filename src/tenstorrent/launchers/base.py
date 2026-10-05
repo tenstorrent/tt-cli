@@ -55,6 +55,7 @@ class LaunchOptions:
     """Per-run knobs from the command line that an adapter may need."""
 
     web_port: int = DEFAULT_WEB_PORT
+    web: bool = False  # open the client's web UI instead of its terminal UI
 
 
 @dataclass(frozen=True)
