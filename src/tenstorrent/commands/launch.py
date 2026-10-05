@@ -229,11 +229,11 @@ def _connect(
         None, "--url", help="Full OpenAI-compatible base URL, ending in /v1."
     ),
     web_port: int = typer.Option(
-        DEFAULT_WEB_PORT,
+        None,
         "--web-port",
         min=1,
         max=65535,
-        help="Host port, for a client that runs as a web service.",
+        help=f"Host port for a web UI (default {DEFAULT_WEB_PORT}, or the next free one).",
     ),
     web: bool = typer.Option(
         False,
@@ -283,9 +283,12 @@ def _connect(
         if dry_run
         else resolve_executable(launcher, appctx.config, appctx.output)
     )
-    prep = launcher.plan(
-        target, LaunchOptions(web_port=web_port, web=web), executable=executable, runner=appctx.runner
+    options = LaunchOptions(
+        web_port=web_port or DEFAULT_WEB_PORT,
+        web_port_pinned=web_port is not None,
+        web=web,
     )
+    prep = launcher.plan(target, options, executable=executable, runner=appctx.runner)
     # A terminal client is still configured under --no-exec — that is what the flag
     # is for. For a service, starting it is the only action, so it waits for start.
     start = not dry_run and not no_exec and not (json_mode and launcher.hands_over_terminal)

@@ -15,7 +15,7 @@ saved in config.yaml would otherwise outrank HERMES_INFERENCE_PROVIDER.
 
 from __future__ import annotations
 
-from ..base import LaunchEnv, LaunchOptions, Preparation, RunningModel
+from ..base import LaunchEnv, LaunchOptions, Preparation, RunningModel, free_web_port
 
 _PLACEHOLDER_KEY = "tt-local"
 _PROVIDER = "openai"
@@ -57,10 +57,11 @@ class Hermes:
             "HERMES_MODEL": model.served_id,
             "HERMES_INFERENCE_MODEL": model.served_id,
         }
+        web_port = free_web_port(options)
         return Preparation(
             env=env,
-            steps=[self._dashboard_argv(exe, options.web_port)],
-            url=f"http://localhost:{options.web_port}",
+            steps=[self._dashboard_argv(exe, web_port)],
+            url=f"http://localhost:{web_port}",
         )
 
     def apply(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:

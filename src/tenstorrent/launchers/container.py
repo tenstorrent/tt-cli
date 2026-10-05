@@ -20,7 +20,7 @@ from contextlib import suppress
 from urllib.parse import urlsplit, urlunsplit
 
 from ..errors import ExitCode, TTError
-from .base import LaunchEnv, LaunchOptions, Preparation, RunningModel
+from .base import LaunchEnv, LaunchOptions, Preparation, RunningModel, free_web_port
 
 # Inside a container, a loopback endpoint is the container itself. Docker and
 # podman both map this name to the host with --add-host.
@@ -112,7 +112,7 @@ class ContainerLauncher:
         )
         # An existing container's published port was fixed when it was created, so
         # --web-port cannot move it. Report where it actually answers.
-        web_port = published if state in ("running", "stopped") else options.web_port
+        web_port = published if state in ("running", "stopped") else free_web_port(options)
         url = f"http://localhost:{web_port}"
         if state == "running":
             self._check_endpoint(configured_for, inner)
@@ -131,14 +131,14 @@ class ContainerLauncher:
             steps = [[exe, "start", self.container]]
             consent = f"Start the existing {self.container} container"
         else:
-            self._check_port(options.web_port)
+            self._check_port(web_port)
             steps = [
                 [exe, "pull", self.image],
-                self._run_argv(exe, model, inner, options.web_port),
+                self._run_argv(exe, model, inner, web_port),
             ]
             consent = (
                 f"Pull {self.image} (a few GB) and run it as {self.container} "
-                f"on port {options.web_port}"
+                f"on port {web_port}"
             )
         return Preparation(
             rows={

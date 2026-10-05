@@ -55,6 +55,7 @@ class LaunchOptions:
     """Per-run knobs from the command line that an adapter may need."""
 
     web_port: int = DEFAULT_WEB_PORT
+    web_port_pinned: bool = False  # the user named the port, so it is never moved
     web: bool = False  # open the client's web UI instead of its terminal UI
 
 
@@ -209,6 +210,17 @@ def resolve_executable(
             details={"tool": launcher.id},
         )
     return found
+
+
+def free_web_port(options: LaunchOptions) -> int:
+    """The port a new web service should bind: the requested one, or the next free
+    one above it unless the user named it. A busy pinned port is returned as is,
+    for the caller to report."""
+    from ..backends.serving.boot import pick_free_port, port_is_free  # import cycle
+
+    if options.web_port_pinned or port_is_free(options.web_port):
+        return options.web_port
+    return pick_free_port(options.web_port) or options.web_port
 
 
 # -- model capability ------------------------------------------------------------

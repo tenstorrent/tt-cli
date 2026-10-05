@@ -609,3 +609,14 @@ def test_hermes_web_plans_the_dashboard_and_pins_the_model_by_environment():
     assert prep.env["HERMES_TUI_PROVIDER"] == "openai"
     assert prep.env["HERMES_INFERENCE_MODEL"] == "Qwen/Qwen3-32B"
 
+
+def test_hermes_web_moves_to_the_next_free_port_unless_pinned(monkeypatch):
+    monkeypatch.setattr("tenstorrent.backends.serving.boot.port_is_free", lambda p: p != 3000)
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    plan = lambda options: LAUNCHERS["hermes"].plan(  # noqa: E731
+        model, options, executable=None, runner=None
+    )
+    assert plan(LaunchOptions(web=True)).url == "http://localhost:3001"
+    pinned = plan(LaunchOptions(web=True, web_port=3000, web_port_pinned=True))
+    assert pinned.url == "http://localhost:3000"
+
