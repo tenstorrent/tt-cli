@@ -229,11 +229,16 @@ def _connect(
         None, "--url", help="Full OpenAI-compatible base URL, ending in /v1."
     ),
     web_port: int = typer.Option(
-        DEFAULT_WEB_PORT,
+        None,
         "--web-port",
         min=1,
         max=65535,
-        help="Host port, for a client that runs as a web service.",
+        help=f"Host port for a web UI (default {DEFAULT_WEB_PORT}, or the next free one).",
+    ),
+    web: bool = typer.Option(
+        False,
+        "--web",
+        help="Open the client's web UI instead of its terminal UI, where it has one.",
     ),
     force: bool = typer.Option(
         False, "--force", help="Connect even if the model cannot do tool calling."
@@ -257,6 +262,13 @@ def _connect(
     # Which client this is comes from the invoked command name, so every client
     # shares this one implementation.
     launcher = _launcher(ctx.info_name)
+    if web and not getattr(launcher, "web_ui", False):
+        raise TTError(
+            f"{launcher.id} has no web UI to open.",
+            why="--web is for clients that ship their own web interface.",
+            next_step="Drop --web to use its terminal UI.",
+            exit_code=ExitCode.USAGE,
+        )
     if url is None and port is None:
         served = _discover_local(appctx)
     else:
@@ -271,9 +283,12 @@ def _connect(
         if dry_run
         else resolve_executable(launcher, appctx.config, appctx.output)
     )
-    prep = launcher.plan(
-        target, LaunchOptions(web_port=web_port), executable=executable, runner=appctx.runner
+    options = LaunchOptions(
+        web_port=web_port or DEFAULT_WEB_PORT,
+        web_port_pinned=web_port is not None,
+        web=web,
     )
+    prep = launcher.plan(target, options, executable=executable, runner=appctx.runner)
     # A terminal client is still configured under --no-exec — that is what the flag
     # is for. For a service, starting it is the only action, so it waits for start.
     start = not dry_run and not no_exec and not (json_mode and launcher.hands_over_terminal)
@@ -367,11 +382,14 @@ def stop(
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """Stop a client tt runs as a container, keeping its data."""
+    """Stop a client's web service (a container, or Hermes' dashboard), keeping its data."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(tool)
-    if launcher.hands_over_terminal:
+    # Container clients report container_state; a terminal client with a web mode
+    # (Hermes) reports service_state instead.
+    state = getattr(launcher, "service_state", None) or getattr(launcher, "container_state", None)
+    if state is None:
         raise TTError(
             f"{launcher.id} is not something tt runs.",
             why="It is a client on your machine; tt only writes its configuration.",
@@ -380,7 +398,7 @@ def stop(
             exit_code=ExitCode.USAGE,
         )
     executable = resolve_executable(launcher, appctx.config, appctx.output)
-    if launcher.container_state(executable, appctx.runner) != "running":
+    if state(executable, appctx.runner) != "running":
         appctx.output.status(f"{launcher.target()} is not running.")
         appctx.output.emit({"tool": launcher.id, "stopped": False}, renderer=lambda _: None)
         return
