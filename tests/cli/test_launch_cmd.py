@@ -728,6 +728,41 @@ def test_stop_is_a_usage_error_for_a_terminal_client(runner, fake_client_named):
     assert "not something tt runs" in result.output
 
 
+def _fake_hermes(monkeypatch, tmp_path, status: str):
+    log = tmp_path / "hermes.jsonl"
+    exe = tmp_path / "hermes"
+    exe.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "open(os.environ['FAKE_HERMES_LOG'], 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "if '--status' in sys.argv:\n"
+        f"    print({status!r})\n"
+        "sys.exit(0)\n"
+    )
+    exe.chmod(0o755)
+    monkeypatch.setenv("TT_TOOL_BIN_HERMES", str(exe))
+    monkeypatch.setenv("FAKE_HERMES_LOG", str(log))
+    return log
+
+
+@pytest.mark.fakes_only
+def test_stop_stops_a_running_hermes_dashboard(runner, monkeypatch, tmp_path):
+    log = _fake_hermes(monkeypatch, tmp_path, "dashboard pid 4242 on port 9119")
+    result = runner.invoke(app, ["launch", "stop", "hermes"])
+    assert result.exit_code == 0, result.output
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert ["dashboard", "--stop"] in calls
+
+
+@pytest.mark.fakes_only
+def test_stop_leaves_hermes_alone_when_no_dashboard_runs(runner, monkeypatch, tmp_path):
+    log = _fake_hermes(monkeypatch, tmp_path, "No hermes dashboard or serve processes running.")
+    result = runner.invoke(app, ["launch", "stop", "hermes"])
+    assert result.exit_code == 0, result.output
+    assert "not running" in result.output
+    assert ["dashboard", "--stop"] not in [json.loads(l) for l in log.read_text().splitlines()]
+
+
 @pytest.mark.fakes_only
 def test_stop_does_not_need_a_model_server(runner, monkeypatch, tmp_path):
     """Teardown must work after the served model is long gone."""

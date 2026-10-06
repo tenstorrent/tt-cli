@@ -71,6 +71,20 @@ class Hermes:
         argv = [env.executable, *prep.steps[0][1:]]
         env.runner.exec_tty(argv, env=prep.env)
 
+    def service_state(self, executable: str | None, runner) -> str:
+        """running / stopped / unknown, for `tt launch stop`. Hermes keeps one
+        machine-level dashboard, so this is about any dashboard, not only tt's."""
+        if executable is None:
+            return "unknown"
+        result = runner.capture([executable, "dashboard", "--status"], check=False, tool=self.id)
+        if result.returncode != 0:
+            return "unknown"
+        return "stopped" if "no hermes" in result.stdout.lower() else "running"
+
+    def stop(self, env: LaunchEnv) -> None:
+        """Stops every Hermes web server process, including one started outside tt."""
+        env.runner.stream([env.executable, "dashboard", "--stop"], tool=self.id)
+
     def disconnect_plan(self, executable: str | None, runner) -> str | None:
         """Nothing persists, so there is never anything to undo."""
         return None

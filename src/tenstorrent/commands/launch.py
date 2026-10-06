@@ -382,11 +382,14 @@ def stop(
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """Stop a client tt runs as a container, keeping its data."""
+    """Stop a client's web service (a container, or Hermes' dashboard), keeping its data."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(tool)
-    if launcher.hands_over_terminal:
+    # Container clients report container_state; a terminal client with a web mode
+    # (Hermes) reports service_state instead.
+    state = getattr(launcher, "service_state", None) or getattr(launcher, "container_state", None)
+    if state is None:
         raise TTError(
             f"{launcher.id} is not something tt runs.",
             why="It is a client on your machine; tt only writes its configuration.",
@@ -395,7 +398,7 @@ def stop(
             exit_code=ExitCode.USAGE,
         )
     executable = resolve_executable(launcher, appctx.config, appctx.output)
-    if launcher.container_state(executable, appctx.runner) != "running":
+    if state(executable, appctx.runner) != "running":
         appctx.output.status(f"{launcher.target()} is not running.")
         appctx.output.emit({"tool": launcher.id, "stopped": False}, renderer=lambda _: None)
         return
