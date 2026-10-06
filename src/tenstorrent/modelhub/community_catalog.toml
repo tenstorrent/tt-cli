@@ -309,6 +309,14 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
+repo = "raahemnabeel/qwen3-coder-next-blackhole"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150x2", "p150x4", "p300", "p300x2"]
+validation = "separate"
+validated_on = "2026-10-06"
+
+[[bundle]]
 repo = "sjettTT/qwen3.8-flash-next_p150x4"
 kind = "container"
 engine = "tt-dit-server"
