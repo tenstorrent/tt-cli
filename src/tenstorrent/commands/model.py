@@ -1655,7 +1655,7 @@ def _catalog_listing(appctx, name: str, *, listed: bool, yes: bool) -> None:
             f"{name!r} is not a bundle id.",
             why="Only a pushed tt-model bundle (a Hub repo, namespace/name) can be "
             "listed in the community catalog.",
-            next_step="Pass the repo id `tt-model push` printed.",
+            next_step="Pass the repo id `tt model push` printed.",
             exit_code=ExitCode.USAGE,
         )
     if appctx.offline:

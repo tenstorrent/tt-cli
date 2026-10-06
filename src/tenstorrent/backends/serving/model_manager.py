@@ -423,7 +423,7 @@ class ModelManagerBackend:
             raise TTError(
                 "tt-model search returned something other than JSON.",
                 why=tail[-1] if tail else str(exc),
-                next_step="Run `tt-model search --json` directly to see its output.",
+                next_step="Re-run with --verbose to see the tool's own output.",
                 exit_code=ExitCode.TOOL_FAILED,
                 details={"tool": TOOL},
             ) from exc
