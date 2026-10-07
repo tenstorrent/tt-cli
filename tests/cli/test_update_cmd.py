@@ -417,10 +417,7 @@ def test_update_specific_version_fetches_unpinned_and_forces(
             "exit 0\n"
         ).encode()
 
-    monkeypatch.setattr(
-        "tenstorrent.tools.installers.ScriptInstaller._fetch_https",
-        staticmethod(fake_fetch),
-    )
+    monkeypatch.setattr("tenstorrent.tools.installers.fetch_https", fake_fetch)
     result = runner.invoke(app, ["update", "v3.1.0", "--yes"])
     assert result.exit_code == 0, result.output
     assert fetched["url"].endswith("/v3.1.0/install.sh")  # leading "v" normalized

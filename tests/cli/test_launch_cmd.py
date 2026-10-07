@@ -591,6 +591,63 @@ def test_qwencode_passes_the_endpoint_as_cli_arguments(
 
 
 @pytest.mark.fakes_only
+def test_hermes_passes_the_endpoint_in_the_environment(
+    runner, served, fake_client_named, monkeypatch
+):
+    exe = fake_client_named("hermes")
+    passed: dict = {}
+
+    def fake_execvpe(file, argv, env):
+        passed["argv"] = list(argv)
+        passed["env"] = env
+        raise SystemExit(0)
+
+    monkeypatch.setattr("tenstorrent.tools.runner.os.execvpe", fake_execvpe)
+    base = served("Qwen/Qwen3-32B")
+    result = runner.invoke(app, ["launch", "hermes", "--url", base])
+    assert result.exit_code == 0, result.output
+    assert passed["argv"] == [
+        str(exe), "chat", "--provider", "openai", "--model", "Qwen/Qwen3-32B"
+    ]
+    assert passed["env"]["OPENAI_BASE_URL"] == base
+    assert passed["env"]["OPENAI_API_KEY"] == "tt-local"
+
+
+@pytest.mark.fakes_only
+def test_hermes_web_starts_the_dashboard_on_the_same_endpoint(
+    runner, served, fake_client_named, monkeypatch
+):
+    exe = fake_client_named("hermes")
+    passed: dict = {}
+
+    def fake_execvpe(file, argv, env):
+        passed["argv"] = list(argv)
+        passed["env"] = env
+        raise SystemExit(0)
+
+    monkeypatch.setattr("tenstorrent.tools.runner.os.execvpe", fake_execvpe)
+    base = served("Qwen/Qwen3-32B")
+    result = runner.invoke(
+        app, ["launch", "hermes", "--url", base, "--web", "--web-port", "9200"]
+    )
+    assert result.exit_code == 0, result.output
+    assert passed["argv"] == [str(exe), "dashboard", "--port", "9200"]
+    assert passed["env"]["OPENAI_BASE_URL"] == base
+    assert passed["env"]["HERMES_TUI_PROVIDER"] == "openai"
+    assert passed["env"]["HERMES_MODEL"] == "Qwen/Qwen3-32B"
+
+
+@pytest.mark.fakes_only
+def test_web_is_refused_for_a_client_without_a_web_ui(
+    runner, served, fake_client_named
+):
+    fake_client_named("aider")
+    result = runner.invoke(app, ["launch", "aider", "--url", served("Qwen/Qwen3-32B"), "--web"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "no web UI" in result.output
+
+
+@pytest.mark.fakes_only
 def test_pi_refuses_a_model_without_tool_calling(runner, served, fake_client_named):
     fake_client_named("pi")
     base = served("mistralai/Mistral-7B-Instruct-v0.3")
@@ -603,7 +660,7 @@ def test_pi_refuses_a_model_without_tool_calling(runner, served, fake_client_nam
 def test_group_help_lists_every_client(runner):
     result = runner.invoke(app, ["launch", "--help"])
     assert result.exit_code == 0
-    for tool in ("opencode", "pi", "aider", "qwencode", "openwebui", "anythingllm"):
+    for tool in ("opencode", "pi", "aider", "qwencode", "hermes", "openwebui", "anythingllm"):
         assert tool in result.output
     for subcommand in ("list", "stop", "disconnect"):
         assert subcommand in result.output
@@ -617,7 +674,7 @@ def test_list_shows_every_client_without_a_server(runner, monkeypatch):
     monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(app, ["launch", "list"])
     assert result.exit_code == 0, result.output
-    for tool in ("opencode", "pi", "aider", "qwencode", "openwebui", "anythingllm"):
+    for tool in ("opencode", "pi", "aider", "qwencode", "hermes", "openwebui", "anythingllm"):
         assert tool in result.output
     # Rich wraps the column, so match on a fragment rather than the whole phrase.
     assert "needs docker" in result.output.replace("\n", " ")
@@ -669,6 +726,41 @@ def test_stop_is_a_usage_error_for_a_terminal_client(runner, fake_client_named):
     result = runner.invoke(app, ["launch", "stop", "opencode"])
     assert result.exit_code == ExitCode.USAGE
     assert "not something tt runs" in result.output
+
+
+def _fake_hermes(monkeypatch, tmp_path, status: str):
+    log = tmp_path / "hermes.jsonl"
+    exe = tmp_path / "hermes"
+    exe.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "open(os.environ['FAKE_HERMES_LOG'], 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "if '--status' in sys.argv:\n"
+        f"    print({status!r})\n"
+        "sys.exit(0)\n"
+    )
+    exe.chmod(0o755)
+    monkeypatch.setenv("TT_TOOL_BIN_HERMES", str(exe))
+    monkeypatch.setenv("FAKE_HERMES_LOG", str(log))
+    return log
+
+
+@pytest.mark.fakes_only
+def test_stop_stops_a_running_hermes_dashboard(runner, monkeypatch, tmp_path):
+    log = _fake_hermes(monkeypatch, tmp_path, "dashboard pid 4242 on port 9119")
+    result = runner.invoke(app, ["launch", "stop", "hermes"])
+    assert result.exit_code == 0, result.output
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert ["dashboard", "--stop"] in calls
+
+
+@pytest.mark.fakes_only
+def test_stop_leaves_hermes_alone_when_no_dashboard_runs(runner, monkeypatch, tmp_path):
+    log = _fake_hermes(monkeypatch, tmp_path, "No hermes dashboard or serve processes running.")
+    result = runner.invoke(app, ["launch", "stop", "hermes"])
+    assert result.exit_code == 0, result.output
+    assert "not running" in result.output
+    assert ["dashboard", "--stop"] not in [json.loads(l) for l in log.read_text().splitlines()]
 
 
 @pytest.mark.fakes_only

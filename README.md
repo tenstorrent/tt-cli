@@ -8,6 +8,18 @@ function natively or delegates to an existing tool (tt-smi, tt-installer, etc.) 
 > [!IMPORTANT]
 > This is beta software. Expect breaking changes often as we add features. We welcome your feedback to help us improve tt-cli. If you have an issue or a comment, please don't hesitate to let us know through the GitHub [issues page](https://github.com/tenstorrent/tt-cli/issues/new).
 
+## Prerequisites
+
+To install and run `tt` you need:
+
+- **Linux.** Ubuntu 22.04 or 24.04 LTS is the supported platform. Debian 13 and Fedora 42/43 also work; other distros are untested. macOS and Windows are not supported.
+- **Python 3.10 or newer**, with the `venv` module (`python3-venv` on Debian/Ubuntu).
+- **An isolated install tool**: [uv](https://docs.astral.sh/uv/) (recommended), pipx, or a dedicated venv. `tt` ships its own copy of `uv` for managing the tools it delegates to, so you do not need `uv` on your PATH beyond installing `tt` itself.
+- **git** and **sudo**, for `tt update`: it clones pinned upstream repos and runs tt-installer, which installs the kernel driver, firmware tooling, and HugePages configuration as root.
+- **Network access** to PyPI, GitHub, and the Hugging Face Hub on first run.
+
+`tt device …` and `tt serve …` additionally need a Tenstorrent card with the driver and tt-smi installed (`tt update` does this), and serving needs Docker or Podman runnable without sudo plus a Hugging Face token. The full per-command list, including hardware, disk space, and `tt launch` client requirements, is in [docs/prerequisites.md](/docs/prerequisites.md).
+
 ## Quick start
 
 Install with [uv](https://docs.astral.sh/uv/) (recommended):
@@ -108,6 +120,9 @@ tt launch list                         # what can I connect, and is it usable no
 tt serve Qwen3-32B --port 8000         # in another terminal
 tt launch openwebui --web-port 3080    # pull and run its container, after you confirm
 tt launch stop openwebui               # stop it, keeping its data
+tt launch hermes                       # Hermes Agent's terminal UI on the served model
+tt launch hermes --web                 # its web dashboard and chat, on the same model
+tt launch stop hermes                  # stop that dashboard (any running Hermes dashboard)
 ```
 
 ## Serving backends

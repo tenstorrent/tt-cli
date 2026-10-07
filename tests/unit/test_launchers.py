@@ -578,3 +578,45 @@ def loopback():
     yield start
     for server in servers:
         server.shutdown()
+
+
+def test_hermes_configures_by_environment_and_writes_nothing(tmp_path, monkeypatch):
+    home = tmp_path / "hermes-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    launcher = LAUNCHERS["hermes"]
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    assert prep.config is None
+    assert prep.env == {
+        "OPENAI_BASE_URL": "http://127.0.0.1:8000/v1",
+        "OPENAI_API_KEY": "tt-local",
+    }
+    assert prep.steps == [
+        ["hermes", "chat", "--provider", "openai", "--model", "Qwen/Qwen3-32B"]
+    ]
+    assert launcher.disconnect_plan(None, None) is None
+    assert list(home.iterdir()) == []
+
+
+def test_hermes_web_plans_the_dashboard_and_pins_the_model_by_environment():
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    options = LaunchOptions(web_port=9200, web=True)
+    prep = LAUNCHERS["hermes"].plan(model, options, executable=None, runner=None)
+    assert prep.steps == [["hermes", "dashboard", "--port", "9200"]]
+    assert prep.url == "http://localhost:9200"
+    assert prep.env["OPENAI_BASE_URL"] == "http://127.0.0.1:8000/v1"
+    assert prep.env["HERMES_TUI_PROVIDER"] == "openai"
+    assert prep.env["HERMES_INFERENCE_MODEL"] == "Qwen/Qwen3-32B"
+
+
+def test_hermes_web_moves_to_the_next_free_port_unless_pinned(monkeypatch):
+    monkeypatch.setattr("tenstorrent.backends.serving.boot.port_is_free", lambda p: p != 3000)
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    plan = lambda options: LAUNCHERS["hermes"].plan(  # noqa: E731
+        model, options, executable=None, runner=None
+    )
+    assert plan(LaunchOptions(web=True)).url == "http://localhost:3001"
+    pinned = plan(LaunchOptions(web=True, web_port=3000, web_port_pinned=True))
+    assert pinned.url == "http://localhost:3000"
+
