@@ -199,6 +199,12 @@ def _member(value: Any, vocabulary: frozenset[str]) -> str | None:
     return text if text in vocabulary else None
 
 
+_SERVE_VALUES: dict[str, tuple[str, Callable[[Any], Any]]] = {
+    "model": ("model", _model_name),
+    "workflow": ("workflow", _enum_value),
+    "device": ("device_config", _device_config),
+}
+
 # (command path without the program name) -> {param name: (property, validator)}
 _SAFE_VALUES: dict[str, dict[str, tuple[str, Callable[[Any], Any]]]] = {
     "model pull": {"name": ("model", _model_name)},
@@ -208,11 +214,8 @@ _SAFE_VALUES: dict[str, dict[str, tuple[str, Callable[[Any], Any]]]] = {
         "model_type": ("model_type", _model_type),
         "hardware": ("hardware", _hardware),
     },
-    "serve": {
-        "model": ("model", _model_name),
-        "workflow": ("workflow", _enum_value),
-        "device": ("device_config", _device_config),
-    },
+    "serve": _SERVE_VALUES,
+    "model serve": _SERVE_VALUES,
     "config get": {"key": ("config_key", _config_key)},
     # NB: no "value" entry, and there must never be one.
     "config set": {"key": ("config_key", _config_key)},

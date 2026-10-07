@@ -48,6 +48,7 @@ from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub import bundles, hub
 from ..modelhub.studio import studio_only
 from ..modelhub.completions import complete_bundle_id, complete_local_model, complete_model
+from .serve import SERVE_CONTEXT_SETTINGS, serve
 
 model_app = typer.Typer(
     help="Model management: browse, search, pull, query, stop and remove models.",
@@ -992,6 +993,9 @@ def _dispatch(appctx, name: str):
     return None, name
 
 
+model_app.command("serve", no_args_is_help=True, context_settings=SERVE_CONTEXT_SETTINGS)(serve)
+
+
 @model_app.command("stop", no_args_is_help=True)
 @handle_tt_errors
 def stop_model(
@@ -1734,7 +1738,8 @@ def _passthrough(ctx: typer.Context, subcommand: str) -> None:
 
     The command's own help option is disabled (help_option_names=[]) so that
     `tt model package --help` reaches tt-model, whose help is the authoritative flag
-    list, rather than showing a tt page that would only say "see tt-model"."""
+    list, rather than showing a tt page that would only say "see tt-model". `-h`,
+    which tt-model does not know, is forwarded as `--help`."""
     appctx = get_app_context(ctx)
     if appctx.offline:
         raise TTError(
@@ -1746,7 +1751,8 @@ def _passthrough(ctx: typer.Context, subcommand: str) -> None:
     backend = ModelManagerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     )
-    code = backend.passthrough(subcommand, list(ctx.args))
+    args = ["--help" if arg == "-h" else arg for arg in ctx.args]
+    code = backend.passthrough(subcommand, args)
     if code:
         raise typer.Exit(code)
 

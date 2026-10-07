@@ -104,6 +104,9 @@ def _autodetect_device(appctx) -> str | None:
     return device
 
 
+# Unknown options are collected into ctx.args and forwarded to tt-model for a bundle id.
+SERVE_CONTEXT_SETTINGS = {"allow_extra_args": True, "ignore_unknown_options": True}
+
 @handle_tt_errors
 def serve(
     ctx: typer.Context,
