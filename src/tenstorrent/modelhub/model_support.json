@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "release_version": "0.23.0",
+ "release_version": "0.24.0",
  "models": [
   {
    "name": "AFM-4.5B",
@@ -972,6 +972,62 @@
      "override_tt_config": {
       "l1_small_size": 4096,
       "fabric_config": "FABRIC_1D"
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "gemma-4-12B-it",
+   "hf_repo": "google/gemma-4-12B-it",
+   "model_type": "llm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "gemma-4-12B-it",
+   "param_count": 12,
+   "min_disk_gb": 44,
+   "min_ram_gb": 30.0,
+   "devices": {
+    "p150x4": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 262144,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.24.0-29f93c9-3506696",
+     "impl_id": "tt_transformers",
+     "version": "0.24.0",
+     "tool_call_parser": "gemma4",
+     "reasoning_parser": "gemma4",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D",
+      "trace_region_size": 512000000,
+      "l1_small_size": 24576,
+      "sample_on_device_mode": "decode_only"
+     },
+     "mesh_graph_desc": null,
+     "serve_as": "p300x2",
+     "support_source": "mesh-equivalent"
+    },
+    "p300x2": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 262144,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.24.0-29f93c9-3506696",
+     "impl_id": "tt_transformers",
+     "version": "0.24.0",
+     "tool_call_parser": "gemma4",
+     "reasoning_parser": "gemma4",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D",
+      "trace_region_size": 512000000,
+      "l1_small_size": 24576,
+      "sample_on_device_mode": "decode_only"
      },
      "mesh_graph_desc": null
     }
