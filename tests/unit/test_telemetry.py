@@ -483,6 +483,21 @@ def test_bounded_filters_and_enums_are_recorded(runner, collected):
     assert props["hardware"] == "p300"
 
 
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [([], "server"), (["--workflow", "benchmarks"], "benchmarks")],
+)
+def test_serve_records_its_workflow(runner, collected, inference_bin, args, expected):
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--dry-run", *args])
+    assert result.exit_code == 0, result.output
+    assert _props(collected)["workflow"] == expected
+
+
+def test_workflow_outside_the_enum_is_dropped():
+    ctx = SimpleNamespace(command_path="tt serve", params={"workflow": "/home/someone"})
+    assert "workflow" not in command_properties(ctx)
+
+
 def test_unknown_filter_values_are_dropped(runner, collected, monkeypatch):
     # --hw is validated by the command itself now (an unrecognized board is a
     # usage error, not a silent no-op), so --type — still unchecked, since any
