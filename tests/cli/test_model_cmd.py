@@ -439,7 +439,7 @@ def test_model_rm_bundle_dry_run_runs_nothing(
 ):
     result = runner.invoke(app, ["model", "rm", "ns/bundle", "--dry-run"])
     assert result.exit_code == 0, result.output
-    assert "would run" in result.output
+    assert "would remove via tt-model: rm" in result.output
     assert not fake_model_manager.exists()  # tt-model never invoked
 
 
@@ -775,7 +775,7 @@ def test_model_logs_bundle_reports_a_tt_model_failure(
     monkeypatch.setenv("FAKE_TT_MODEL_FAIL", "1")
     result = runner.invoke(app, ["model", "logs", "ns/bundle"])
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
-    assert "tt-model logs exited with 1" in result.output
+    assert "failed (exit 1)" in result.output
 
 
 @pytest.mark.fakes_only
