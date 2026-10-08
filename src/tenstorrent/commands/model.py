@@ -593,26 +593,33 @@ def _bundle_info(appctx, name: str, *, json_mode: bool) -> None:
     reject an id `tt model list --community`, `tt model pull` and `tt serve` all accept.
 
     Two sources, by what is available. With tt-model installed and a human reading,
-    delegate to `tt-model info`: it prints the manifest and its compatibility verdict
-    against this machine, which tt has no business reimplementing. Otherwise render
-    the catalog row tt reads on its own — the same one the community listing shows,
-    plus the pulled manifest's launch settings. That covers: tt-model not installed
-    (info is inspection and must not clone-and-build a tool to describe a bundle,
-    the same rule as stop/rm); --json (tt-model prints a manifest followed by prose,
-    not one document); --offline (tt-model info fetches the manifest from the Hub).
+    query `tt-model info` for its manifest and compatibility verdict against this machine,
+    rendering it in tt's structured table. When tt-model is not installed, render the
+    catalog row tt reads on its own (info is inspection and must not clone-and-build a tool).
+    Under --json, emit tt's canonical bundle document.
     """
     backend = ModelManagerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     )
     installed_tool = backend.is_installed()
+    compatibility: str | None = None
+    manifest: dict | None = None
     if installed_tool and not json_mode and not appctx.offline:
-        backend.info(name)
-        return
+        manifest, compatibility = backend.inspect(name)
+
     row = bundles.describe(name, config=appctx.config, offline=appctx.offline)
     # None: not asked (--offline), so neither "listed" nor "unlisted" is honest.
     in_catalog = None if appctx.offline else (row is not None and row.source != "local")
     if row is None:
-        row = _unlisted_bundle(appctx, name)
+        if manifest:
+            row = bundles.BundleInfo(
+                name=name,
+                kind=manifest.get("kind") or ("container" if manifest.get("container") else None),
+                engine=manifest.get("engine") or (manifest.get("container", {}).get("kind")),
+                arch=[manifest["arch"]] if isinstance(manifest.get("arch"), str) else manifest.get("arch", []),
+            )
+        else:
+            row = _unlisted_bundle(appctx, name)
     appctx.output.emit(
         {
             "source": "tt-model-catalog",
@@ -620,6 +627,7 @@ def _bundle_info(appctx, name: str, *, json_mode: bool) -> None:
             "in_catalog": in_catalog,
             "serve": bundles.serve_details(name),
             "tt_model_installed": installed_tool,
+            "compatibility": compatibility,
             "offline": appctx.offline,
         },
         renderer=_bundle_info_renderer,
@@ -718,7 +726,9 @@ def _bundle_info_renderer(payload: dict) -> Table:
     table.add_row(
         "servable", f"yes — `tt serve {name}`; preview with `tt serve {name} --dry-run`"
     )
-    if payload["offline"] and payload["tt_model_installed"]:
+    if payload.get("compatibility"):
+        table.add_row("compatibility", payload["compatibility"])
+    elif payload["offline"] and payload["tt_model_installed"]:
         table.add_row(
             "manifest",
             "[dim]skipped under --offline: `tt-model info` fetches the manifest "
