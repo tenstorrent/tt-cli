@@ -83,6 +83,7 @@ def config_root(ctx: typer.Context) -> None:
             f"({', '.join(missing[:3])}{', …' if len(missing) > 3 else ''}). "
             "They use their defaults; `tt config sync` adds them with their comments.",
             style="dim",
+            soft_wrap=True,
         )
     appctx.output.status(f"Opening {path} …")
     _open_in_editor(path)
