@@ -378,17 +378,29 @@ class ModelManagerBackend:
         """Whether tt-model is already on this machine, without installing it."""
         return self.registry._resolve_or_none(TOOL) is not None
 
-    def info(self, repo_id: str) -> int:
-        """Stream `tt-model info <repo_id>`: the bundle's manifest and tt-model's
-        compatibility verdict against this machine.
+    def compatibility(self, repo_id: str) -> str | None:
+        """tt-model's compatibility verdict for `repo_id` against this machine, or
+        None when it could not be had (tt-model failed, or printed no verdict).
 
-        Inspection, not a launch, so like stop/rm it uses the tool only when it is
-        already installed — `tt model info` must not clone and build a tool just to
-        describe a bundle. Callers check is_installed() and fall back to the
-        catalog row tt can read on its own (modelhub.bundles.describe)."""
+        `tt-model info` prints the raw manifest as JSON and then the verdict; tt
+        renders the bundle as its own table, so only the verdict is kept. Inspection,
+        not a launch, so like stop/rm it uses the tool only when it is already
+        installed — `tt model info` must not clone and build a tool just to describe
+        a bundle. Callers check is_installed() first."""
         entry = self._installed_entry()
-        self.output.status(f"Inspecting {repo_id} via tt-model …")
-        return self.runner.stream([str(entry), "info", repo_id], env=self._env(), tool=TOOL)
+        self.output.status(f"Checking {repo_id} against this machine via tt-model …")
+        result = self.runner.capture(
+            [str(entry), "info", repo_id], env=self._env(), tool=TOOL, check=False
+        )
+        out = result.stdout.lstrip()
+        if result.returncode != 0 or not out:
+            return None
+        try:
+            _, end = json.JSONDecoder().raw_decode(out)
+        except ValueError:
+            return None
+        lines = [line.strip() for line in out[end:].splitlines() if line.strip()]
+        return "\n".join(lines) or None
 
     def profiles(self, repo_id: str) -> int:
         """Show a container package's serve profiles via `tt-model profiles`."""

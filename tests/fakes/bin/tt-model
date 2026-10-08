@@ -3,7 +3,7 @@
 Never touches the network or the Hub.
 
 Subcommands whose *output* tt parses or shows get a canned answer in tt-model's own
-shape (search --json, profiles, curl --print); everything else just records."""
+shape (search --json, profiles, info, curl --print); everything else just records."""
 
 import json
 import os
@@ -48,6 +48,16 @@ def main() -> int:
         return 0
     if sub == "profiles":
         print("  • default (default)   p150x2 · N300   seqs 32 · len 4096")
+        return 0
+    if sub == "info":
+        # The manifest as raw JSON, a blank line, then the compatibility verdict.
+        print(json.dumps({"name": argv[1].split("/")[-1], "arch": "blackhole"}, indent=2))
+        print()
+        if os.environ.get("FAKE_TT_MODEL_INCOMPATIBLE"):
+            print("  ! compatibility issues")
+            print("    [FATAL] arch: bundle='blackhole' local='wormhole_b0'")
+        else:
+            print("✓ compatible with the local environment")
         return 0
     if sub == "curl" and "--print" in argv:
         base = argv[argv.index("--base-url") + 1] if "--base-url" in argv else "http://localhost:20000"

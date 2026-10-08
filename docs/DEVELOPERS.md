@@ -119,7 +119,7 @@ the loop; the mapping is one-to-one and tt shells out to the pinned `tt-model`:
 | `tt model search [Q] --catalog --arch --limit` | `search` | tt renders `tt-model search --json`; `--json` is tt's own contract, with `installed` added |
 | `tt model list --community` | `search --catalog` (+ `list`) | queried directly on the Hub, without installing tt-model |
 | `tt model list --community --cached` | `list` | installed bundles, from tt-model's own index |
-| `tt model info NS/NAME` | `info` | |
+| `tt model info NS/NAME` | `info` | tt renders its own table and keeps only tt-model's compatibility verdict; `--json` is tt's own contract |
 | `tt model pull NS/NAME [--force] [--no-weights]` | `pull [--force] [--with-weights]` | tt asks for the weights by default; tt-model does not |
 | `tt model profiles NS/NAME` | `profiles` | `--json` reads the pulled manifest instead |
 | `tt serve NS/NAME [--port] [--profile] [--detach] [--print] [--refresh] [--no-update-check] [--no-weights] [-- …]` | `serve` | `--offline` becomes `--local-only`; everything after the id is tt-model's passthrough |

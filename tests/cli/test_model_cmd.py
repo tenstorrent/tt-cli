@@ -2175,16 +2175,51 @@ def _pull_bundle_to_disk(tmp_path, repo_id, manifest):
 
 
 @pytest.mark.fakes_only
-def test_model_info_bundle_delegates_to_tt_model_when_installed(
-    runner, fake_model_manager, isolated_dirs
+def test_model_info_bundle_is_a_table_with_tt_models_verdict_when_installed(
+    runner, fake_model_manager, monkeypatch, isolated_dirs
 ):
-    """tt-model prints the manifest and the compatibility verdict; tt does not
-    reimplement either."""
+    """Human output is tt's table, like a catalog model's, not tt-model's raw JSON
+    manifest; tt-model's compatibility verdict (which tt does not reimplement) is
+    kept as a row."""
+    _stub_bundles(monkeypatch, [
+        {"name": "ns/bundle", "kind": "container", "engine": "vllm-plugin",
+         "arch": ["blackhole"], "downloads": 7, "installed": False},
+    ])
     result = runner.invoke(app, ["model", "info", "ns/bundle"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
     assert record["argv"] == ["info", "ns/bundle"]
     assert record["hf_home"]  # same cache everything else uses
+    assert "tt-model bundle (container)" in result.output
+    assert "compatible with the local environment" in result.output
+    assert '"arch"' not in result.output  # the manifest JSON is not passed through
+
+
+@pytest.mark.fakes_only
+def test_model_info_bundle_shows_tt_models_compatibility_issues(
+    runner, fake_model_manager, monkeypatch, isolated_dirs
+):
+    """The issue lines carry `[FATAL]`, which must print literally, not as markup."""
+    _stub_bundles(monkeypatch, [{"name": "ns/bundle", "arch": ["blackhole"]}])
+    monkeypatch.setenv("FAKE_TT_MODEL_INCOMPATIBLE", "1")
+    result = runner.invoke(app, ["model", "info", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    assert "compatibility issues" in result.output
+    assert "[FATAL] arch" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_info_bundle_still_renders_when_tt_model_info_fails(
+    runner, fake_model_manager, monkeypatch, isolated_dirs
+):
+    """The verdict is an extra row; tt-model failing (Hub down, private repo) must
+    not cost the rest of the table."""
+    _stub_bundles(monkeypatch, [{"name": "ns/bundle", "arch": ["blackhole"]}])
+    monkeypatch.setenv("FAKE_TT_MODEL_FAIL", "1")
+    result = runner.invoke(app, ["model", "info", "ns/bundle"])
+    assert result.exit_code == 0, result.output
+    assert "tt-model bundle" in result.output
+    assert "could not be checked" in result.output
 
 
 @pytest.mark.fakes_only

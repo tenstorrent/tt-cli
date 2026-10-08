@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Callable
 
 import typer
+from rich.markup import escape
 from rich.table import Table
 
 from ..backends.device import get_device_backend
@@ -576,8 +577,8 @@ def model_info(
 ) -> None:
     """Show model metadata: engines, per-device support, requirements.
 
-    For a tt-model bundle id: the bundle's manifest and compatibility verdict via
-    `tt-model info` when tt-model is installed, otherwise its community-catalog row.
+    For a tt-model bundle id: its catalog row and, when tt-model is installed,
+    tt-model's compatibility verdict against this machine.
     """
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
@@ -592,38 +593,35 @@ def _bundle_info(appctx, name: str, *, json_mode: bool) -> None:
     """`tt model info` for a tt-model bundle id — the one model verb that used to
     reject an id `tt model list --community`, `tt model pull` and `tt serve` all accept.
 
-    Two sources, by what is available. With tt-model installed and a human reading,
-    delegate to `tt-model info`: it prints the manifest and its compatibility verdict
-    against this machine, which tt has no business reimplementing. Otherwise render
-    the catalog row tt reads on its own — the same one the community listing shows,
-    plus the pulled manifest's launch settings. That covers: tt-model not installed
-    (info is inspection and must not clone-and-build a tool to describe a bundle,
-    the same rule as stop/rm); --json (tt-model prints a manifest followed by prose,
-    not one document); --offline (tt-model info fetches the manifest from the Hub).
+    Renders the catalog row tt reads on its own — the same one the community listing
+    shows, plus the pulled manifest's launch settings — as a table, like a catalog
+    model's info. With tt-model installed and a human reading, tt-model's
+    compatibility verdict against this machine is added as a row: tt has no business
+    reimplementing that check. It is skipped when tt-model is not installed (info is
+    inspection and must not clone-and-build a tool to describe a bundle, the same rule
+    as stop/rm), under --json (tt's own contract, unchanged) and under --offline
+    (tt-model info fetches the manifest from the Hub).
     """
     backend = ModelManagerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     )
     installed_tool = backend.is_installed()
-    if installed_tool and not json_mode and not appctx.offline:
-        backend.info(name)
-        return
     row = bundles.describe(name, config=appctx.config, offline=appctx.offline)
     # None: not asked (--offline), so neither "listed" nor "unlisted" is honest.
     in_catalog = None if appctx.offline else (row is not None and row.source != "local")
     if row is None:
         row = _unlisted_bundle(appctx, name)
-    appctx.output.emit(
-        {
-            "source": "tt-model-catalog",
-            "bundle": dataclasses.asdict(row),
-            "in_catalog": in_catalog,
-            "serve": bundles.serve_details(name),
-            "tt_model_installed": installed_tool,
-            "offline": appctx.offline,
-        },
-        renderer=_bundle_info_renderer,
-    )
+    payload = {
+        "source": "tt-model-catalog",
+        "bundle": dataclasses.asdict(row),
+        "in_catalog": in_catalog,
+        "serve": bundles.serve_details(name),
+        "tt_model_installed": installed_tool,
+        "offline": appctx.offline,
+    }
+    if installed_tool and not json_mode and not appctx.offline:
+        payload["compatibility"] = backend.compatibility(name)
+    appctx.output.emit(payload, renderer=_bundle_info_renderer)
 
 
 def _unlisted_bundle(appctx, name: str) -> bundles.BundleInfo:
@@ -718,17 +716,24 @@ def _bundle_info_renderer(payload: dict) -> Table:
     table.add_row(
         "servable", f"yes — `tt serve {name}`; preview with `tt serve {name} --dry-run`"
     )
-    if payload["offline"] and payload["tt_model_installed"]:
+    if "compatibility" in payload:
+        verdict = payload["compatibility"]
         table.add_row(
-            "manifest",
+            "compatibility",
+            escape(verdict) if verdict else
+            f"[dim]could not be checked — run `tt-model info {name}` for details[/dim]",
+        )
+    elif payload["offline"] and payload["tt_model_installed"]:
+        table.add_row(
+            "compatibility",
             "[dim]skipped under --offline: `tt-model info` fetches the manifest "
             "from the Hub[/dim]",
         )
     elif not payload["tt_model_installed"]:
         table.add_row(
-            "manifest",
-            "[dim]tt-model's manifest and compatibility verdict show here once "
-            "tt-model is installed (`tt serve` installs it on first use)[/dim]",
+            "compatibility",
+            "[dim]tt-model's compatibility verdict shows here once tt-model is "
+            "installed (`tt serve` installs it on first use)[/dim]",
         )
     return table
 

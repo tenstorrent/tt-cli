@@ -69,7 +69,7 @@ tt-model-manager changes what a finished bring-up *is*: a self-contained bundle 
 ```bash
 tt model list --community            # only community bundles, not the released catalog
 tt model search gemma --catalog      # search the Hub for published bundles
-tt model info you/mymodel            # manifest + compatibility verdict (via tt-model), or the catalog row
+tt model info you/mymodel            # catalog row and launch settings, plus the compatibility verdict (via tt-model)
 tt model pull you/mymodel
 tt model profiles you/mymodel        # serve profiles a container package offers
 tt serve you/mymodel                 # served via tt-model-manager
