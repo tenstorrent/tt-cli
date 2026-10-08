@@ -231,7 +231,7 @@ def _register_commands() -> None:
     from .commands.model import model_app
     from .commands.self_cmd import self_app
     from .commands.report import report_app
-    from .commands.serve import serve
+    from .commands.serve import SERVE_CONTEXT_SETTINGS, serve
     from .commands.stubs import compile_, train
     from .commands.update import update
 
@@ -244,9 +244,7 @@ def _register_commands() -> None:
         "serve",
         no_args_is_help=True,
         rich_help_panel=PANEL_WORKLOADS,
-        # Unknown options are collected into ctx.args and forwarded to tt-model
-        # for a bundle id (rejected for a catalog model) — see commands/serve.py.
-        context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+        context_settings=SERVE_CONTEXT_SETTINGS,
     )(serve)
     app.add_typer(launch_app, name="launch", rich_help_panel=PANEL_WORKLOADS)
     # Hidden until the workflows behind them ship: they stay registered so

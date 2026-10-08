@@ -104,6 +104,9 @@ def _autodetect_device(appctx) -> str | None:
     return device
 
 
+# Unknown options are collected into ctx.args and forwarded to tt-model for a bundle id.
+SERVE_CONTEXT_SETTINGS = {"allow_extra_args": True, "ignore_unknown_options": True}
+
 @handle_tt_errors
 def serve(
     ctx: typer.Context,
@@ -262,7 +265,7 @@ def serve(
         raise TTError(
             f"{' and '.join(given)} {verb} to a tt-model bundle; {entry.name} is "
             "a catalog model.",
-            why="They configure `tt-model serve`; tt-inference-server and TT-Studio have "
+            why="They configure how a bundle is served; tt-inference-server and TT-Studio have "
             "no profiles or Hub revisions to refresh, and print their plan with --dry-run.",
             next_step="Drop the flag, or use `tt serve --dry-run`.",
             exit_code=ExitCode.USAGE,

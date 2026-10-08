@@ -439,7 +439,7 @@ def test_model_rm_bundle_dry_run_runs_nothing(
 ):
     result = runner.invoke(app, ["model", "rm", "ns/bundle", "--dry-run"])
     assert result.exit_code == 0, result.output
-    assert "would run" in result.output
+    assert "would remove via tt-model: rm" in result.output
     assert not fake_model_manager.exists()  # tt-model never invoked
 
 
@@ -775,7 +775,7 @@ def test_model_logs_bundle_reports_a_tt_model_failure(
     monkeypatch.setenv("FAKE_TT_MODEL_FAIL", "1")
     result = runner.invoke(app, ["model", "logs", "ns/bundle"])
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
-    assert "tt-model logs exited with 1" in result.output
+    assert "failed (exit 1)" in result.output
 
 
 @pytest.mark.fakes_only
@@ -2111,6 +2111,9 @@ def test_model_authoring_verbs_pass_everything_through(
     result = runner.invoke(app, ["model", verb, "--help"])
     assert result.exit_code == 0, result.output
     assert _last_argv(fake_model_manager) == [verb, "--help"]  # tt-model's help, not tt's
+    result = runner.invoke(app, ["model", verb, "-h"])
+    assert result.exit_code == 0, result.output
+    assert _last_argv(fake_model_manager) == [verb, "--help"]
 
 
 @pytest.mark.fakes_only
@@ -2155,7 +2158,7 @@ def test_model_pull_bundle_flags_are_refused_for_catalog_and_weights_only(runner
 
 def test_model_help_lists_every_tt_model_verb(runner):
     result = runner.invoke(app, ["model", "--help"])
-    for verb in ("search", "profiles", "curl", "login", "publish", "unpublish",
+    for verb in ("serve", "search", "profiles", "curl", "login", "publish", "unpublish",
                  "package", "package-thin", "push"):
         assert f" {verb} " in result.output or f" {verb}\n" in result.output, verb
 
