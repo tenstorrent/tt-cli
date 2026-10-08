@@ -409,6 +409,20 @@
    "validated_on": "2026-09-25"
   },
   {
+   "repo": "raahemnabeel/qwen3-coder-next-blackhole",
+   "kind": "container",
+   "engine": "vllm-plugin",
+   "arch": "blackhole",
+   "hardware": [
+    "p150x2",
+    "p150x4",
+    "p300",
+    "p300x2"
+   ],
+   "validation": "separate",
+   "validated_on": "2026-10-06"
+  },
+  {
    "repo": "sjettTT/qwen3.8-flash-next_p150x4",
    "kind": "container",
    "engine": "tt-dit-server",
