@@ -46,6 +46,17 @@ def main() -> int:
             results = [r for r in results if not r["private"]]
         print(json.dumps(results, indent=2))
         return 0
+    if sub == "info":
+        repo_id = argv[1] if len(argv) > 1 and not argv[1].startswith("--") else "demo"
+        manifest = {
+            "name": repo_id,
+            "kind": "container",
+            "engine": "vllm-plugin",
+            "arch": "blackhole",
+        }
+        print(json.dumps(manifest, indent=2))
+        print("Compatible: target architecture matches system")
+        return 0
     if sub == "profiles":
         print("  • default (default)   p150x2 · N300   seqs 32 · len 4096")
         return 0
