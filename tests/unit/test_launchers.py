@@ -325,6 +325,7 @@ def test_openwebui_plans_a_pull_and_a_run_and_asks_first():
     assert f"OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1" in run
     # Otherwise the first run's settings are baked into its database.
     assert "ENABLE_PERSISTENT_CONFIG=false" in run
+    assert "WEBUI_AUTH=False" in run
 
 
 def test_openwebui_refuses_a_container_built_for_another_server():

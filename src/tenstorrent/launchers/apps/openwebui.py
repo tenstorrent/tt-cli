@@ -34,4 +34,6 @@ class OpenWebUI(ContainerLauncher):
             # Without this, the first run's settings are persisted into its
             # database and later env changes are ignored.
             "ENABLE_PERSISTENT_CONFIG": "false",
+            # A single local user: skip the create-an-account screen.
+            "WEBUI_AUTH": "False",
         }
