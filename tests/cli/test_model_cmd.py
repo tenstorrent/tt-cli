@@ -2178,13 +2178,17 @@ def _pull_bundle_to_disk(tmp_path, repo_id, manifest):
 def test_model_info_bundle_delegates_to_tt_model_when_installed(
     runner, fake_model_manager, isolated_dirs
 ):
-    """tt-model prints the manifest and the compatibility verdict; tt does not
-    reimplement either."""
+    """tt-model prints the manifest and the compatibility verdict; tt parses them
+    into a human-readable table rather than dumping raw JSON."""
     result = runner.invoke(app, ["model", "info", "ns/bundle"])
     assert result.exit_code == 0, result.output
     record = json.loads(fake_model_manager.read_text().splitlines()[-1])
     assert record["argv"] == ["info", "ns/bundle"]
     assert record["hf_home"]  # same cache everything else uses
+    assert "tt-model bundle" in result.output
+    assert "compatibility" in result.output
+    assert "Compatible: target architecture matches system" in result.output
+    assert not result.output.strip().startswith("{")
 
 
 @pytest.mark.fakes_only
