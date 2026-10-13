@@ -41,7 +41,9 @@ If you opt in, `tt` records **one event per command**, named `tt_command`, carry
 - **which** options were set — their names only, never their values;
 - an argument value **only when it is already on a known list** the CLI holds in code:
   catalog model names, model-type/hardware filter values, device configuration
-  names, config key names, and strict semantic versions. Anything else — a typo, a
+  names, config key names, strict semantic versions, and `tt agent`'s chosen goal
+  (`deploy` / `bringup` / `develop`, however it was supplied — flag, letter, number,
+  or the interactive picker). Anything else — a typo, a
   filesystem path, a private model name — is dropped entirely, never truncated or
   hashed;
 - for `tt device status|info|reset`, **how many** device indices were given — the count,
