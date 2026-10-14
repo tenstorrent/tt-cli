@@ -27,21 +27,21 @@ kind = "script"
 # upstream defaults). tt-cli explicitly passes --update-firmware=on for a normal
 # update so current or newer firmware is never reflashed; --force opts back into
 # the upstream force behavior.
-golden_version = "3.6.1"
+golden_version = "3.6.2"
 # Interpreter the installer's managed venv (~/.tenstorrent-venv) is built with.
 # Passed as `--python-version=<this> --use-uv`; install.sh only honors the pin with
 # --use-uv, which lets uv provision the interpreter instead of trusting the distro
 # python. Only applied when running the golden installer — older releases predate
 # the flag and would die on an unrecognized option.
 python = "3.12"
-url = "https://github.com/tenstorrent/tt-installer/releases/download/v3.6.1/install.sh"
+url = "https://github.com/tenstorrent/tt-installer/releases/download/v3.6.2/install.sh"
 # {version} slot lets `tt update <semver>` fetch a specific install.sh release
 # (e.g. to downgrade the system stack). Only the golden version is sha256-pinned;
 # user-requested versions are fetched unpinned (with a warning).
 url_template = "https://github.com/tenstorrent/tt-installer/releases/download/v{version}/install.sh"
 # sha256 of the released v3.6.1 asset (pinned 2026-10-01; matches GitHub's
 # published asset digest for the release).
-sha256 = "c90c17139f33e796b4141400de0a2da17be39f4a787292c05ccb2a2d13ee3fab"
+sha256 = "d243365a14e7f836603d8607be5fdf90f2f0254d186ab19b42cfa29086fbf49d"
 needs_sudo = true # install.sh sudo's internally
 
 [tools.tt-inference-server]
