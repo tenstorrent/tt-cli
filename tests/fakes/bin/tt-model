@@ -38,6 +38,11 @@ def main() -> int:
         return 1
     sub = argv[0] if argv else ""
     if sub == "search" and "--json" in argv:
+        if os.environ.get("FAKE_TT_MODEL_SEARCH_NOT_JSON"):
+            print("Traceback (most recent call last):")
+            print("RuntimeError: fake hub hiccup")
+            print("fake tt-model: search warning", file=sys.stderr)
+            return 0
         results = SEARCH_RESULTS
         query = argv[1] if len(argv) > 1 and not argv[1].startswith("--") else ""
         if query:

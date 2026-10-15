@@ -1852,6 +1852,21 @@ def test_model_search_marks_installed_bundles(
 
 
 @pytest.mark.fakes_only
+def test_model_search_non_json_shows_tool_output_only_under_verbose(
+    runner, fake_model_manager, isolated_dirs, monkeypatch
+):
+    monkeypatch.setenv("FAKE_TT_MODEL_SEARCH_NOT_JSON", "1")
+    quiet = runner.invoke(app, ["model", "search"])
+    assert quiet.exit_code == ExitCode.TOOL_FAILED
+    assert "something other than JSON" in quiet.output
+    assert "Traceback" not in quiet.output
+    verbose = runner.invoke(app, ["model", "search", "x", "--verbose"])
+    assert verbose.exit_code == ExitCode.TOOL_FAILED
+    assert "Traceback (most recent call last):" in verbose.output
+    assert "fake tt-model: search warning" in verbose.output
+
+
+@pytest.mark.fakes_only
 def test_model_search_feeds_shell_completion(runner, fake_model_manager, isolated_dirs):
     from tenstorrent.modelhub import bundles
 

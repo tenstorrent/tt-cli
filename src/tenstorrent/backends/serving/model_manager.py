@@ -455,6 +455,10 @@ class ModelManagerBackend:
         try:
             rows = json.loads(result.stdout or "[]")
         except ValueError as exc:
+            # capture() keeps the tool's output to itself, so --verbose only shows
+            # it if it is replayed here before the error.
+            for line in [*result.stdout.splitlines(), *result.stderr.splitlines()]:
+                self.output.raw(line)
             tail = (result.stdout or "").strip().splitlines()
             raise TTError(
                 "tt-model search returned something other than JSON.",
