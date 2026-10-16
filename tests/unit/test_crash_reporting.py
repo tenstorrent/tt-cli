@@ -144,3 +144,32 @@ def test_exit_zero_still_means_success(tmp_path):
         env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
     )
     assert result.returncode == 0
+
+
+def test_unexpected_error_redacts_sensitive_argv(monkeypatch, capsys):
+    secret = "hf_wildSecretToken1234567890abcdef12"
+    monkeypatch.setattr(sys, "argv", ["tt", "serve", "--token", secret])
+    try:
+        raise ValueError("a wild exception")
+    except ValueError as exc:
+        _report_unexpected(exc)
+
+    err = capsys.readouterr().err
+    assert secret not in err
+    assert "<redacted>" in err
+
+    from tenstorrent.config.paths import get_paths
+
+    logs = sorted(get_paths().logs_dir.glob("*-crash.log"))
+    assert logs, "no crash log was written"
+    text = logs[-1].read_text()
+    assert secret not in text
+    assert "$ tt serve --token '<redacted>'" in text
+
+
+
+def test_resume_command_redacts_secrets(monkeypatch):
+    secret = "hf_resumeSecret1234567890abcdef12"
+    monkeypatch.setattr(sys, "argv", ["tt", "serve", "--token", secret])
+    assert _resume_command() == "tt serve --token <redacted>"
+

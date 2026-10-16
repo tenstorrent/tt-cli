@@ -277,8 +277,15 @@ def _argv_verbose() -> bool:
 
 def _resume_command() -> str:
     """Reconstruct the command so an interrupt card can offer to resume it."""
-    args = [arg for arg in sys.argv[1:] if arg not in ("-v", "--verbose")]
-    return "tt " + " ".join(args) if args else "tt"
+    try:
+        from .redaction import Redactor
+
+        args = [arg for arg in sys.argv[1:] if arg not in ("-v", "--verbose")]
+        clean = Redactor().argv(args)
+        return "tt " + " ".join(clean) if clean else "tt"
+    except Exception:
+        args = [arg for arg in sys.argv[1:] if arg not in ("-v", "--verbose")]
+        return "tt " + " ".join(args) if args else "tt"
 
 
 def _report_unexpected(exc: BaseException) -> None:
@@ -294,9 +301,11 @@ def _report_unexpected(exc: BaseException) -> None:
     log_path = None
     try:
         from .config.paths import get_paths
+        from .redaction import Redactor
         from .tools.runlog import open_run_log
 
-        run_log = open_run_log(get_paths().logs_dir, "crash", sys.argv)
+        redactor = Redactor()
+        run_log = open_run_log(get_paths().logs_dir, "crash", sys.argv, redactor=redactor)
         if run_log is not None:
             run_log.write(detail)
             run_log.close()
@@ -304,7 +313,13 @@ def _report_unexpected(exc: BaseException) -> None:
     except Exception:
         pass
 
-    actions = [f"tt {' '.join(sys.argv[1:])} -v" if len(sys.argv) > 1 else "tt -v"]
+    try:
+        from .redaction import Redactor
+
+        clean_args = Redactor().argv(list(sys.argv[1:]))
+        actions = [f"tt {' '.join(clean_args)} -v" if clean_args else "tt -v"]
+    except Exception:
+        actions = [f"tt {' '.join(sys.argv[1:])} -v" if len(sys.argv) > 1 else "tt -v"]
     actions.append("tt report issue")
     output.ui.card(
         failure_card(
