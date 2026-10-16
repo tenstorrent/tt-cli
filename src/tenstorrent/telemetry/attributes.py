@@ -142,6 +142,13 @@ def _device_configs() -> frozenset[str]:
 
 
 @functools.lru_cache(maxsize=1)
+def _workflows() -> frozenset[str]:
+    from ..commands.serve import Workflow
+
+    return frozenset(w.value for w in Workflow)
+
+
+@functools.lru_cache(maxsize=1)
 def _config_keys() -> frozenset[str]:
     from ..config import schema
 
@@ -164,10 +171,9 @@ def _device_config(value: Any) -> str | None:
     return _member(value, _device_configs())
 
 
-def _enum_value(value: Any) -> str | None:
-    """Enum-typed params are bounded by construction — Typer already rejected anything
-    outside the members, so no vocabulary of our own is needed."""
-    return str(value.value) if isinstance(value, Enum) else None
+def _workflow(value: Any) -> str | None:
+    """Click params hold the raw string; Typer only converts to the Enum afterwards."""
+    return _member(value.value if isinstance(value, Enum) else value, _workflows())
 
 
 def _config_key(value: Any) -> str | None:
@@ -199,6 +205,12 @@ def _member(value: Any, vocabulary: frozenset[str]) -> str | None:
     return text if text in vocabulary else None
 
 
+_SERVE_VALUES: dict[str, tuple[str, Callable[[Any], Any]]] = {
+    "model": ("model", _model_name),
+    "workflow": ("workflow", _workflow),
+    "device": ("device_config", _device_config),
+}
+
 # (command path without the program name) -> {param name: (property, validator)}
 _SAFE_VALUES: dict[str, dict[str, tuple[str, Callable[[Any], Any]]]] = {
     "model pull": {"name": ("model", _model_name)},
@@ -208,11 +220,8 @@ _SAFE_VALUES: dict[str, dict[str, tuple[str, Callable[[Any], Any]]]] = {
         "model_type": ("model_type", _model_type),
         "hardware": ("hardware", _hardware),
     },
-    "serve": {
-        "model": ("model", _model_name),
-        "workflow": ("workflow", _enum_value),
-        "device": ("device_config", _device_config),
-    },
+    "serve": _SERVE_VALUES,
+    "model serve": _SERVE_VALUES,
     "config get": {"key": ("config_key", _config_key)},
     # NB: no "value" entry, and there must never be one.
     "config set": {"key": ("config_key", _config_key)},

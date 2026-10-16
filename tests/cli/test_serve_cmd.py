@@ -720,6 +720,14 @@ def test_serve_dry_run_reports_the_resolved_configuration(runner, fake_server):
     assert not fake_server.exists()  # nothing was run
 
 
+def test_model_serve_is_the_same_command_as_serve(runner, fake_server):
+    args = ["Llama-3.1-8B-Instruct", "--device", "n150", "--dry-run", "--json"]
+    serve = runner.invoke(app, ["serve", *args])
+    model_serve = runner.invoke(app, ["model", "serve", *args])
+    assert model_serve.exit_code == 0, model_serve.output
+    assert json.loads(model_serve.stdout) == json.loads(serve.stdout)
+
+
 def test_serve_dry_run_needs_no_container_runtime(runner, fake_server, monkeypatch):
     """A dry run describes what would happen; requiring docker to do that would
     make it useless on exactly the machines where you want to check first."""
