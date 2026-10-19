@@ -412,6 +412,7 @@
    "engine": "vllm-plugin",
    "arch": "blackhole",
    "hardware": [
+    "p100",
     "p150",
     "p300x2"
    ],
@@ -577,6 +578,7 @@
    "engine": "vllm-fork",
    "arch": "blackhole",
    "hardware": [
+    "p100",
     "p150",
     "p150x2",
     "p150x4"

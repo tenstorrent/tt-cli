@@ -304,7 +304,7 @@ validated_on = "2026-09-25"
 repo = "raahemnabeel/ornith-1.5-35b-a3b"
 kind = "container"
 engine = "vllm-plugin"
-hardware = ["p150", "p300x2"]
+hardware = ["p100", "p150", "p300x2"]
 validation = "sweep"
 validated_on = "2026-09-25"
 
@@ -421,7 +421,7 @@ validated_on = "2026-09-25"
 repo = "tt-hous/ornith-1.0-35b-p150"
 kind = "container"
 engine = "vllm-fork"
-hardware = ["p150", "p150x2", "p150x4"]
+hardware = ["p100", "p150", "p150x2", "p150x4"]
 validation = "sweep"
 validated_on = "2026-09-25"
 
