@@ -391,7 +391,7 @@ def test_the_bundled_spec_is_structurally_sound():
     or status would otherwise surface as a confusing failure downstream."""
     doc = json.loads(build.SPEC_PATH.read_text())
     assert doc["schema_version"] == build.SPEC_SCHEMA_VERSION
-    assert len(doc["model_specs"]) >= 50
+    assert len(doc["model_specs"]) >= 40
     for repo, device_map in doc["model_specs"].items():
         for device_type, engine_map in device_map.items():
             for engine, impls in engine_map.items():

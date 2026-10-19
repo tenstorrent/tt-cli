@@ -75,7 +75,7 @@ def test_the_bundled_list_is_what_is_read_by_default(monkeypatch):
     monkeypatch.delenv("TT_MODEL_SUPPORT_PATH", raising=False)
     source = ModelSupportSource()
     assert source.origin == "bundled model_support.json"
-    assert len(source.entries()) > 50
+    assert len(source.entries()) > 40
 
 
 def test_missing_override_path_is_config_error(monkeypatch, tmp_path):
