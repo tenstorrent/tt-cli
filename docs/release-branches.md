@@ -20,19 +20,13 @@ metadata, smoke-tests the installed wheel, and runs the full test suite
 `github-release` nor `publish-pypi` job runs without a `refs/tags/v*` ref.
 Testers can install the wheel from that run's `dist` workflow artifact.
 
-## 3. Fix on `main`, cherry-pick onto the branch
+## 3. Hot fixes go directly on the release branch
 
-A bug found during stress testing typically exists on `main` too. Fix it there
-first with a normal PR, then bring it onto the release branch:
+A bug found during stress testing is fixed directly on the release branch
+with a PR targeting `release/1.2.x`. There is no cherry-pick: the fixes reach
+`main` when the release branch is merged back (step 5).
 
-```console
-git checkout release/1.2.x
-git cherry-pick <sha-of-the-fix-on-main>
-git push origin release/1.2.x
-```
-
-Re-test and repeat as needed. Never fix a general bug only on the release
-branch — `main` would ship it again later otherwise.
+Re-test and repeat as needed.
 
 ## 4. Tag the release
 
@@ -47,15 +41,13 @@ git push origin v1.2.0
 This triggers `release.yml` for real: build → full test suite → GitHub
 Release → PyPI.
 
-## 5. Forward-port the version bump to `main`
+## 5. Merge the branch into `main`
 
-Open a small, standalone PR against `main` that only bumps `__version__` to
-`1.2.0`. Every actual fix already reached `main` in step 3 — **never merge the
-release branch into `main` as a whole**; that reintroduces the divergent
-history you cut the branch to avoid.
+Open a PR from `release/1.2.x` into `main`. This brings the hot fixes and the
+version bump onto `main` in one go.
 
 ## 6. Delete the branch
 
-Delete `release/1.2.x` once it's tagged and forward-ported. Keep it alive only
+Delete `release/1.2.x` once it's tagged and merged into `main`. Keep it alive only
 if you expect to ship a patch release (`v1.2.1`, `v1.2.2`, ...) against this
 exact line later, after `main` has moved on to unrelated work.
