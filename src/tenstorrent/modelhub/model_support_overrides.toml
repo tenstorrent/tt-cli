@@ -123,34 +123,6 @@ device hang mid kernel-compile) badly enough that the host needs a board \
 reset. Re-check once the media image ships a tt-metal/firmware combination \
 validated on firmware 19.7.0."""
 
-[[override]]
-model = "Motif-Image-6B-Preview"
-device = "p300x2"
-reason = "broken"
-verified_on = "2026-08-14"
-source = "tt-studio"
-details = "The media container never reaches a healthy state."
-
-[[override]]
-model = "mochi-1-preview"
-device = "p300x2"
-reason = "broken"
-verified_on = "2026-08-14"
-source = "tt-studio"
-details = """
-Deploy fails with the spec-pinned image; needs a newer media image plus a \
-spec-level env override the release artifact does not carry."""
-
-[[override]]
-model = "mochi-1-preview"
-device = "p150x4"
-reason = "broken"
-verified_on = "2026-09-03"
-source = "tt-cli"
-details = """
-Does not deploy on p150x4 either, for the same reason as its p300x2 entry: no \
-image override is known that makes it work on a four-chip Blackhole mesh."""
-
 # ===========================================================================
 # Device fallbacks
 # ===========================================================================
@@ -250,18 +222,3 @@ docker_image = "ghcr.io/tenstorrent/tt-media-inference-server:0.18.0-c49bb76"
 verified_on = "2026-08-14"
 source = "tt-studio"
 details = "The p150x4 spec resolves to 0.10.0-555f240, whose API tt cannot drive."
-
-[[serve_override]]
-model = "gemma-4-31B-it"
-tool_call_parser = "gemma4"
-reasoning_parser = "gemma4"
-verified_on = "2026-10-01"
-source = "tt-cli"
-details = """
-tt-inference-server v0.23.0 (#5212) made the gemma4_31b_qb2 impl the default on \
-p300x2, and its spec entry carries no tool-call parser (metadata is empty; \
-vllm_args set only reasoning-parser), so tt would start it without \
---enable-auto-tool-choice and tool_choice "auto" requests get empty replies. \
-Verified on p300x2: tool calls parse (streamed and not), tool results round-trip, \
-and plain prompts are unaffected. p150x4 borrows p300x2, so this covers both. \
-Remove once the qb2 entry sets tool_call_parser_name upstream."""
