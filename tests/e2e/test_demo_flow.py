@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,9 @@ pytestmark = pytest.mark.fakes_only
 
 @pytest.fixture
 def env(tmp_path):
+    # A copy, because serve writes the checkout's .env.
+    inference_repo = tmp_path / "inference-repo"
+    shutil.copytree(FAKES / "inference-repo", inference_repo)
     env = dict(os.environ)
     env.update(
         TT_CONFIG_DIR=str(tmp_path / "config"),
@@ -36,7 +40,7 @@ def env(tmp_path):
         TT_DEVICE_ROOT=str(tmp_path / "dev-tenstorrent"),
         TT_TOOL_BIN_TT_SMI=str(FAKES / "bin" / "tt-smi"),
         TT_TOOL_BIN_TT_INSTALLER=str(FAKES / "install.sh"),
-        TT_TOOL_BIN_TT_INFERENCE_SERVER=str(FAKES / "inference-repo" / "run.py"),
+        TT_TOOL_BIN_TT_INFERENCE_SERVER=str(inference_repo / "run.py"),
         TT_UV_BIN=str(FAKES / "bin" / "uv"),
         FAKE_INSTALLER_LOG=str(tmp_path / "installer.log"),
     )

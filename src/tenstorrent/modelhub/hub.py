@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
+from typing import Iterator
 
 from ..config.store import ConfigStore
 from ..errors import ExitCode, TTError
@@ -217,6 +219,33 @@ def _honor_output_mode(output) -> None:
         pass
 
 
+@contextlib.contextmanager
+def container_readable_umask() -> Iterator[None]:
+    """Create files world-readable for the duration.
+
+    The inference server bind-mounts weights from the host cache into a container
+    running as uid 1000, which a restrictive umask (e.g. 007) locks out."""
+    previous = os.umask(0o022)
+    try:
+        yield
+    finally:
+        os.umask(previous)
+
+
+@contextlib.contextmanager
+def _shared_blobs_disabled() -> Iterator[None]:
+    """Keep downloads in the repo's own blobs/: huggingface_hub 1.32+ links them
+    into a cache-wide store that a bind mount of the repo cannot reach."""
+    from huggingface_hub import constants
+
+    previous = getattr(constants, "HF_HUB_DISABLE_SHARED_BLOBS", False)
+    constants.HF_HUB_DISABLE_SHARED_BLOBS = True
+    try:
+        yield
+    finally:
+        constants.HF_HUB_DISABLE_SHARED_BLOBS = previous
+
+
 def download_weights(
     model: ModelInfo, config: ConfigStore, *, offline: bool = False, output=None
 ) -> Path:
@@ -233,7 +262,9 @@ def download_weights(
         ignore_patterns=["original/*"],
     )
     try:
-        path = _snapshot_download_with_xet_fallback(kwargs, output)
+        # pulled weights are served from the same cache, so they must be mountable
+        with container_readable_umask(), _shared_blobs_disabled():
+            path = _snapshot_download_with_xet_fallback(kwargs, output)
     except LocalEntryNotFoundError as exc:
         raise TTError(
             f"Model {model.name} ({model.hf_repo}) is not in the local cache.",
