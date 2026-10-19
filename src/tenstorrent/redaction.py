@@ -217,7 +217,8 @@ _BEARER = re.compile(r"(?i)\bbearer[ \t]+(?P<v>[A-Za-z0-9._~+/=-]{8,})")
 
 # Credentials with a published prefix, wherever they turn up bare (cf. gitleaks).
 _TOKEN_SHAPES = (
-    r"(?:hf|api_org|phc|phx)_[A-Za-z0-9]{20,}",  # Hugging Face, PostHog
+    r"hf_[A-Za-z0-9]{12,}",  # Hugging Face
+    r"(?:api_org|phc|phx)_[A-Za-z0-9]{20,}",  # PostHog
     r"sk-[A-Za-z0-9_-]{20,}",  # OpenAI, Anthropic, DeepSeek, OpenRouter …
     r"(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}",  # Stripe
     r"whsec_[A-Za-z0-9]{16,}",
@@ -261,6 +262,15 @@ _PEM_HEADER = re.compile(r"[ \t]*(?:[A-Za-z-]+:.*)?")  # Proc-Type:, DEK-Info:, 
 
 # Credentials that only a command's own syntax gives away.
 _CONTEXT_RULES = (
+    # huggingface-cli / hf login --token
+    re.compile(
+        r"\b(?:huggingface-cli|hf)\b[^\r\n]*?\blogin\b[^\r\n]*?"
+        r"(?:--token(?:[ \t]+|=)|-t(?:[ \t]+|=))(?P<v>[^\s\"'`]+)"
+    ),
+    # huggingface_hub / transformers login(...) with token= or positional argument
+    re.compile(
+        r"\blogin\s*\(\s*(?:token\s*=\s*)?[\"'](?P<v>[^\"'\r\n]+)[\"']"
+    ),
     # docker/podman/helm … login -p, sshpass -p: there -p is the password
     re.compile(r"\b(?:login|sshpass)\b[^\r\n]*?[ \t]-p(?:[ \t]+|=)?(?P<v>[^\s\"'`-][^\s\"'`]*)"),
     # mysql -pSECRET
