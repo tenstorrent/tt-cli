@@ -152,9 +152,10 @@ def inference_bin(isolated_dirs, hardware_mode, monkeypatch, tmp_path) -> Path |
         # by the hardware smoke suite, not by the fake-argv tests that use this seam.
         pytest.skip("real tt-inference-server is a managed checkout; no fake to wire")
     log = tmp_path / "inference-argv.jsonl"
-    monkeypatch.setenv(
-        "TT_TOOL_BIN_TT_INFERENCE_SERVER", str(FAKES_DIR / "inference-repo" / "run.py")
-    )
+    # A copy, because serve writes the checkout's .env.
+    checkout = tmp_path / "inference-repo"
+    shutil.copytree(FAKES_DIR / "inference-repo", checkout)
+    monkeypatch.setenv("TT_TOOL_BIN_TT_INFERENCE_SERVER", str(checkout / "run.py"))
     monkeypatch.setenv("FAKE_INFERENCE_LOG", str(log))
     # The fake binds nothing, and whatever the developer is serving on 20000
     # must not move the port a test asserts on.

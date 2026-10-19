@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -290,6 +291,37 @@ def test_model_pull_downloads_via_hf(runner, monkeypatch, tmp_path):
     # stdout, not output: the cache warning for STT models goes to stderr, and the
     # data channel has to stay parseable on its own (`tt --json | jq`).
     assert json.loads(result.stdout)["path"] == str(tmp_path / "snap")
+
+
+def test_model_pull_leaves_weights_the_server_container_can_mount(
+    runner, monkeypatch, tmp_path
+):
+    """`tt serve` bind-mounts the pulled repo into a uid-1000 container, so the
+    files must be world-readable and must not link out to the shared blob store."""
+    import huggingface_hub
+
+    seen = {}
+
+    def fake_snapshot_download(repo_id, **kwargs):
+        current = os.umask(0o077)  # read it without ever opening it up
+        os.umask(current)
+        seen.update(
+            umask=current,
+            shared_blobs_disabled=huggingface_hub.constants.HF_HUB_DISABLE_SHARED_BLOBS,
+        )
+        return str(tmp_path / "snap")
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
+    previous = os.umask(0o077)
+    try:
+        result = runner.invoke(app, ["model", "pull", "Llama-3.1-8B-Instruct", "--json"])
+        after = os.umask(previous)
+    finally:
+        os.umask(previous)
+    assert result.exit_code == 0, result.output
+    assert seen == {"umask": 0o022, "shared_blobs_disabled": True}
+    assert after == 0o077
+    assert huggingface_hub.constants.HF_HUB_DISABLE_SHARED_BLOBS is False
 
 
 def test_model_pull_of_an_image_shipped_model_is_unsupported(

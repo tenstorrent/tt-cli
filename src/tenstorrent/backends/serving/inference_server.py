@@ -24,7 +24,12 @@ from ...config.store import ConfigStore
 from ...errors import ExitCode, TTError
 from ...models.device import DeviceSnapshot
 from ...models.model import DeviceSupport, ModelInfo
-from ...modelhub.hub import hf_home_dir, hf_token, uses_host_weight_cache
+from ...modelhub.hub import (
+    container_readable_umask,
+    hf_home_dir,
+    hf_token,
+    uses_host_weight_cache,
+)
 from ...output import OutputManager
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
@@ -419,6 +424,10 @@ class InferenceServerBackend:
         # TT_SERVER_BOOT_ATTEMPTS yourself to keep the retry; the watcher reads
         # the boot correctly either way.)
         env.setdefault("TT_SERVER_BOOT_ATTEMPTS", "1")
+        # huggingface_hub 1.32+ links downloads into a cache-wide store that run.py
+        # does not mount (v0.24/v0.25 only for pinned revisions), so the server
+        # would find its weight files missing. Keep them in the repo's own folder.
+        env.setdefault("HF_HUB_DISABLE_SHARED_BLOBS", "1")
         return env
 
     def _python_for(self, entry: Path) -> str:
@@ -655,7 +664,16 @@ class InferenceServerBackend:
 
     def launch(self, plan: "ServeLaunch") -> int:
         """Run run.py. `--workflow server` is watched to ready as the Start phase
-        (see _serve_watched); anything else hands it the terminal."""
+        (see _serve_watched); anything else hands it the terminal.
+
+        run.py downloads the weights the container bind-mounts, so it runs under a
+        container-readable umask."""
+        dotenv = Path(plan.cwd) / ".env"
+        os.close(os.open(dotenv, os.O_CREAT | os.O_WRONLY, 0o600))
+        with container_readable_umask():
+            return self._launch(plan)
+
+    def _launch(self, plan: "ServeLaunch") -> int:
         ui = self.output.ui
         if plan.workflow == "server" and plan.model is not None and plan.port.isdigit():
             return self._serve_watched(

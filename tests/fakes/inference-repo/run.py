@@ -10,6 +10,13 @@ import os
 import sys
 
 
+def _umask() -> str:
+    # Read by swapping in the most restrictive mask, never an open one.
+    current = os.umask(0o077)
+    os.umask(current)
+    return oct(current)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
@@ -46,6 +53,10 @@ def main() -> int:
                         "HF_TOKEN": os.environ.get("HF_TOKEN"),
                         "PYTHONUNBUFFERED": os.environ.get("PYTHONUNBUFFERED"),
                         "TT_SERVER_BOOT_ATTEMPTS": os.environ.get("TT_SERVER_BOOT_ATTEMPTS"),
+                        "HF_HUB_DISABLE_SHARED_BLOBS": os.environ.get(
+                            "HF_HUB_DISABLE_SHARED_BLOBS"
+                        ),
+                        "umask": _umask(),
                     }
                 )
                 + "\n"

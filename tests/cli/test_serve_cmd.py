@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
 import json
-import shutil
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -128,7 +129,7 @@ def test_serve_host_hf_cache_honors_config(runner, docker_present, fake_server):
 
 @pytest.mark.fakes_only
 def test_serve_runs_with_repo_root_as_cwd(
-    runner, docker_present, fake_server, fakes_dir, tmp_path, monkeypatch
+    runner, docker_present, fake_server, tmp_path, monkeypatch
 ):
     # run.py reads Path("VERSION") etc. relative to CWD; the real repo root is
     # the entry script's directory (the official wrapper script cd's there too).
@@ -137,7 +138,7 @@ def test_serve_runs_with_repo_root_as_cwd(
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
     assert result.exit_code == 0, result.output
     recorded = cwd_log.read_text().strip()
-    assert recorded == str((fakes_dir / "inference-repo").resolve())
+    assert recorded == str((tmp_path / "inference-repo").resolve())
 
 
 @pytest.mark.fakes_only
@@ -211,14 +212,12 @@ def test_serve_refuses_when_there_is_no_hf_token(
 
 @pytest.mark.fakes_only
 def test_serve_accepts_a_token_the_checkout_already_recorded(
-    runner, docker_present, fake_server, no_hf_token, fakes_dir, tmp_path, monkeypatch
+    runner, docker_present, fake_server, no_hf_token, tmp_path
 ):
     """run.py writes the token it was given to <checkout>/.env and reads it back
     on later runs, so a checkout holding one never asks again."""
-    checkout = tmp_path / "inference-repo"
-    shutil.copytree(fakes_dir / "inference-repo", checkout)
+    checkout = tmp_path / "inference-repo"  # the fake_server fixture's copy
     (checkout / ".env").write_text("JWT_SECRET=x\nHF_TOKEN=hf_recorded\n")
-    monkeypatch.setenv("TT_TOOL_BIN_TT_INFERENCE_SERVER", str(checkout / "run.py"))
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
     assert result.exit_code == 0, result.output
 
@@ -1667,6 +1666,61 @@ def test_serve_keeps_a_boot_attempt_count_the_user_asked_for(
     assert result.exit_code == 0, result.output
     record = json.loads(inference_env_log.read_text().splitlines()[-1])
     assert record["TT_SERVER_BOOT_ATTEMPTS"] == "3"
+
+
+@pytest.fixture
+def hardened_umask():
+    """What os_hardening-style hosts give their users: no access for "other"."""
+    previous = os.umask(0o077)
+    yield
+    os.umask(previous)
+
+
+def _current_umask() -> int:
+    # Read by swapping in the most restrictive mask, never an open one.
+    current = os.umask(0o077)
+    os.umask(current)
+    return current
+
+
+@pytest.mark.fakes_only
+def test_serve_runs_the_server_under_a_container_readable_umask(
+    runner, docker_present, fake_server, inference_env_log, hardened_umask
+):
+    """run.py downloads the weights the container bind-mounts and reads as uid
+    1000; under the user's own umask they would be unreadable to it."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(inference_env_log.read_text().splitlines()[-1])
+    assert record["umask"] == "0o22"
+    assert _current_umask() == 0o077  # tt's own files keep the user's umask
+
+
+@pytest.mark.fakes_only
+def test_serve_keeps_the_servers_downloads_out_of_the_shared_blob_store(
+    runner, docker_present, fake_server, inference_env_log
+):
+    """huggingface_hub 1.32+ links downloads into a cache-wide store that run.py
+    does not mount, so the server would find its weight files missing."""
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    record = json.loads(inference_env_log.read_text().splitlines()[-1])
+    assert record["HF_HUB_DISABLE_SHARED_BLOBS"] == "1"
+
+
+@pytest.mark.fakes_only
+def test_serve_keeps_the_checkouts_token_file_private(
+    runner, docker_present, fake_server, tmp_path
+):
+    """run.py saves HF_TOKEN to <checkout>/.env; under the looser umask it would
+    create that file world-readable."""
+    dotenv = tmp_path / "inference-repo" / ".env"
+    assert runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"]).exit_code == 0
+    assert stat.S_IMODE(dotenv.stat().st_mode) == 0o600
+
+    dotenv.chmod(0o640)  # one the user set up themselves is left alone
+    assert runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"]).exit_code == 0
+    assert stat.S_IMODE(dotenv.stat().st_mode) == 0o640
 
 
 @pytest.mark.fakes_only
