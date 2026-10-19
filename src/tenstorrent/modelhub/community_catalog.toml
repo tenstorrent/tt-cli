@@ -209,7 +209,7 @@ validated_on = "2026-09-25"
 repo = "jashansinghTT/minimax-music3-blackhole"
 kind = "container"
 engine = "tt-dit-server"
-hardware = ["p150"]
+hardware = ["p100", "p150"]
 validation = "sweep"
 validated_on = "2026-09-25"
 
@@ -225,7 +225,7 @@ validated_on = "2026-09-25"
 repo = "jashansinghTT/s2-pro-blackhole"
 kind = "container"
 engine = "tt-dit-server"
-hardware = ["p150", "p300", "p300x2", "p300x4"]
+hardware = ["p100", "p150", "p300", "p300x2", "p300x4"]
 validation = "sweep"
 validated_on = "2026-09-25"
 

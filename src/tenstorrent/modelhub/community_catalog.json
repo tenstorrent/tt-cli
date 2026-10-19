@@ -263,6 +263,7 @@
    "engine": "tt-dit-server",
    "arch": "blackhole",
    "hardware": [
+    "p100",
     "p150"
    ],
    "validation": "sweep",
@@ -287,6 +288,7 @@
    "engine": "tt-dit-server",
    "arch": "blackhole",
    "hardware": [
+    "p100",
     "p150",
     "p300",
     "p300x2",
