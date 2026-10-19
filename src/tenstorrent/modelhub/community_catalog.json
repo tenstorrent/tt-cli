@@ -246,6 +246,19 @@
    "validated_on": "2026-09-25"
   },
   {
+   "repo": "jashansinghTT/gpt-oss-20b-blackhole-fast",
+   "kind": "container",
+   "engine": "vllm-plugin",
+   "arch": "blackhole",
+   "hardware": [
+    "p150",
+    "p150x2",
+    "p150x4"
+   ],
+   "validation": "separate",
+   "validated_on": null
+  },
+  {
    "repo": "jashansinghTT/kimi-linear-48b-a3b-instruct-blackhole",
    "kind": "container",
    "engine": "vllm-plugin",
@@ -256,6 +269,18 @@
    ],
    "validation": "sweep",
    "validated_on": "2026-09-25"
+  },
+  {
+   "repo": "jashansinghTT/minimax-h3-blackhole",
+   "kind": "container",
+   "engine": "tt-dit-server",
+   "arch": "blackhole",
+   "hardware": [
+    "p150",
+    "p300x2"
+   ],
+   "validation": "separate",
+   "validated_on": null
   },
   {
    "repo": "jashansinghTT/minimax-music3-blackhole",

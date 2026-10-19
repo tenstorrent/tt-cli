@@ -198,12 +198,26 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
+repo = "jashansinghTT/gpt-oss-20b-blackhole-fast"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p150", "p150x2", "p150x4"]
+validation = "separate"
+
+[[bundle]]
 repo = "jashansinghTT/kimi-linear-48b-a3b-instruct-blackhole"
 kind = "container"
 engine = "vllm-plugin"
 hardware = ["p300", "p300x2"]
 validation = "sweep"
 validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "jashansinghTT/minimax-h3-blackhole"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150", "p300x2"]
+validation = "separate"
 
 [[bundle]]
 repo = "jashansinghTT/minimax-music3-blackhole"
