@@ -37,6 +37,8 @@ from typing import Callable, Sequence
 from ...errors import ExitCode, TTError
 from ...launchers import discovery
 from ...output import OutputManager
+from ...redaction import Redactor
+from ...tools.runlog import open_secure_file
 from ...tools.runner import LineSplitter, Runner
 from ...ui.cards import interrupted_panel, ready_panel
 from ...ui.format import fmt_bytes, fmt_duration
@@ -198,19 +200,19 @@ def watch_serve(
     wait runs out; KeyboardInterrupt is left to the caller, whose container is
     still booting in the background either way.
     """
-    raw_log.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     deadline = started + ready_timeout_s()
     # Built at the handover, not here: a backend may only work out which stack
     # it is launching while it prepares (a bundle's manifest arrives with it).
     trackers: dict[str, PhaseTracker] = {}
+    redactor = Redactor(known=[hf_token] if hf_token else ())
 
-    with raw_log.open("w", buffering=1) as sink, Checklist(output) as view:
+    with open_secure_file(raw_log, "w", buffering=1) as sink, Checklist(output) as view:
         def keep(line: str) -> None:
             """Every line, from both halves: to the tee'd file always, and to
             the screen under --verbose, where the checklist prints plainly and
             the two interleave in the order things happened."""
-            sink.write(line + "\n")
+            sink.write(redactor.text(line) + "\n")
             output.raw(line)
 
         view.plan([*prepare.planned, *_boot_steps(engines)])

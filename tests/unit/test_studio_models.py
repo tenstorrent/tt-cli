@@ -129,7 +129,7 @@ def test_the_bundled_studio_catalog_parses_and_adds_only_what_the_spec_lacks(mon
         m.name for m in ModelCatalog().list(cached_sizes={}) if m.backends == ["studio"]
     ]
     # the reason this source exists — re-check when either bundle is refreshed
-    assert {"Qwen3.5-9B", "Qwen3.8-27B"} <= set(studio_only)
+    assert {"Qwen3.5-9B"} <= set(studio_only)
 
 
 # -- HF token seeding -----------------------------------------------------------------

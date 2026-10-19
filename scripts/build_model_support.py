@@ -300,10 +300,9 @@ def apply_overrides(
 ) -> list[str]:
     """Mark unsupported (model, device) pairs. Returns warnings for dormant entries.
 
-    An override naming a device the model does not claim is an error: that is
-    almost always a typo, and a silent no-op leaves a broken model on offer. An
-    override naming a model the spec does not have is only a warning — the marks
-    outlive spec versions, and one may legitimately be waiting for a pin bump.
+    An override naming a model or a device the spec does not have is only a
+    warning — the marks outlive spec versions, and a spec that drops the pairing
+    has made the mark moot.
     """
     by_name = {model["name"]: model for model in models}
     warnings = []
@@ -330,12 +329,11 @@ def apply_overrides(
         elif device in model["devices"]:
             targets = [device]
         else:
-            near = difflib.get_close_matches(device, model["devices"], n=1)
-            hint = f" Did you mean {near[0]!r}?" if near else ""
-            raise BuildError(
-                f"{entry['model']}: device {device!r} is not one of its spec devices "
-                f"{sorted(model['devices'])}, so nothing would be marked.{hint}"
+            warnings.append(
+                f"{entry['model']}: device {device!r} is not in this spec; the override is "
+                f"dormant (the spec dropped it, so there is nothing left to mark)."
             )
+            continue
 
         for target in targets:
             model["devices"][target]["supported"] = False

@@ -623,3 +623,22 @@ def test_huge_single_line_json_is_linear():
 )
 def test_is_secret_name(name, secret):
     assert is_secret_name(name) is secret
+
+
+def test_huggingface_login_and_short_token_redaction():
+    # Contextual rules: CLI login with --token and short/stale tokens
+    assert redact("huggingface-cli login --token hf_short123") == "huggingface-cli login --token <redacted>"
+    assert redact("huggingface-cli login --token=my_secret") == "huggingface-cli login --token=<redacted>"
+    assert redact("hf auth login --token my_secret") == "hf auth login --token <redacted>"
+    assert redact("hf login -t my_secret") == "hf login -t <redacted>"
+
+    # Contextual rules: Python login(...) function calls with keyword or positional token
+    assert redact('login(token="short_tok")') == 'login(token="<redacted>")'
+    assert redact("login(token='short_tok')") == "login(token='<redacted>')"
+    assert redact('huggingface_hub.login("short_tok")') == 'huggingface_hub.login("<redacted>")'
+    assert redact('login("hf_posToken")') == 'login("<redacted>")'
+
+    # Bare token shape: loosened to 12+ chars
+    bare_12 = "hf_" + "A1b2C3d4E5f6"
+    assert redact(f"Active token: {bare_12}") == "Active token: <redacted>"
+

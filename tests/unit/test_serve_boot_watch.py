@@ -159,6 +159,23 @@ def test_a_watched_serve_reaches_ready_and_tees_everything(harness, tmp_path, mo
     teed = result.raw_log.read_text()
     assert "TT-Inference version: 0.22.0" in teed
     assert "GPU KV cache size" in teed
+    assert (result.raw_log.parent.stat().st_mode & 0o777) == 0o700
+    assert (result.raw_log.stat().st_mode & 0o777) == 0o600
+
+
+def test_watched_serve_redacts_tokens_teed_into_log(harness, tmp_path, monkeypatch):
+    secret = "hf_bootTokenSecret1234567890abcdef12"
+    container_with_secret = (
+        CONTAINER_LOG
+        + f"\nINFO running docker run -e HF_TOKEN={secret} ghcr.io/vllm\n"
+        + f"Logged in with token: {secret}\n"
+    )
+    result = harness(monkeypatch=monkeypatch, container_body=container_with_secret, logs_linger=5.0)
+    assert result.ready
+    teed = result.raw_log.read_text()
+    assert secret not in teed
+    assert "<redacted>" in teed
+
 
 
 def test_a_run_py_that_names_no_container_degrades_instead_of_waiting(
