@@ -303,7 +303,7 @@ def test_model_pull_leaves_weights_the_server_container_can_mount(
     seen = {}
 
     def fake_snapshot_download(repo_id, **kwargs):
-        current = os.umask(0)
+        current = os.umask(0o077)  # read it without ever opening it up
         os.umask(current)
         seen.update(
             umask=current,

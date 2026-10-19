@@ -1677,7 +1677,8 @@ def hardened_umask():
 
 
 def _current_umask() -> int:
-    current = os.umask(0)
+    # Read by swapping in the most restrictive mask, never an open one.
+    current = os.umask(0o077)
     os.umask(current)
     return current
 

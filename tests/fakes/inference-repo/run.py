@@ -11,7 +11,8 @@ import sys
 
 
 def _umask() -> str:
-    current = os.umask(0)
+    # Read by swapping in the most restrictive mask, never an open one.
+    current = os.umask(0o077)
     os.umask(current)
     return oct(current)
 
