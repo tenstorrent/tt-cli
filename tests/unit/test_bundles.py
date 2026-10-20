@@ -241,6 +241,25 @@ def test_search_community_skips_the_hub_manifest_for_an_installed_bundle(
     assert found.hardware == ["p300x2"]
 
 
+def test_search_community_keeps_curated_boards_an_older_pull_lacks(
+    tmp_path, curated_catalog, monkeypatch
+):
+    """A bundle pulled before the curated list added a board still lists that
+    board: the stale local manifest adds to the curated boards, not replaces them."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    root = tmp_path / "tt-model"
+    pulled = root / "pulled" / "ns__music"
+    pulled.mkdir(parents=True)
+    (pulled / MANIFEST_NAME).write_text(
+        json.dumps({"container": {"serve": {"hardware": "p150"}}})
+    )
+    (root / "installed.json").write_text(json.dumps({"ns/music": {"repo_id": "ns/music"}}))
+
+    curated_catalog({"repo": "ns/music", "arch": "blackhole", "hardware": ["p100", "p150"]})
+    (found,) = search_community()
+    assert found.hardware == ["p100", "p150"]
+
+
 # -- curated community catalog ------------------------------------------------------
 def test_the_bundled_community_catalog_loads():
     from tenstorrent.modelhub import bundles

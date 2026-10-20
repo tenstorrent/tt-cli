@@ -623,7 +623,8 @@ def _enrich(
             weights_repo, weights_bytes = _weights_state(repo_id, entry, sizes)
             # The manifest is authoritative; the tag is only a hint.
             engine = engine_for(repo_id, entry) or engine
-            hardware = hardware_for(repo_id, entry) or hardware
+            pulled = hardware_for(repo_id, entry)
+            hardware = sorted({*pulled, *hardware}) if verified and pulled else pulled or hardware
         elif not hardware:
             # Untagged and never pulled here: the only source left is the
             # bundle's own manifest on the Hub, fetched only because the tag
