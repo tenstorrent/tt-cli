@@ -394,6 +394,20 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
+repo = "tt-hous/clef"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150x2"]
+validation = "separate"
+
+[[bundle]]
+repo = "tt-hous/clm-v0.1-8b-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150", "p150x4"]
+validation = "separate"
+
+[[bundle]]
 repo = "tt-hous/gemma-4-26B-A4B-it_p150_p150x2_p150x4"
 kind = "container"
 engine = "vllm-plugin"
@@ -422,6 +436,20 @@ engine = "vllm-plugin"
 hardware = ["p150x2", "p150x4"]
 validation = "sweep"
 validated_on = "2026-09-25"
+
+[[bundle]]
+repo = "tt-hous/laya-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150", "p150x4"]
+validation = "separate"
+
+[[bundle]]
+repo = "tt-hous/laya-typed-decisions-p150"
+kind = "container"
+engine = "tt-dit-server"
+hardware = ["p150", "p150x4"]
+validation = "separate"
 
 [[bundle]]
 repo = "tt-hous/muse-glimmer-30b"
