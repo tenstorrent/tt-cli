@@ -252,14 +252,6 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
-repo = "mando2222/llama-3.2-3b-blackhole-v51"
-kind = "container"
-engine = "vllm-plugin"
-hardware = ["p150"]
-validation = "sweep"
-validated_on = "2026-09-25"
-
-[[bundle]]
 repo = "mando2222/qwen3-32b-blackhole-v51"
 kind = "container"
 engine = "vllm-plugin"
@@ -323,7 +315,7 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
-repo = "raahemnabeel/qwen3-5-122b-a10b-blackholex4"
+repo = "raahemnabeel/qwen3-5-122b-a10b"
 kind = "container"
 engine = "vllm-plugin"
 hardware = ["p150x4", "p300x2"]
@@ -331,7 +323,7 @@ validation = "separate"
 validated_on = "2026-10-01"
 
 [[bundle]]
-repo = "raahemnabeel/glm-4.5-air-blackhole"
+repo = "raahemnabeel/glm-4.5-air"
 kind = "container"
 engine = "vllm-plugin"
 hardware = ["p150x4", "p300x2"]
@@ -347,7 +339,7 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
-repo = "raahemnabeel/qwen3-coder-next-blackhole"
+repo = "raahemnabeel/qwen3-coder-next"
 kind = "container"
 engine = "vllm-plugin"
 hardware = ["p150x2", "p150x4", "p300", "p300x2"]
@@ -373,7 +365,7 @@ validated_on = "2026-09-25"
 repo = "stisiTT/gemma-4-12b-it-p150"
 kind = "container"
 engine = "vllm-plugin"
-hardware = ["p150"]
+hardware = ["p100", "p150"]
 validation = "sweep"
 validated_on = "2026-09-25"
 
@@ -381,7 +373,7 @@ validated_on = "2026-09-25"
 repo = "stisiTT/llama-3.2-3b-blackhole-v51"
 kind = "container"
 engine = "vllm-plugin"
-hardware = ["p150"]
+hardware = ["p100", "p150"]
 validation = "sweep"
 validated_on = "2026-09-25"
 
@@ -389,7 +381,7 @@ validated_on = "2026-09-25"
 repo = "stisiTT/smollm2-135m-instruct-p150"
 kind = "container"
 engine = "vllm-plugin"
-hardware = ["p150"]
+hardware = ["p100", "p150"]
 validation = "sweep"
 validated_on = "2026-09-25"
 
@@ -401,28 +393,28 @@ hardware = ["p150x2"]
 validation = "separate"
 
 [[bundle]]
-repo = "tt-hous/clm-v0.1-8b-p150"
+repo = "tt-hous/clm-v0.1-8b"
 kind = "container"
 engine = "tt-dit-server"
 hardware = ["p150", "p150x4"]
 validation = "separate"
 
 [[bundle]]
-repo = "tt-hous/gemma-4-26B-A4B-it_p150_p150x2_p150x4"
+repo = "tt-hous/gemma-4-26b-a4b-it"
 kind = "container"
 engine = "vllm-plugin"
 hardware = ["p150", "p150x2", "p150x4"]
 validation = "separate"
 
 [[bundle]]
-repo = "tt-hous/gpt-oss-120b-p150x4"
+repo = "tt-hous/gpt-oss-120b"
 kind = "container"
 engine = "vllm-plugin"
 hardware = ["p150x4"]
 validation = "separate"
 
 [[bundle]]
-repo = "tt-hous/gpt-oss-20b-p150"
+repo = "tt-hous/gpt-oss-20b"
 kind = "container"
 engine = "vllm-plugin"
 hardware = ["p150", "p150x2"]
@@ -438,14 +430,14 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
-repo = "tt-hous/laya-p150"
+repo = "tt-hous/laya"
 kind = "container"
 engine = "tt-dit-server"
 hardware = ["p150", "p150x4"]
 validation = "separate"
 
 [[bundle]]
-repo = "tt-hous/laya-typed-decisions-p150"
+repo = "tt-hous/laya-typed-decisions"
 kind = "container"
 engine = "tt-dit-server"
 hardware = ["p150", "p150x4"]
@@ -460,7 +452,7 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
-repo = "tt-hous/ornith-1.0-35b-p150"
+repo = "tt-hous/ornith-1.0-35b"
 kind = "container"
 engine = "vllm-fork"
 hardware = ["p100", "p150", "p150x2", "p150x4"]
@@ -475,7 +467,7 @@ hardware = ["p150", "p150x2", "p150x4"]
 validation = "separate"
 
 [[bundle]]
-repo = "tt-hous/qwen3.6-27b-p150x4"
+repo = "tt-hous/qwen3.6-27b"
 kind = "container"
 engine = "vllm-plugin"
 hardware = ["p150x4"]
@@ -483,7 +475,7 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
-repo = "tt-hous/qwen3.8-27b-p150x4"
+repo = "tt-hous/qwen3.8-27b"
 kind = "container"
 engine = "vllm-plugin"
 hardware = ["p150x4"]
@@ -491,7 +483,7 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
-repo = "tt-hous/qwen3.8-flash-next-p300x2"
+repo = "tt-hous/qwen3.8-flash-next"
 kind = "container"
 engine = "vllm-plugin"
 hardware = ["p300x2"]
