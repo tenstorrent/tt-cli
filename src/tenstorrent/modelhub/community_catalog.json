@@ -367,7 +367,7 @@
    "validated_on": "2026-09-25"
   },
   {
-   "repo": "ndaly/MiMo-V2.6-Distill-Qwen-9B-tt-p150",
+   "repo": "ndaly/MiMo-V2.6-Distill-Qwen-9B",
    "kind": "container",
    "engine": "vllm-plugin",
    "arch": "blackhole",
@@ -378,7 +378,7 @@
    "validated_on": "2026-10-09"
   },
   {
-   "repo": "ndaly/Mistral-Small-4-119B-2603-tt-p300x2",
+   "repo": "ndaly/Mistral-Small-4-119B-2603",
    "kind": "container",
    "engine": "vllm-plugin",
    "arch": "blackhole",
@@ -389,7 +389,7 @@
    "validated_on": "2026-09-25"
   },
   {
-   "repo": "ndaly/Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+   "repo": "ndaly/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
    "kind": "container",
    "engine": "vllm-plugin",
    "arch": "blackhole",
@@ -400,7 +400,7 @@
    "validated_on": "2026-10-13"
   },
   {
-   "repo": "ndaly/Voxtral-Mini-4B-Realtime-2602-tt-p300x2",
+   "repo": "ndaly/Voxtral-Mini-4B-Realtime-2602",
    "kind": "container",
    "engine": "vllm-plugin",
    "arch": "blackhole",
