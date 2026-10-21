@@ -252,14 +252,6 @@ validation = "sweep"
 validated_on = "2026-09-25"
 
 [[bundle]]
-repo = "mando2222/llama-3.2-3b-blackhole-v51"
-kind = "container"
-engine = "vllm-plugin"
-hardware = ["p150"]
-validation = "sweep"
-validated_on = "2026-09-25"
-
-[[bundle]]
 repo = "mando2222/qwen3-32b-blackhole-v51"
 kind = "container"
 engine = "vllm-plugin"
