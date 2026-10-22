@@ -667,9 +667,14 @@ class InferenceServerBackend:
         (see _serve_watched); anything else hands it the terminal.
 
         run.py downloads the weights the container bind-mounts, so it runs under a
-        container-readable umask."""
+        container-readable umask. It saves HF_TOKEN to <checkout>/.env only when that
+        file is missing, and the container reads the token from there alone, so an
+        empty .env gets the token here, created private."""
         dotenv = Path(plan.cwd) / ".env"
-        os.close(os.open(dotenv, os.O_CREAT | os.O_WRONLY, 0o600))
+        fd = os.open(dotenv, os.O_CREAT | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w") as f:
+            if os.fstat(fd).st_size == 0 and plan.env.get("HF_TOKEN"):
+                f.write(f"HF_TOKEN={plan.env['HF_TOKEN']}\n")
         with container_readable_umask():
             return self._launch(plan)
 

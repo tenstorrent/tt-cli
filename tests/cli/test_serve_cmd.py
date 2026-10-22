@@ -1717,10 +1717,25 @@ def test_serve_keeps_the_checkouts_token_file_private(
     dotenv = tmp_path / "inference-repo" / ".env"
     assert runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"]).exit_code == 0
     assert stat.S_IMODE(dotenv.stat().st_mode) == 0o600
+    assert dotenv.read_text() == "HF_TOKEN=hf_token_for_tests\n"
 
     dotenv.chmod(0o640)  # one the user set up themselves is left alone
     assert runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"]).exit_code == 0
     assert stat.S_IMODE(dotenv.stat().st_mode) == 0o640
+    assert dotenv.read_text() == "HF_TOKEN=hf_token_for_tests\n"
+
+
+@pytest.mark.fakes_only
+def test_serve_saves_the_token_to_an_empty_checkout_dotenv(
+    runner, docker_present, fake_server, tmp_path
+):
+    """run.py saves HF_TOKEN only when <checkout>/.env is missing, and the container
+    reads the token from that file alone, so an empty one (as 1.2.0 left behind)
+    would serve gated models without it."""
+    dotenv = tmp_path / "inference-repo" / ".env"
+    dotenv.touch()
+    assert runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"]).exit_code == 0
+    assert dotenv.read_text() == "HF_TOKEN=hf_token_for_tests\n"
 
 
 @pytest.mark.fakes_only
