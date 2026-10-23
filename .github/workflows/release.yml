@@ -213,6 +213,18 @@ jobs:
           # repo's "Latest release".
           prerelease: ${{ needs.build.outputs.prerelease == 'true' }}
 
+  # Not a prerequisite of PyPI: a failed upload is re-run by hand from
+  # publish-compat-overrides.yml.
+  publish-compat-overrides:
+    name: Publish compatibility matrix overrides
+    needs: [build, test]
+    if: >-
+      github.repository == 'tenstorrent/tt-cli'
+      && startsWith(github.ref, 'refs/tags/v')
+      && needs.build.outputs.prerelease == 'false'
+    uses: ./.github/workflows/publish-compat-overrides.yml
+    secrets: inherit
+
   publish-pypi:
     name: Publish to PyPI
     needs: [build, test, github-release]
