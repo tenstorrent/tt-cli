@@ -167,13 +167,19 @@ class CatalogSource(Protocol):
     def entries(self) -> list[ModelInfo]: ...
 
 
-def scan_hf_cache() -> dict[str, int]:
+def scan_hf_cache(config: ConfigStore | None = None) -> dict[str, int]:
     """repo_id → size on disk, for models present in the HuggingFace cache."""
     from huggingface_hub import scan_cache_dir
     from huggingface_hub.errors import CacheNotFound
+    from .hub import hf_cache_dir
 
+    if config is None:
+        from ..config.paths import get_paths
+        from ..config.store import ConfigStore as _CS
+
+        config = _CS(get_paths())
     try:
-        info = scan_cache_dir()
+        info = scan_cache_dir(cache_dir=hf_cache_dir(config))
     except CacheNotFound:
         return {}
     return {
