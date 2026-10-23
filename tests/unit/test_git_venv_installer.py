@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -106,6 +108,20 @@ def test_git_venv_installer_reuses_existing_checkout(paths):
     # and offline works once seeded
     installer.install(SPEC, offline=True)
     assert len(runner.calls) == calls_after_first
+
+
+def test_git_venv_installer_clones_under_a_container_readable_umask(paths):
+    """Studio bind-mounts files from the checkout into containers running as uid
+    1000 and builds images from it; under a restrictive user umask they would be
+    unreadable to it."""
+    previous = os.umask(0o077)
+    try:
+        result = GitVenvInstaller(paths, StubRunner(), uv_bin="uv-stub").install(SPEC)
+        assert stat.S_IMODE(result.path.stat().st_mode) == 0o644
+        assert stat.S_IMODE(result.path.parent.stat().st_mode) == 0o755
+        assert os.umask(0o077) == 0o077
+    finally:
+        os.umask(previous)
 
 
 def test_git_venv_installer_offline_without_checkout(paths):

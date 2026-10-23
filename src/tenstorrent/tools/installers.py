@@ -20,6 +20,7 @@ from typing import Any, Callable, Protocol
 
 from ..config.paths import Paths
 from ..errors import ExitCode, TTError
+from ..modelhub.hub import container_readable_umask
 from ..ui.console import null_ui
 from ..ui.parsers import GitCloneProgress, UvPipProgress
 from ..ui.stream import run_streamed
@@ -231,29 +232,30 @@ class GitVenvInstaller:
                 f"Tool {spec.name} has no repo URL in the manifest.",
                 exit_code=ExitCode.CONFIG,
             )
-        tool_dir.mkdir(parents=True, exist_ok=True)
         # These four commands used to be silent captures, so a first `tt serve` on
         # a fresh box sat on a dead terminal for minutes. git and uv both report
         # exact counts, so each gets a live row with a real denominator.
         clone = GitCloneProgress(f"Cloning {spec.name} {spec.golden_version}")
-        run_streamed(
-            self.runner,
-            self._ui,
-            [
-                "git",
-                "clone",
-                "--progress",  # git only reports progress when it isn't a tty
-                "--depth",
-                "1",
-                "--branch",
-                spec.golden_version,
-                spec.repo,
-                str(src_dir),
-            ],
-            label=clone.label,
-            parser=clone,
-            tool=f"git (cloning {spec.name})",
-        )
+        with container_readable_umask():
+            tool_dir.mkdir(parents=True, exist_ok=True)
+            run_streamed(
+                self.runner,
+                self._ui,
+                [
+                    "git",
+                    "clone",
+                    "--progress",  # git only reports progress when it isn't a tty
+                    "--depth",
+                    "1",
+                    "--branch",
+                    spec.golden_version,
+                    spec.repo,
+                    str(src_dir),
+                ],
+                label=clone.label,
+                parser=clone,
+                tool=f"git (cloning {spec.name})",
+            )
         uv = self._uv_bin or find_uv_bin()
         venv_dir = tool_dir / "venv"
         argv = [uv, "venv", str(venv_dir)]
