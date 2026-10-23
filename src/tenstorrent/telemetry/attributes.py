@@ -171,6 +171,17 @@ def _device_config(value: Any) -> str | None:
     return _member(value, _device_configs())
 
 
+# Mirrors commands/agent.py's GOALS keys. Not imported from there: agent.py pulls in
+# typer/rich/cli.py/context.py, and attributes.py loads early (via cli.py's own
+# `from .telemetry import NULL_SESSION`), so importing it here risks a cycle. Three
+# literal strings that change about as often as the CLI's whole goal taxonomy does.
+_AGENT_GOALS = frozenset({"deploy", "bringup", "develop"})
+
+
+def _agent_goal(value: Any) -> str | None:
+    return _member(value, _AGENT_GOALS)
+
+
 def _workflow(value: Any) -> str | None:
     """Click params hold the raw string; Typer only converts to the Enum afterwards."""
     return _member(value.value if isinstance(value, Enum) else value, _workflows())
@@ -213,6 +224,7 @@ _SERVE_VALUES: dict[str, tuple[str, Callable[[Any], Any]]] = {
 
 # (command path without the program name) -> {param name: (property, validator)}
 _SAFE_VALUES: dict[str, dict[str, tuple[str, Callable[[Any], Any]]]] = {
+    "agent": {"goal": ("agent_goal", _agent_goal)},
     "model pull": {"name": ("model", _model_name)},
     "model info": {"name": ("model", _model_name)},
     "model compile": {"name": ("model", _model_name)},

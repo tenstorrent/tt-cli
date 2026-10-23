@@ -132,6 +132,33 @@ def test_command_properties_record_names_not_values():
     assert "private_model" not in str(props)
 
 
+def test_agent_goal_is_recorded_from_the_closed_vocabulary():
+    """`tt agent` normalizes its goal param to the canonical key (see agent.py's
+    ctx.params mutation) before this ever runs, so a FakeCtx with the canonical
+    value is what's actually seen -- letter/number/interactive-pick inputs never
+    reach this layer un-normalized."""
+
+    class FakeCtx:
+        command_path = "tt agent"
+        params = {"goal": "bringup"}
+
+        def get_parameter_source(self, name):
+            return None
+
+    assert command_properties(FakeCtx())["agent_goal"] == "bringup"
+
+
+def test_agent_goal_outside_the_vocabulary_is_dropped():
+    class FakeCtx:
+        command_path = "tt agent"
+        params = {"goal": "not-a-real-goal"}
+
+        def get_parameter_source(self, name):
+            return None
+
+    assert "agent_goal" not in command_properties(FakeCtx())
+
+
 # -- the event envelope --------------------------------------------------------------
 def test_event_carries_a_v4_uuid_the_install_id_and_a_utc_capture_time():
     before = datetime.now(timezone.utc)
@@ -213,6 +240,7 @@ def test_the_property_set_is_closed():
         "config_key",
         "installer_version",
         "device_count",
+        "agent_goal",
     }
 
 
