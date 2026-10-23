@@ -156,3 +156,52 @@ def test_top_execs_tui(runner, monkeypatch, fake_bin):
     result = runner.invoke(app, ["device", "top"])
     assert result.exit_code == 0
     assert recorded["argv"] == [str(fake_bin / "tt-smi")]
+
+
+def test_status_reads_snapshot_file_without_smi(runner, tmp_path, monkeypatch):
+    monkeypatch.delenv("TT_TOOL_BIN_TT_SMI", raising=False)
+    snap_path = tmp_path / "snap.json"
+    snap_path.write_text(
+        json.dumps(
+            {
+                "host_info": {"Driver": "TT-KMD 2.99.0"},
+                "device_info": [
+                    {
+                        "board_info": {
+                            "board_type": "n300",
+                            "board_id": "0100018611902003",
+                            "bus_id": "0000:41:00.0",
+                            "coords": "(0, 0)",
+                            "dram_status": "True",
+                            "pcie_speed": "4",
+                            "pcie_width": "16",
+                        },
+                        "telemetry": {
+                            "voltage": "0.80",
+                            "current": "25.0",
+                            "power": "20.0",
+                            "aiclk": "1000",
+                            "asic_temperature": "42.5",
+                        },
+                        "firmwares": {"fw_bundle_version": "18.5.0"},
+                    }
+                ],
+            }
+        )
+    )
+    result = runner.invoke(app, ["device", "status", "--snapshot", str(snap_path), "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["host"]["Driver"] == "TT-KMD 2.99.0"
+    assert payload["devices"][0]["board_type"] == "n300"
+
+    info_res = runner.invoke(app, ["device", "info", "-f", str(snap_path)])
+    assert info_res.exit_code == 0
+    assert "0100018611902003" in info_res.output
+
+
+def test_status_snapshot_file_missing_exits_usage(runner, tmp_path):
+    missing = tmp_path / "missing.json"
+    result = runner.invoke(app, ["device", "status", "--snapshot", str(missing)])
+    assert result.exit_code == ExitCode.USAGE
+

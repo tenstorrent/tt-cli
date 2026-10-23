@@ -97,6 +97,30 @@ def parse_snapshot(data: dict) -> SystemSnapshot:
     return SystemSnapshot(host=host, devices=devices, warnings=warnings)
 
 
+def load_snapshot_file(path: Path) -> dict:
+    """Load a raw tt-smi JSON snapshot from *path*."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise TTError(
+            f"Could not read snapshot file {str(path)!r}.",
+            why=str(exc),
+            next_step="Pass a readable JSON snapshot produced by `tt-smi -s -f <file>` or `tt device status --raw`.",
+            exit_code=ExitCode.USAGE,
+            reason="smi.snapshot_file_unreadable",
+        ) from exc
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise TTError(
+            f"Snapshot file {str(path)!r} is not valid JSON.",
+            why=f"invalid JSON: {exc}",
+            next_step="Pass a valid JSON snapshot produced by `tt-smi -s -f <file>` or `tt device status --raw`.",
+            exit_code=ExitCode.USAGE,
+            reason="smi.snapshot_unparseable",
+        ) from exc
+
+
 class SmiDelegatedBackend:
     def __init__(self, registry: ToolRegistry, runner: Runner, paths: Paths) -> None:
         self.registry = registry
