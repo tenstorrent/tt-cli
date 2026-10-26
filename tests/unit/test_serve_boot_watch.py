@@ -524,6 +524,20 @@ def test_a_bundle_is_found_by_name_not_by_the_namespace_it_was_pulled_from():
         assert prepare.resolve_container(runner, "docker") == "73b96ef78488"
 
 
+def test_the_container_this_serve_started_is_found_whatever_it_is_called():
+    """`tt serve ns/qwen3-coder-next` ran the `-blackhole` bundle: neither label
+    matched the id, the boot went unwatched and no progress was shown. What
+    identifies the container is that it was not there before."""
+    before = _docker_ps([("old", "other-bundle", "ns/other-bundle")])
+    after = _docker_ps([
+        ("b60f1612dd91", "qwen3-coder-next-blackhole", "ns/qwen3-coder-next-blackhole"),
+        ("old", "other-bundle", "ns/other-bundle"),
+    ])
+    prepare = ModelManagerPreparation("ns/qwen3-coder-next")
+    prepare.before_launch(before, "docker")
+    assert prepare.resolve_container(after, "docker") == "b60f1612dd91"
+
+
 def test_another_bundles_container_is_not_mistaken_for_ours():
     prepare = ModelManagerPreparation("ns/qwen3-a3b")
     runner = _docker_ps([("aaa", "devstral-small-2-24b", "tenstorrent/devstral-small-2-24b")])

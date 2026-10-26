@@ -217,6 +217,7 @@ def watch_serve(
 
         view.plan([*prepare.planned, *_boot_steps(engines)])
         view.begin(prepare.label, placeholder=True)
+        prepare.before_launch(runner, runtime)
         proc = runner.popen_piped(argv, env=env, cwd=cwd, tool=tool)
         outcome = _watch(
             view, prepare, trackers, engines, keep,
