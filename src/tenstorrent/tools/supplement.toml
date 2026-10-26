@@ -13,8 +13,8 @@ schema_version = 1
 # means tt would display and pin versions the installer won't install.
 # `tt update` refuses to run a golden install.sh whose tag differs from `tag`.
 # Bump the installer pin and this table together.
-tag = "v3.0.0"
-sha256 = "90081d2efe5bcb236ea3cec6c28eb0115f4ac37d329194f4d221bfaa5e202fd6"
+tag = "v4.0.0"
+sha256 = "6aa32fd0f8f66200e07272aaf419033a1823cf75c1e08369e481e20bf1a1e4a9"
 url_template = "https://github.com/tenstorrent/tt-sw-manifest/releases/download/{tag}/golden.json"
 
 [tools.tt-installer]
@@ -27,21 +27,21 @@ kind = "script"
 # upstream defaults). tt-cli explicitly passes --update-firmware=on for a normal
 # update so current or newer firmware is never reflashed; --force opts back into
 # the upstream force behavior.
-golden_version = "3.6.2"
+golden_version = "3.6.3"
 # Interpreter the installer's managed venv (~/.tenstorrent-venv) is built with.
 # Passed as `--python-version=<this> --use-uv`; install.sh only honors the pin with
 # --use-uv, which lets uv provision the interpreter instead of trusting the distro
 # python. Only applied when running the golden installer — older releases predate
 # the flag and would die on an unrecognized option.
 python = "3.12"
-url = "https://github.com/tenstorrent/tt-installer/releases/download/v3.6.2/install.sh"
+url = "https://github.com/tenstorrent/tt-installer/releases/download/v3.6.3/install.sh"
 # {version} slot lets `tt update <semver>` fetch a specific install.sh release
 # (e.g. to downgrade the system stack). Only the golden version is sha256-pinned;
 # user-requested versions are fetched unpinned (with a warning).
 url_template = "https://github.com/tenstorrent/tt-installer/releases/download/v{version}/install.sh"
 # sha256 of the released v3.6.1 asset (pinned 2026-10-01; matches GitHub's
 # published asset digest for the release).
-sha256 = "d243365a14e7f836603d8607be5fdf90f2f0254d186ab19b42cfa29086fbf49d"
+sha256 = "be62ee193943e9febe85099d87259c0f5edb3d22157a9d8ac12d3ed488bcb3ea"
 needs_sudo = true # install.sh sudo's internally
 
 [tools.tt-inference-server]
