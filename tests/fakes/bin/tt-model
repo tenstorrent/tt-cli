@@ -3,7 +3,7 @@
 Never touches the network or the Hub.
 
 Subcommands whose *output* tt parses or shows get a canned answer in tt-model's own
-shape (search --json, profiles, curl --print); everything else just records."""
+shape (search --json, profiles, check --print); everything else just records."""
 
 import json
 import os
@@ -65,7 +65,7 @@ def main() -> int:
     if sub == "profiles":
         print("  • default (default)   p150x2 · N300   seqs 32 · len 4096")
         return 0
-    if sub == "curl" and "--print" in argv:
+    if sub in ("check", "curl") and "--print" in argv:
         base = argv[argv.index("--base-url") + 1] if "--base-url" in argv else "http://localhost:20000"
         print(f"curl -sS {base}/v1/chat/completions -H 'Content-Type: application/json' -d '{{}}'")
         return 0

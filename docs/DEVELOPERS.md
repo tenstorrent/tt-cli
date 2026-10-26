@@ -123,7 +123,7 @@ the loop; the mapping is one-to-one and tt shells out to the pinned `tt-model`:
 | `tt model pull NS/NAME [--force] [--no-weights]` | `pull [--force] [--with-weights]` | tt asks for the weights by default; tt-model does not |
 | `tt model profiles NS/NAME` | `profiles` | `--json` reads the pulled manifest instead |
 | `tt serve NS/NAME [--port] [--profile] [--detach] [--print] [--refresh] [--no-update-check] [--no-weights] [-- …]` | `serve` | `--offline` becomes `--local-only`; everything after the id is tt-model's passthrough |
-| `tt model curl [PROMPT] [--port/--url] [--model] [--print] [--key value…]` | `curl` | the port defaults to the one server tt is running, found like `tt launch` does |
+| `tt model check [PROMPT] [--port/--url] [--model] [--task] [--tools/--no-tools] [-o] [--print] [--key value…]` | `check` | the port defaults to the one server tt is running, found like `tt launch` does |
 | `tt model ps` / `tt model logs NS/NAME [-f] [--profile]` | `logs` | |
 | `tt model stop NS/NAME [--profile]` | `stop` | |
 | `tt model rm NS/NAME [--keep-cache] [--include-weights]` | `rm` | tt adds `--dry-run` (prints the delegation) and a confirmation |
