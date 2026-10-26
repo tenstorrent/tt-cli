@@ -2478,3 +2478,52 @@ def test_model_curl_is_a_hidden_alias_for_check(runner, fake_model_manager, isol
     assert "curl" not in runner.invoke(app, ["model", "--help"]).output
     assert runner.invoke(app, ["model", "curl", "hi", "--port", "8100"]).exit_code == 0
     assert _last_argv(fake_model_manager) == ["check", "hi", "--base-url", "http://127.0.0.1:8100"]
+
+
+def _serving(monkeypatch, served_id):
+    from tenstorrent.launchers.discovery import RunningModel
+
+    monkeypatch.setattr(
+        "tenstorrent.commands.model.discover",
+        lambda base: [RunningModel(served_id=served_id, base_url=base, entry=None)],
+    )
+
+
+@pytest.mark.fakes_only
+@pytest.mark.parametrize(
+    "served, extra",
+    [
+        ("meta-llama/Llama-3.1-8B-Instruct", ["--task", "text-generation", "--tools"]),
+        ("openai/whisper-large-v3", ["--task", "automatic-speech-recognition"]),
+        ("resnet-50", ["--task", "image-classification"]),
+        ("Qwen/Qwen3-32B", ["--task", "text-generation", "--tools"]),
+    ],
+)
+def test_model_check_infers_task_and_tools_for_a_catalog_model(
+    runner, fake_model_manager, isolated_dirs, monkeypatch, served, extra
+):
+    """A catalog model has no manifest, so tt supplies what the support list knows."""
+    _serving(monkeypatch, served)
+    assert runner.invoke(app, ["model", "check", "--port", "8100"]).exit_code == 0
+    assert _last_argv(fake_model_manager) == ["check", "--base-url", "http://127.0.0.1:8100", *extra]
+
+
+@pytest.mark.fakes_only
+def test_model_check_leaves_unknown_models_to_tt_model(
+    runner, fake_model_manager, isolated_dirs, monkeypatch
+):
+    """A community bundle is not in the catalog: tt-model reads its own manifest."""
+    _serving(monkeypatch, "acme/community-bundle")
+    assert runner.invoke(app, ["model", "check", "--port", "8100"]).exit_code == 0
+    assert _last_argv(fake_model_manager) == ["check", "--base-url", "http://127.0.0.1:8100"]
+
+
+@pytest.mark.fakes_only
+def test_model_check_explicit_task_beats_the_catalog(
+    runner, fake_model_manager, isolated_dirs, monkeypatch
+):
+    _serving(monkeypatch, "meta-llama/Llama-3.1-8B-Instruct")
+    runner.invoke(app, ["model", "check", "--port", "8100", "--no-tools"])
+    assert _last_argv(fake_model_manager) == [
+        "check", "--base-url", "http://127.0.0.1:8100", "--no-tools",
+    ]

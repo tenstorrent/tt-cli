@@ -42,7 +42,8 @@ from ..cli import (
 )
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
-from ..launchers.discovery import DEFAULT_PORT
+from ..launchers.base import tool_call_parser
+from ..launchers.discovery import DEFAULT_PORT, discover
 from ..models.model import ModelInfo
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub import bundles, hub
@@ -1572,6 +1573,38 @@ def _served_base_url(appctx, *, port: int | None, url: str | None) -> str:
     return f"http://127.0.0.1:{ports[0] if ports else DEFAULT_PORT}"
 
 
+# The catalog's model_type, as the Hugging Face pipeline tag `tt-model check` takes.
+_TASK_BY_MODEL_TYPE = {
+    "llm": "text-generation",
+    "vlm": "image-text-to-text",
+    "image": "text-to-image",
+    "embedding": "feature-extraction",
+    "audio": "automatic-speech-recognition",
+    "text_to_speech": "text-to-speech",
+    "video": "text-to-video",
+    "cnn": "image-classification",
+}
+
+
+def _catalog_task(base_url: str, model: str | None) -> tuple[str | None, bool | None]:
+    """Task and tool-calling for a catalog model being served, from the support list.
+
+    Community bundles carry both in their manifest, which tt-model reads itself; a
+    catalog model has no manifest, so tt supplies the same facts from its own
+    catalog. Anything tt cannot resolve (server down, model not in the catalog)
+    returns nothing and tt-model's own detection applies."""
+    try:
+        served = [s.served_id for s in discover(f"{base_url}/v1")]
+    except TTError:
+        return None, None
+    wanted = model or (served[0] if served else None)
+    entry = ModelCatalog().find(wanted, cached_sizes={}) if wanted else None
+    if entry is None:
+        return None, None
+    task = _TASK_BY_MODEL_TYPE.get(entry.model_type)
+    return task, (True if task == "text-generation" and tool_call_parser(entry) else None)
+
+
 def _model_check(
     ctx, prompt, port, url, model, print_only, task, tools, output,
     json_mode, quiet, verbose, no_color, *, verb,
@@ -1585,6 +1618,8 @@ def _model_check(
             exit_code=ExitCode.USAGE,
         )
     base_url = _served_base_url(appctx, port=port, url=url)
+    if task is None and tools is None:
+        task, tools = _catalog_task(base_url, model)
     backend = ModelManagerBackend(
         appctx.registry, appctx.runner, appctx.config, appctx.output
     )
