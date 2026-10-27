@@ -698,7 +698,9 @@ def test_list_json_reports_availability(runner, fake_client_named, monkeypatch):
 
 
 @pytest.mark.fakes_only
-def test_stop_stops_a_running_container(runner, monkeypatch, tmp_path):
+@pytest.mark.parametrize("running", [True, False])
+def test_stop_removes_the_container_but_not_its_volume(runner, monkeypatch, tmp_path, running):
+    """Removed so the next launch is set up for whatever model is served then."""
     log = tmp_path / "docker.jsonl"
     exe = tmp_path / "docker"
     exe.write_text(
@@ -706,7 +708,7 @@ def test_stop_stops_a_running_container(runner, monkeypatch, tmp_path):
         "import json, os, sys\n"
         "open(os.environ['FAKE_DOCKER_LOG'], 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
         "if sys.argv[1:2] == ['inspect']:\n"
-        "    print(json.dumps({'State': {'Running': True}, 'Config': {'Env': []}}))\n"
+        f"    print(json.dumps({{'State': {{'Running': {running}}}, 'Config': {{'Env': []}}}}))\n"
         "sys.exit(0)\n"
     )
     exe.chmod(0o755)
@@ -715,9 +717,11 @@ def test_stop_stops_a_running_container(runner, monkeypatch, tmp_path):
     result = runner.invoke(app, ["launch", "stop", "openwebui"])
     assert result.exit_code == 0, result.output
     calls = [json.loads(line) for line in log.read_text().splitlines()]
-    # stop, not rm: the volume holds the user's chats.
-    assert ["stop", "tt-open-webui"] in calls
-    assert not [c for c in calls if c[:1] == ["rm"]]
+    assert (["stop", "tt-open-webui"] in calls) is running
+    assert ["rm", "tt-open-webui"] in calls
+    # The volume is the user's data and is never touched.
+    assert not [c for c in calls if c[:1] == ["volume"]]
+    assert not [c for c in calls if "-f" in c]
 
 
 @pytest.mark.fakes_only

@@ -72,31 +72,31 @@ def test_container_refuses_a_taken_port_before_pulling(monkeypatch):
 def test_an_already_running_container_does_not_check_the_port(monkeypatch):
     """Adopting our own container must not fail on the port it is itself using."""
     monkeypatch.setattr("tenstorrent.launchers.container.port_is_free", lambda port: False)
-
-    class Running:
-        def capture(self, argv, **kwargs):
-            doc = {"State": {"Running": True}, "Config": {"Env": []}}
-            return CaptureResult(returncode=0, stdout=json.dumps(doc), stderr="")
-
-    prep = LAUNCHERS["openwebui"].plan(
+    launcher = LAUNCHERS["openwebui"]
+    prep = launcher.plan(
         RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1"),
         LaunchOptions(web_port=3000),
         executable="/usr/bin/docker",
-        runner=Running(),
+        runner=_Existing(launcher, running=True),
     )
     assert prep.steps == [] and prep.consent is None
 
 
 class _Existing:
-    """An inspect record for a container created with -p 3080:<port>."""
+    """An inspect record for a container created with -p 3080:<port>, set up for
+    `model` unless `env` says otherwise."""
 
-    def __init__(self, launcher, *, running: bool):
+    def __init__(self, launcher, *, running: bool, model=None, env=None):
         self.launcher, self.running = launcher, running
+        if env is None:
+            model = model or RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1")
+            env = launcher.container_env(model, container_base_url(model.base_url))
+        self.env = env
 
     def capture(self, argv, **kwargs):
         doc = {
             "State": {"Running": self.running},
-            "Config": {"Env": []},
+            "Config": {"Env": [f"{key}={value}" for key, value in self.env.items()]},
             "HostConfig": {
                 "PortBindings": {
                     f"{self.launcher.container_port}/tcp": [{"HostPort": "3080"}]
@@ -328,24 +328,36 @@ def test_openwebui_plans_a_pull_and_a_run_and_asks_first():
     assert "WEBUI_AUTH=False" in run
 
 
-def test_openwebui_refuses_a_container_built_for_another_server():
+@pytest.mark.parametrize("running", [True, False])
+def test_a_container_set_up_for_another_model_is_recreated_on_its_port(running):
+    launcher = LAUNCHERS["anythingllm"]
+    old = RunningModel(served_id="Old/Model", base_url="http://127.0.0.1:8000/v1")
+    new = RunningModel(served_id="New/Model", base_url="http://127.0.0.1:8001/v1")
+    prep = launcher.plan(
+        new,
+        LaunchOptions(web_port=9999),
+        executable="/usr/bin/docker",
+        runner=_Existing(launcher, running=running, model=old),
+    )
+    stop = [["/usr/bin/docker", "stop", "tt-anythingllm"]] if running else []
+    assert prep.steps[:-1] == [*stop, ["/usr/bin/docker", "rm", "tt-anythingllm"]]
+    run = prep.steps[-1]
+    assert "3080:3001" in run  # the port it had, so an open tab keeps working
+    assert "GENERIC_OPEN_AI_MODEL_PREF=New/Model" in run
+    assert "-f" not in prep.steps[-2]  # the volume holds the user's chats
+    assert "Recreate" in prep.consent and "Old/Model" in prep.consent
+
+
+def test_a_container_set_up_for_this_model_is_reused():
     launcher = LAUNCHERS["openwebui"]
-    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
-
-    class Stale:
-        def capture(self, argv, **kwargs):
-            doc = {
-                "State": {"Running": True},
-                "Config": {"Env": ["OPENAI_API_BASE_URL=http://host.docker.internal:9999/v1"]},
-            }
-            return CaptureResult(returncode=0, stdout=json.dumps(doc), stderr="")
-
-    with pytest.raises(TTError) as err:
-        launcher.plan(
-            model, LaunchOptions(), executable="/usr/bin/docker", runner=Stale()
-        )
-    assert err.value.exit_code == ExitCode.CONFIG
-    assert "docker rm -f" in (err.value.next_step or "")
+    model = RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1")
+    prep = launcher.plan(
+        model,
+        LaunchOptions(),
+        executable="/usr/bin/docker",
+        runner=_Existing(launcher, running=True, model=model),
+    )
+    assert prep.steps == [] and prep.consent is None
 
 
 def test_pi_provider_block_matches_its_documented_shape(tmp_path, monkeypatch):

@@ -21,6 +21,8 @@ For these, tt pulls the image and starts the container itself, after asking you 
 | [Open WebUI](https://github.com/open-webui/open-webui) | `tt launch openwebui` | [Docker](https://docs.docker.com/engine/install/) or [Podman](https://podman.io/docs/installation). Nothing else: tt pulls `ghcr.io/open-webui/open-webui:main` | any chat model | container `tt-open-webui` at <http://localhost:3000> (or the next free port); chats are kept in the volume `tt-open-webui-data` |
 | [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm) | `tt launch anythingllm` | [Docker](https://docs.docker.com/engine/install/) or [Podman](https://podman.io/docs/installation). Nothing else: tt pulls `mintplexlabs/anythingllm:latest` | any chat model | container `tt-anythingllm` at <http://localhost:3000> (or the next free port); data is kept in the volume `tt-anythingllm-storage` |
 
+To switch a web UI to another model, launch it again once the new model is served (add `--model NAME` if several are). tt recreates the container for that model on the same port and keeps your chats.
+
 ## Terminal coding agents: you install them, tt configures them
 
 tt never installs these. Install the agent yourself, then `tt launch` writes the smallest config needed to reach your model and hands the terminal over to the agent.
@@ -52,7 +54,7 @@ It needs Docker (Podman is not supported). See [Serving backends](../README.md#s
 tt launch list                       # every client, and whether it's usable now
 tt launch <client>                   # connect it to the model you're serving
 tt launch <client> --dry-run         # show what would be done, change nothing
-tt launch stop openwebui             # stop a web UI (or the Hermes dashboard); its data is kept
+tt launch stop openwebui             # stop and remove a web UI (or stop the Hermes dashboard); its data is kept
 tt launch disconnect opencode        # undo the config tt wrote for a client
 ```
 
