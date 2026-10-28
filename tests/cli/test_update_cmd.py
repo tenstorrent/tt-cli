@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
+import hashlib
 import json
 import shutil
+from importlib import resources
 from pathlib import Path
 
 import pytest
+import tomlkit
 
 from tenstorrent.cli import app
 from tenstorrent.config.paths import get_paths
@@ -437,12 +440,22 @@ def test_update_offline_without_goldens_is_offline_error(runner, fake_uv, monkey
 
 
 @pytest.mark.fakes_only
-def test_update_fetches_goldens_when_not_cached(runner, fake_uv, monkeypatch, fakes_dir):
+def test_update_fetches_goldens_when_not_cached(
+    runner, fake_uv, monkeypatch, fakes_dir, tmp_path
+):
     # Without the override, update fetches golden.json at the pinned tag once,
-    # then works from the cache (second call: no fetch). The fixture is the
-    # verbatim released asset, so the supplement's recorded sha256 matches it.
+    # then works from the cache (second call: no fetch). The served blob is the
+    # fixture, so the supplement's recorded sha256 is patched to match it: the
+    # fixture need not track the pinned release (a golden-tag bump used to break
+    # this test until the fixture was re-captured by hand).
     monkeypatch.delenv("TT_GOLDEN_PATH")
     blob = (fakes_dir / "data" / "golden.json").read_bytes()
+    supplement = tomlkit.parse(
+        (resources.files("tenstorrent.tools") / "supplement.toml").read_text()
+    )
+    supplement["golden"]["sha256"] = hashlib.sha256(blob).hexdigest()
+    (tmp_path / "supplement.toml").write_text(tomlkit.dumps(supplement))
+    monkeypatch.setenv("TT_MANIFEST_PATH", str(tmp_path / "supplement.toml"))
     fetches = []
 
     def fake_fetch(url):
