@@ -1786,7 +1786,7 @@ def model_package(ctx: typer.Context) -> None:
                    rich_help_panel=PANEL_AUTHORING)
 @handle_tt_errors
 def model_package_thin(ctx: typer.Context) -> None:
-    """Beta: build a v6 thin bundle (`tt-model package-thin`; all flags are its own)."""
+    """Build a v6 thin bundle (`tt-model package-thin`; all flags are its own)."""
     _passthrough(ctx, "package-thin")
 
 
