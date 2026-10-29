@@ -43,6 +43,7 @@ from ..launchers.base import (
     tool_call_parser,
     tool_calling_models,
 )
+from ..launchers.container import ContainerLauncher
 from ..launchers.discovery import DEFAULT_PORT, base_url_for, discover
 from ..modelhub.catalog import ModelCatalog
 
@@ -382,7 +383,10 @@ def stop(
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """Stop a client's web service (a container, or Hermes' dashboard), keeping its data."""
+    """Stop a client's web service (a container, or Hermes' dashboard), keeping its data.
+
+    A container is removed too, so the next launch is set up for whatever model is
+    being served then."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(tool)
@@ -398,12 +402,18 @@ def stop(
             exit_code=ExitCode.USAGE,
         )
     executable = resolve_executable(launcher, appctx.config, appctx.output)
-    if state(executable, appctx.runner) != "running":
+    current = state(executable, appctx.runner)
+    container = isinstance(launcher, ContainerLauncher)
+    if current != "running" and not (container and current == "stopped"):
         appctx.output.status(f"{launcher.target()} is not running.")
         appctx.output.emit({"tool": launcher.id, "stopped": False}, renderer=lambda _: None)
         return
     launcher.stop(LaunchEnv(executable, appctx.runner, appctx.output))
-    appctx.output.status(f"Stopped {launcher.target()}; its data is kept.")
+    appctx.output.status(
+        f"Removed {launcher.target()}; its data volume is kept."
+        if container
+        else f"Stopped {launcher.target()}; its data is kept."
+    )
     appctx.output.emit({"tool": launcher.id, "stopped": True}, renderer=lambda _: None)
 
 

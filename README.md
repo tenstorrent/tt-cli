@@ -124,7 +124,7 @@ without one it says so up front rather than stopping at a prompt you cannot see.
 tt launch list                         # what can I connect, and is it usable now?
 tt serve Qwen3-32B --port 8000         # in another terminal
 tt launch openwebui --web-port 3080    # pull and run its container, after you confirm
-tt launch stop openwebui               # stop it, keeping its data
+tt launch stop openwebui               # stop and remove it, keeping its data
 tt launch hermes                       # Hermes Agent's terminal UI on the served model
 tt launch hermes --web                 # its web dashboard and chat, on the same model
 tt launch stop hermes                  # stop that dashboard (any running Hermes dashboard)
