@@ -6,7 +6,7 @@ One command for everything Tenstorrent.
 function natively or delegates to an existing tool (tt-smi, tt-installer, etc.) behind a stable interface.
 
 > [!IMPORTANT]
-> This is beta software. Expect breaking changes often as we add features. We welcome your feedback to help us improve tt-cli. If you have an issue or a comment, please don't hesitate to let us know through the GitHub [issues page](https://github.com/tenstorrent/tt-cli/issues/new).
+> We welcome your feedback to help us improve tt-cli. If you have an issue or a comment, please don't hesitate to let us know through the GitHub [issues page](https://github.com/tenstorrent/tt-cli/issues/new).
 
 ## Prerequisites
 
