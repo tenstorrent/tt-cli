@@ -160,7 +160,6 @@ This asks for a one-line subject, collects everything support usually asks for (
 
 In the spirit of every good bring-up log, the caveats up front rather than discovered later:
 
-- **tt-model-manager is still in beta.** No support guarantees; the bundle format can change. tt-cli itself is also beta software — expect breaking changes as features land.
 - Tenstorrent does not maintain community models brought up and posted via Hugging Face; the tooling makes them accessible.
 - Compatibility is **checked, not guaranteed**. Architecture mismatch fails hard on purpose; other mismatches warn and can be forced.
 
