@@ -417,7 +417,7 @@ validation = "separate"
 repo = "tt-hous/gpt-oss-20b"
 kind = "container"
 engine = "vllm-plugin"
-hardware = ["p150", "p150x2"]
+hardware = ["p150", "p150x2", "p150x4"]
 validation = "sweep"
 validated_on = "2026-09-25"
 
