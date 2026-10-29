@@ -356,7 +356,7 @@ class ModelManagerBackend:
     def _installed_entry(self) -> Path:
         """Resolve tt-model *without* installing it.
 
-        stop/rm/profiles/curl inspect or tear down what is already here: fetching a
+        stop/rm/profiles/check inspect or tear down what is already here: fetching a
         git repo and building a uv venv just to discover there is nothing to act on
         is backwards. serve()/pull() still use ensure(), where installing is the
         whole point."""
@@ -469,22 +469,26 @@ class ModelManagerBackend:
             ) from exc
         return [row for row in rows if isinstance(row, dict) and row.get("id")]
 
-    def curl(
+    def check(
         self,
         prompt: str | None,
         *,
         base_url: str,
         model: str | None = None,
         print_only: bool = False,
+        task: str | None = None,
+        tools: bool | None = None,
+        output: Path | None = None,
         extra_args: list[str] | None = None,
     ) -> int:
-        """Send a chat completion via `tt-model curl`.
+        """Send the served model a request that suits its task via `tt-model check`.
 
-        tt-model discovers the served model id from the server itself and forwards
-        any option it does not reserve into the request body, so the vLLM sampling
-        surface (`--max-tokens 8`, `--temperature 0.7`) comes for free."""
+        tt-model discovers the served model id from the server itself, picks the
+        request from the pulled bundle's task, and forwards any option it does not
+        reserve into the request body, so the vLLM sampling surface
+        (`--max-tokens 8`, `--temperature 0.7`) comes for free."""
         entry = self._installed_entry()
-        argv = [str(entry), "curl"]
+        argv = [str(entry), "check"]
         if prompt is not None:
             argv.append(prompt)
         argv += ["--base-url", base_url]
@@ -492,6 +496,12 @@ class ModelManagerBackend:
             argv += ["--model", model]
         if print_only:
             argv.append("--print")
+        if task:
+            argv += ["--task", task]
+        if tools is not None:
+            argv.append("--tools" if tools else "--no-tools")
+        if output:
+            argv += ["--output", str(output)]
         argv += list(extra_args or ())
         return self.runner.stream(argv, env=self._env(), tool=TOOL)
 

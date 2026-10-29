@@ -42,7 +42,8 @@ from ..cli import (
 )
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
-from ..launchers.discovery import DEFAULT_PORT
+from ..launchers.base import tool_call_parser
+from ..launchers.discovery import DEFAULT_PORT, discover
 from ..models.model import ModelInfo
 from ..modelhub.catalog import ModelCatalog, unknown_model_error
 from ..modelhub import bundles, hub
@@ -1546,7 +1547,7 @@ def model_profiles(
 
 
 def _served_base_url(appctx, *, port: int | None, url: str | None) -> str:
-    """Server root for `tt-model curl` (no /v1): --url, --port, or the one server
+    """Server root for `tt-model check` (no /v1): --url, --port, or the one server
     tt itself is running — found the same way `tt launch` finds it."""
     if url and port:
         raise TTError(
@@ -1572,15 +1573,71 @@ def _served_base_url(appctx, *, port: int | None, url: str | None) -> str:
     return f"http://127.0.0.1:{ports[0] if ports else DEFAULT_PORT}"
 
 
+# The catalog's model_type, as the Hugging Face pipeline tag `tt-model check` takes.
+_TASK_BY_MODEL_TYPE = {
+    "llm": "text-generation",
+    "vlm": "image-text-to-text",
+    "image": "text-to-image",
+    "embedding": "feature-extraction",
+    "audio": "automatic-speech-recognition",
+    "text_to_speech": "text-to-speech",
+    "video": "text-to-video",
+    "cnn": "image-classification",
+}
+
+
+def _catalog_task(base_url: str, model: str | None) -> tuple[str | None, bool | None]:
+    """Task and tool-calling for a catalog model being served, from the support list.
+
+    Community bundles carry both in their manifest, which tt-model reads itself; a
+    catalog model has no manifest, so tt supplies the same facts from its own
+    catalog. Anything tt cannot resolve (server down, model not in the catalog)
+    returns nothing and tt-model's own detection applies."""
+    try:
+        served = [s.served_id for s in discover(f"{base_url}/v1")]
+    except TTError:
+        return None, None
+    wanted = model or (served[0] if served else None)
+    entry = ModelCatalog().find(wanted, cached_sizes={}) if wanted else None
+    if entry is None:
+        return None, None
+    task = _TASK_BY_MODEL_TYPE.get(entry.model_type)
+    return task, (True if task == "text-generation" and tool_call_parser(entry) else None)
+
+
+def _model_check(
+    ctx, prompt, port, url, model, print_only, task, tools, output,
+    json_mode, quiet, verbose, no_color, *, verb,
+) -> None:
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    if appctx.output.json_mode:
+        raise TTError(
+            f"`tt model {verb}` prints the server's reply, not JSON of tt's own.",
+            next_step=f"Drop --json; `tt model {verb} --print` shows the request to run yourself.",
+            exit_code=ExitCode.USAGE,
+        )
+    base_url = _served_base_url(appctx, port=port, url=url)
+    if task is None and tools is None:
+        task, tools = _catalog_task(base_url, model)
+    backend = ModelManagerBackend(
+        appctx.registry, appctx.runner, appctx.config, appctx.output
+    )
+    backend.check(
+        prompt, base_url=base_url, model=model, print_only=print_only,
+        task=task, tools=tools, output=output, extra_args=list(ctx.args),
+    )
+
+
 @model_app.command(
-    "curl",
+    "check",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 @handle_tt_errors
-def model_curl(
+def model_check(
     ctx: typer.Context,
     prompt: str = typer.Argument(
-        None, help="The user message to send (default: tt-model's one-line greeting)."
+        None, help="The prompt to send (default: one suited to the model's task)."
     ),
     port: int = typer.Option(
         None,
@@ -1596,32 +1653,58 @@ def model_curl(
     print_only: bool = typer.Option(
         False, "--print", help="Print the equivalent curl command instead of sending it."
     ),
+    task: str = typer.Option(
+        None,
+        "--task",
+        help="What the model does, as a Hugging Face pipeline tag "
+        "(default: from the pulled bundle, else text-generation).",
+    ),
+    tools: bool = typer.Option(
+        None, "--tools/--no-tools", help="Offer the model a tool to call (default: per the bundle)."
+    ),
+    output: Path = typer.Option(
+        None, "--output", "-o", help="Where to save a generated image (default: current directory)."
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """Send a chat completion to the model being served.
+    """Send the model being served a request that suits what it does.
 
-    Anything tt does not recognise goes into the request body, so vLLM's sampling
-    options need no flags of their own: `tt model curl "a haiku" --max-tokens 40`.
-    Works for catalog models and bundles alike — it is one HTTP request.
+    A chat model gets a chat completion, a tool-calling model a tool to call, a vision
+    model a sample image, an image model a generation request (saved to a file), an
+    embedding model some text. Anything tt does not recognise goes into the request body:
+    `tt model check "a haiku" --max-tokens 40`. Works for catalog models and bundles alike.
     """
-    appctx = get_app_context(ctx)
-    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
-    if appctx.output.json_mode:
-        raise TTError(
-            "`tt model curl` prints the server's reply, not JSON of tt's own.",
-            next_step="Drop --json; `tt model curl --print` shows the request to run yourself.",
-            exit_code=ExitCode.USAGE,
-        )
-    base_url = _served_base_url(appctx, port=port, url=url)
-    backend = ModelManagerBackend(
-        appctx.registry, appctx.runner, appctx.config, appctx.output
+    _model_check(
+        ctx, prompt, port, url, model, print_only, task, tools, output,
+        json_mode, quiet, verbose, no_color, verb="check",
     )
-    backend.curl(
-        prompt, base_url=base_url, model=model, print_only=print_only,
-        extra_args=list(ctx.args),
+
+
+@model_app.command(
+    "curl",
+    hidden=True,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+@handle_tt_errors
+def model_curl(
+    ctx: typer.Context,
+    prompt: str = typer.Argument(None),
+    port: int = typer.Option(None, "--port", min=1, max=65535),
+    url: str = typer.Option(None, "--url"),
+    model: str = typer.Option(None, "--model"),
+    print_only: bool = typer.Option(False, "--print"),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """Deprecated alias for `tt model check`."""
+    _model_check(
+        ctx, prompt, port, url, model, print_only, None, None, None,
+        json_mode, quiet, verbose, no_color, verb="check",
     )
 
 
