@@ -67,7 +67,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`; bundles: `--force`, `--no-weights`) |
 | `tt model profiles NAME` | A pulled bundle's serve profiles and its default |
 | `tt serve [NAME] [-- ARGS…]` | Serve a model via tt-inference-server, TT-Studio, or tt-model-manager for a community bundle id (`--inference-server`, `--studio` or `--model-manager` forces a path; with no NAME, pick from what that backend serves; bundles: `--profile`, `--detach`, `--print`, `--refresh`, `--no-update-check`, `--no-weights`) — see [Serving backends](#serving-backends) |
-| `tt model curl [PROMPT]` | Send a chat completion to the model being served; unknown options go into the request body (`--max-tokens 40`), `--print` shows the curl instead |
+| `tt model check [PROMPT]` | Send the served model a request suited to its task (chat, tool call, image, embedding); unknown options go into the request body (`--max-tokens 40`), `--print` shows the curl instead |
 | `tt model stop NAME...` | Stop running model servers; when studio deployed one, studio stops the model and then its own containers and services (`--profile` to stop only one profile of a bundle; `tt model stop $(tt model ps --names)` stops everything) |
 | `tt model rm NAME` | Remove a model's local artifacts, keeping its weights unless `--include-weights` (`--dry-run`, `--yes`) |
 | `tt model login` | Log in to the Hugging Face Hub for gated or private bundles and weights (`--token`) |

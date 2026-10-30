@@ -75,7 +75,7 @@ tt model profiles you/mymodel        # serve profiles a container package offers
 tt serve you/mymodel                 # served via tt-model-manager
 tt serve you/mymodel --profile p150x2 --port 8080 -- --max-model-len 4096
                                      # pick a profile; unrecognized args pass through to the bundle's engine
-tt model curl "hello" --max-tokens 40   # one chat completion against whatever is serving
+tt model check "hello" --max-tokens 40   # a request suited to whatever is serving
 tt model stop you/mymodel
 ```
 
