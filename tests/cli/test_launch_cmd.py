@@ -99,7 +99,12 @@ def test_configures_and_hands_over(runner, served, fake_client, execed):
     provider = doc["provider"]["tenstorrent"]
     assert provider["npm"] == "@ai-sdk/openai-compatible"
     assert provider["options"]["baseURL"] == base
-    assert provider["models"] == {"Qwen/Qwen3-32B": {"name": "Qwen/Qwen3-32B"}}
+    assert provider["models"] == {
+        "Qwen/Qwen3-32B": {
+            "name": "Qwen/Qwen3-32B",
+            "limit": {"context": 131072, "output": 32768},
+        }
+    }
 
 
 @pytest.mark.fakes_only

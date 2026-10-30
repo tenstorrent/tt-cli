@@ -224,6 +224,12 @@ def free_web_port(options: LaunchOptions) -> int:
 
 
 # -- model capability ------------------------------------------------------------
+def output_budget(context: int) -> int:
+    """Output tokens to allow: a quarter of the window, leaving the rest for the
+    prompt, since vLLM rejects prompt + max_tokens beyond max_model_len."""
+    return context // 4
+
+
 def serves_chat(entry: ModelInfo) -> bool:
     """Whether tt serves this model through vLLM, i.e. /v1/chat/completions."""
     return VLLM_ENGINE in entry.engines

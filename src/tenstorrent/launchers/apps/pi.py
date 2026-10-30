@@ -23,6 +23,7 @@ from ..base import (
     config_consent,
     json_config_drop,
     json_config_has,
+    output_budget,
     read_json_config,
     reasoning_parser,
     write_json_config,
@@ -122,6 +123,8 @@ class Pi:
         }
         if model.max_context:
             entry["contextWindow"] = model.max_context
+            # Its default is 16384 whatever the window.
+            entry["maxTokens"] = output_budget(model.max_context)
         return entry
 
     def _argv(self, executable: str, model: RunningModel) -> list[str]:

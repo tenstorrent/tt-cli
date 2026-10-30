@@ -291,6 +291,15 @@ def test_opencode_plan_has_no_side_effects(tmp_path, monkeypatch):
     }
 
 
+def test_opencode_sizes_output_from_the_served_window(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    model = RunningModel(
+        served_id="m", base_url="http://127.0.0.1:8000/v1", max_context=262144
+    )
+    prep = LAUNCHERS["opencode"].plan(model, LaunchOptions(), executable=None, runner=None)
+    assert prep.config.block["models"]["m"]["limit"] == {"context": 262144, "output": 65536}
+
+
 def test_openwebui_rewrites_a_loopback_endpoint_for_the_container():
     # localhost inside the container is Open WebUI itself, not the model server.
     assert (
@@ -370,6 +379,7 @@ def test_pi_provider_block_matches_its_documented_shape(tmp_path, monkeypatch):
     (entry,) = block["models"]
     assert entry["id"] == "Qwen/Qwen3-32B"
     assert entry["contextWindow"] == 131072
+    assert entry["maxTokens"] == 32768
     assert entry["input"] == ["text"]  # image input only for a vlm entry
     # --provider/--model rather than "provider/id", which a repo-shaped id breaks.
     assert prep.steps == [["pi", "--provider", "tenstorrent", "--model", "Qwen/Qwen3-32B"]]
@@ -479,6 +489,7 @@ def test_anythingllm_pins_the_model_because_it_has_no_discovery():
     assert "GENERIC_OPEN_AI_BASE_PATH=http://host.docker.internal:8000/v1" in run
     assert "GENERIC_OPEN_AI_MODEL_PREF=Qwen/Qwen3-32B" in run
     assert "GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT=131072" in run
+    assert "GENERIC_OPEN_AI_MAX_TOKENS=32768" in run  # 131072 // 4
     assert "3081:3001" in run
     # Required for the bundled LanceDB and native embedder.
     assert run[run.index("--cap-add") + 1] == "SYS_ADMIN"
@@ -489,6 +500,7 @@ def test_anythingllm_falls_back_when_the_server_publishes_no_context():
     model = RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1")
     env = launcher.container_env(model, "http://host.docker.internal:8000/v1")
     assert env["GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT"] == "32768"
+    assert env["GENERIC_OPEN_AI_MAX_TOKENS"] == "8192"
 
 
 def test_container_clients_do_not_share_a_container_name():
