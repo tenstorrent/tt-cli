@@ -116,6 +116,13 @@ def _check_installer_floor(normalized: str) -> None:
     )
 
 
+def _supports_option(script: Path, option: str) -> bool:
+    """Whether install.sh accepts --(no-)<option>. argbash spells every boolean
+    option this way in its usage line, so the script text is the authority — more
+    reliable than a version floor for `tt update <semver>` and env overrides."""
+    return f"--(no-){option}" in script.read_text(errors="replace")
+
+
 class InstallerBackend:
     def __init__(
         self, registry: ToolRegistry, runner: Runner, paths: Paths, output: OutputManager
@@ -338,6 +345,12 @@ class InstallerBackend:
             "--no-install-inference-server",  # tt-cli owns these two at its own pinned versions.
             "--no-install-studio",
         ]
+        if _supports_option(script, "install-tt-cli"):
+            # install.sh 3.6+ also installs tt itself, pinned to the tt release that
+            # installer was cut with (3.6.3 pins 1.0.1), so without this every
+            # `tt update` downgrades the tt that is running it. Older tags reject
+            # the flag, hence the probe.
+            argv.append("--no-install-tt-cli")
         python_pin = self._python_pin(version)
         if python_pin:
             # install.sh warns and ignores --python-version unless --use-uv is on:
