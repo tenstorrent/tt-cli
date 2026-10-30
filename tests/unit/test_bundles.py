@@ -11,6 +11,7 @@ none, by fetching that same manifest from the Hub instead."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 
 import pytest
@@ -313,12 +314,14 @@ def test_a_missing_community_catalog_override_is_a_config_error(tmp_path, monkey
 
 
 # -- unverified bundles (the Hub's community catalog) -------------------------------
-def _hub_down(self, **kw):
-    """What the pinned huggingface_hub raises with no network: an httpx2 error
-    (httpx on 1.x), which is not an OSError."""
-    import httpx2
+_HAS_HTTPX2 = importlib.util.find_spec("httpx2") is not None
 
-    raise httpx2.ConnectError("[Errno 111] Connection refused")
+
+def _hub_down(self, **kw):
+    """What huggingface_hub raises with no network: an httpx2 error (httpx on 1.x),
+    which is not an OSError."""
+    lib = pytest.importorskip("httpx2" if _HAS_HTTPX2 else "httpx")
+    raise lib.ConnectError("[Errno 111] Connection refused")
 
 
 @pytest.mark.parametrize("module", ["httpx", "httpx2"])
