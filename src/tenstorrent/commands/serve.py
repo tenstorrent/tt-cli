@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""`tt serve` — run inference (or benchmarks/evals) on a model. [beta]
+"""`tt serve` — run inference (or benchmarks/evals) on a model.
 
 Three serving paths. With no flag, the path is picked by the model name: a
 name in tt-inference-server's released spec goes to tt-inference-server; a name
@@ -212,7 +212,7 @@ def serve(
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """[beta] Serve a model for inference via tt-inference-server, TT-Studio, or
+    """Serve a model for inference via tt-inference-server, TT-Studio, or
     tt-model (for a bundle id neither catalog covers).
 
     The boot is shown as a live checklist — image, weights, device, KV cache,

@@ -51,6 +51,11 @@ DEFAULTS: dict[str, Any] = {
         # straight out, like --no-pager / TT_NO_PAGER=1 on every run.
         "pager": True,
     },
+    "agent": {
+        # Where `tt agent` registers the Claude Code plugin marketplace from: a GitHub
+        # `owner/repo`, a git URL, or a local checkout path (for plugin development).
+        "marketplace_source": "tenstorrent/skills",
+    },
 }
 
 TEMPLATE = """\
@@ -125,6 +130,13 @@ check = true
 # quit (Ctrl+C works too). false = always print straight out. Per-run: --no-pager or
 # TT_NO_PAGER=1. Pick another pager with TT_PAGER or PAGER.
 pager = true
+
+[agent]
+# Where `tt agent` gets the Tenstorrent Claude Code plugins from: a GitHub owner/repo,
+# a git URL, or a local checkout path while developing plugins. The marketplace is
+# registered with Claude Code under the name the repo declares (tenstorrent-skills).
+# Per-run override: TT_AGENT_MARKETPLACE=<source>.
+marketplace_source = "tenstorrent/skills"
 """
 
 

@@ -225,6 +225,7 @@ def root(
 
 def _register_commands() -> None:
     # Imported here so `import tenstorrent.cli` stays cheap and cycle-free.
+    from .commands.agent import agent
     from .commands.config_cmd import config_app
     from .commands.device import device_app
     from .commands.launch import launch_app
@@ -247,6 +248,14 @@ def _register_commands() -> None:
         context_settings=SERVE_CONTEXT_SETTINGS,
     )(serve)
     app.add_typer(launch_app, name="launch", rich_help_panel=PANEL_WORKLOADS)
+    app.command(
+        "agent",
+        rich_help_panel=PANEL_WORKLOADS,
+        # Only what follows `--` is forwarded to `claude` at hand-off
+        # (`tt agent deploy -- --resume`) — see commands/agent.py. An unknown tt
+        # flag (`--dryrun`) stays a usage error rather than reaching claude.
+        context_settings={"allow_extra_args": True},
+    )(agent)
     # Hidden until the workflows behind them ship: they stay registered so
     # `tt train` / `tt compile` answer with the exit-7 stub instead of a usage
     # error, but `tt --help` advertises only what works today. They keep their
