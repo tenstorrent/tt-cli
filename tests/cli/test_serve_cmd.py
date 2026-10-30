@@ -1822,3 +1822,49 @@ def test_serve_refuses_the_whole_board_while_a_chip_is_held(
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2"])
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
     assert "needs the whole board" in result.output
+
+
+
+@pytest.mark.fakes_only
+def test_serve_device_id_passthrough_and_dry_run(
+    runner, docker_present, fake_server, four_chips
+):
+    four_chips(0, 1)
+    dry = runner.invoke(
+        app,
+        ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2", "--device-id", "2,3", "--dry-run", "--json"],
+    )
+    assert dry.exit_code == 0, dry.output
+    plan = json.loads(dry.output)
+    assert plan["device_ids"] == [2, 3]
+    assert plan["argv"][plan["argv"].index("--device-id") + 1] == "2,3"
+
+    result = runner.invoke(
+        app, ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2", "--device-id", "2,3"]
+    )
+    assert result.exit_code == 0, result.output
+    argv = json.loads(fake_server.read_text().splitlines()[-1])
+    assert argv[argv.index("--device-id") + 1] == "2,3"
+
+
+@pytest.mark.fakes_only
+def test_serve_device_id_refuses_busy_or_missing_chips(
+    runner, docker_present, fake_server, four_chips
+):
+    four_chips(2)
+    busy = runner.invoke(
+        app, ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2", "--device-id", "2,3"]
+    )
+    assert busy.exit_code == ExitCode.TOOL_FAILED, busy.output
+    assert "Chip(s) 2 are in use" in busy.output
+
+    missing = runner.invoke(
+        app, ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2", "--device-id", "2,5"]
+    )
+    assert missing.exit_code == ExitCode.USAGE, missing.output
+    assert "Chip(s) 5 do not exist" in missing.output
+
+    invalid = runner.invoke(
+        app, ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2", "--device-id", "abc"]
+    )
+    assert invalid.exit_code == ExitCode.USAGE, invalid.output
