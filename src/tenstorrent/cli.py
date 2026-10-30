@@ -307,6 +307,8 @@ def _report_unexpected(exc: BaseException) -> None:
 
     output = OutputManager()
     detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    clean_detail = detail
+    clean_exc_text = str(exc)
     log_path = None
     try:
         from .config.paths import get_paths
@@ -314,6 +316,8 @@ def _report_unexpected(exc: BaseException) -> None:
         from .tools.runlog import open_run_log
 
         redactor = Redactor()
+        clean_detail = redactor.text(detail)
+        clean_exc_text = redactor.text(str(exc)) if str(exc) else ""
         run_log = open_run_log(get_paths().logs_dir, "crash", sys.argv, redactor=redactor)
         if run_log is not None:
             run_log.write(detail)
@@ -335,8 +339,8 @@ def _report_unexpected(exc: BaseException) -> None:
             "tt hit an unexpected error",
             {
                 "cause": type(exc).__name__,
-                "detail": str(exc) or "No message was attached to the exception.",
-                "evidence": detail.strip().splitlines()[-1] if detail.strip() else "",
+                "detail": clean_exc_text or "No message was attached to the exception.",
+                "evidence": clean_detail.strip().splitlines()[-1] if clean_detail.strip() else "",
                 "actions": actions,
             },
             log_path=log_path,
@@ -344,7 +348,7 @@ def _report_unexpected(exc: BaseException) -> None:
         )
     )
     if _argv_verbose():
-        output.status_console.print(detail, style="muted")
+        output.status_console.print(clean_detail, style="muted")
 
 
 def main() -> None:
