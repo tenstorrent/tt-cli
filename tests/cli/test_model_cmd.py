@@ -34,9 +34,6 @@ def empty_hf_cache(monkeypatch):
 SMALL_SUPPORT = (
     Path(__file__).parent.parent / "fakes" / "data" / "model_support_small.json"
 )
-SMALL_STUDIO = (
-    Path(__file__).parent.parent / "fakes" / "data" / "studio_models_small.json"
-)
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +41,6 @@ def small_spec(monkeypatch):
     """Pin the catalog to the 4-model fixture so exact assertions stay stable when
     the shipped model_support.json is regenerated."""
     monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(SMALL_SUPPORT))
-    monkeypatch.setenv("TT_STUDIO_MODELS_PATH", str(SMALL_STUDIO))
 
 
 @pytest.fixture(autouse=True)
@@ -114,8 +110,8 @@ def test_model_list_detection_failure_warns_and_shows_all(runner):
     payload_start = result.output.index("{")
     payload = json.loads(result.output[payload_start:])
     assert payload["device"] is None
-    # 5 from the support list + the 2 the studio fixture alone knows
-    assert len(payload["models"]) == 7
+    # 5 from the support list + studio's own Qwen3.5-9B
+    assert len(payload["models"]) == 6
 
 
 @pytest.mark.fakes_only
@@ -126,7 +122,7 @@ def test_model_list_detection_failure_warns_and_shows_all(runner):
         # whisper is marked broken on p300x2 in the fixture, so it is hidden
         # there while staying listed on n150 — see the test below. Qwen3.5-9B is
         # a single-chip P150 model studio runs on one chip of a P300 board.
-        ("multi", "p300x2", ["Llama-3.1-8B-Instruct", "Qwen3.5-9B", "Qwen3.8-27B"]),
+        ("multi", "p300x2", ["Llama-3.1-8B-Instruct", "Qwen3.5-9B"]),
     ],
 )
 def test_model_list_filters_to_detected_device(
@@ -1743,7 +1739,6 @@ def test_model_list_offers_single_chip_studio_models_on_bigger_boards(runner):
     assert result.exit_code == 0, result.output
     names = [m["name"] for m in json.loads(result.output)["models"]]
     assert "Qwen3.5-9B" in names  # a P150 model, run on one chip of the mesh
-    assert "Qwen3.8-27B" not in names  # P300x2 only
 
 
 def test_model_info_for_a_studio_only_model(runner):

@@ -250,6 +250,8 @@ def serve(
     if model is None:
         model = _pick_model(appctx, catalog, backend)
     entry = catalog.find(model)
+    if entry is None and backend is Backend.studio and looks_like_bundle_id(model):
+        entry = _community_entry(model)
     chosen = _resolve_backend(entry, model, backend, catalog_origin=catalog.origin)
     if chosen is Backend.model_manager:
         _serve_with_tt_model_manager(
@@ -264,7 +266,7 @@ def serve(
         verb = "only applies" if len(given) == 1 else "only apply"
         raise TTError(
             f"{' and '.join(given)} {verb} to a tt-model bundle; {entry.name} is "
-            "a catalog model.",
+            + ("a community model served by TT-Studio." if _is_community(entry) else "a catalog model."),
             why="They configure how a bundle is served; tt-inference-server and TT-Studio have "
             "no profiles or Hub revisions to refresh, and print their plan with --dry-run.",
             next_step="Drop the flag, or use `tt serve --dry-run`.",
@@ -281,7 +283,7 @@ def serve(
     if chosen is Backend.studio:
         _serve_with_studio(
             appctx, entry, workflow=workflow, device=device, offline=offline,
-            port=port, dry_run=dry_run,
+            port=port, dry_run=dry_run, yes=yes,
         )
         return
     server = InferenceServerBackend(
@@ -403,10 +405,40 @@ def _resolve_backend(
     return backend
 
 
+_COMMUNITY_MODEL_TYPE = "community"
+
+
+def _is_community(entry: ModelInfo) -> bool:
+    return entry.model_type == _COMMUNITY_MODEL_TYPE
+
+
+def _community_entry(name: str) -> ModelInfo:
+    """A catalog-shaped stand-in for a community model, so the studio path
+    treats it like any other model it is asked to run."""
+    return ModelInfo(name=name, hf_repo=name, model_type=_COMMUNITY_MODEL_TYPE, backends=["studio"])
+
+
+def _community_bundle_names(appctx, device: str | None, *, exclude: set[str]) -> list[str]:
+    """Verified community bundles for the picker, on this device when it is known.
+    The Hub being unreachable costs the extra rows, not the picker."""
+    try:
+        found = bundles.search_community(config=appctx.config)
+    except TTError as err:
+        appctx.output.warn(
+            f"Could not fetch community bundles: {err.what}. Showing catalog models only."
+        )
+        return []
+    return [
+        b.name
+        for b in found
+        if b.name not in exclude and (not device or device in b.hardware)
+    ]
+
+
 def _pick_model(appctx, catalog: ModelCatalog, backend: Backend) -> str:
     """Interactive fallback for `tt serve --studio` (or another path flag) with no
     model: a numbered list of what that backend serves here — for studio its
-    whole catalog, tt-inference-server's models included — on stderr, answered
+    whole catalog plus tt-model-manager community bundles — on stderr, answered
     with a number."""
     if appctx.output.json_mode or appctx.output.quiet or not _stdin_isatty():
         raise TTError(
@@ -449,6 +481,10 @@ def _pick_model(appctx, catalog: ModelCatalog, backend: Backend) -> str:
             choices_display = [
                 f"{m.name:<{width}}  {', '.join(m.backends)}" for m in models
             ]
+        if backend is Backend.studio:
+            community = _community_bundle_names(appctx, device, exclude=set(choices))
+            if community:
+                choices += community
     appctx.output.status(f"{label} ({backend.value}):")
     for i, text in enumerate(choices_display or choices, start=1):
         appctx.output.status(f"  {i:>3}. {text}")
@@ -466,13 +502,28 @@ def _serve_with_studio(
     offline: bool,
     port: int | None,
     dry_run: bool,
+    yes: bool = False,
 ) -> None:
     studio = StudioBackend(appctx.registry, appctx.runner, appctx.config, appctx.output)
     if workflow is not Workflow.server:
         raise studio.unsupported_workflow(workflow.value)
+    # Studio asks about an unverified bundle itself, but only after its ~2 minute
+    # stack-up, and refuses without a terminal; ask here first so a no costs nothing.
+    unverified = _is_community(entry) and not _check_verified(appctx, entry.name)
     if dry_run:
         appctx.output.emit(studio.plan(entry, offline=offline), renderer=_plan_renderer)
         return
+    if unverified:
+        if appctx.output.json_mode or appctx.output.quiet or not _stdin_isatty():
+            raise TTError(
+                f"Refusing to serve unverified bundle {entry.name} through TT-Studio.",
+                why="TT-Studio confirms unverified bundles itself, interactively, and "
+                "--yes cannot answer for it.",
+                next_step="Run it from a terminal, or use `tt serve "
+                f"{entry.name} --model-manager --yes`.",
+                exit_code=ExitCode.USAGE,
+            )
+        _confirm_unverified(appctx, entry.name, yes=yes)
     studio.preflight(entry)
     studio.serve(entry, offline=offline, device=device, port=port)
 
@@ -613,6 +664,22 @@ _UNVERIFIED_RISKS = (
 )
 
 
+def _check_verified(appctx, model: str) -> bool:
+    """Whether `model` is a verified community bundle; warns when it is not.
+    Fails closed: an unreadable catalog counts as unverified."""
+    try:
+        verified = bundles.is_verified(model, bundles.curated_ids())
+    except TTError as err:
+        appctx.output.warn(
+            f"could not check the community catalog ({err.what}); "
+            f"treating {model} as unverified.\n{_UNVERIFIED_RISKS}"
+        )
+        return False
+    if not verified:
+        appctx.output.warn(f"{model} is not a verified community bundle.\n{_UNVERIFIED_RISKS}")
+    return verified
+
+
 def _confirm_unverified(appctx, model: str, *, yes: bool) -> None:
     """Ask before serving an unverified bundle. Non-interactive without --yes is a
     usage error rather than a silent yes; declining is a clean exit 0."""
@@ -661,21 +728,7 @@ def _serve_with_tt_model_manager(
             "--device is a tt-inference-server option; tt-model detects the machine "
             "itself (override with its own --arch)."
         )
-    try:
-        # A Tenstorrent copy is verified by its id, so it needs no catalog read.
-        verified = bundles.in_verified_org(model) or model.lower() in bundles.curated_ids()
-    except TTError as err:
-        # Fail closed: an unreadable catalog must not skip the confirmation.
-        appctx.output.warn(
-            f"could not check the community catalog ({err.what}); "
-            f"treating {model} as unverified.\n{_UNVERIFIED_RISKS}"
-        )
-        verified = False
-    else:
-        if not verified:
-            appctx.output.warn(
-                f"{model} is not a verified community bundle.\n{_UNVERIFIED_RISKS}"
-            )
+    verified = _check_verified(appctx, model)
     if dry_run:
         plan = backend.plan(
             model, offline=offline, port=port, serve_flags=serve_flags, extra_args=extra_args
