@@ -50,6 +50,10 @@ def main() -> int:
         if os.environ.get("FAKE_STUDIO_STOP_MODEL_FAIL"):
             print(f"fake tt-studio: --stop-model {args.stop_model} failed", file=sys.stderr)
             return 1
+        gone_log = os.environ.get("FAKE_DOCKER_GONE")
+        if gone_log:
+            with open(gone_log, "a") as fh:
+                fh.write(args.stop_model + "\n")
         print(f"fake tt-studio: stopped {args.stop_model}")
     else:
         print(f"fake tt-studio: deployed {args.model} at http://localhost:7001/v1")

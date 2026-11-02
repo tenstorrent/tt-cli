@@ -1833,6 +1833,125 @@ def test_model_stop_keeps_the_inference_server_path_when_studio_is_not_involved(
     assert not studio_bin.exists()
 
 
+# -- tt model stop --studio -------------------------------------------------------------
+def _studio_service(cid, name):
+    """One of studio's compose-managed services (backend, frontend, …)."""
+    return {
+        **_container(cid, name=name, image=f"ghcr.io/tenstorrent/tt-studio/{name}:v2.12.0"),
+        "Config": {
+            "Image": f"ghcr.io/tenstorrent/tt-studio/{name}:v2.12.0",
+            "Labels": {"com.docker.compose.project": "app"},
+        },
+        "NetworkSettings": {"Networks": {"tt_studio_network": {}}},
+    }
+
+
+def _studio_model(cid, name, image="ghcr.io/tenstorrent/tt-inference-server/vllm:0.25.0"):
+    """A model studio deployed: on its network, no compose label."""
+    return {
+        **_container(cid, name=name, image=image),
+        "NetworkSettings": {"Networks": {"tt_studio_network": {}}},
+    }
+
+
+@pytest.fixture
+def studio_gone(monkeypatch, tmp_path):
+    """Let the fake studio's `--stop-model` remove the container from fake docker."""
+    monkeypatch.setenv("FAKE_DOCKER_GONE", str(tmp_path / "docker-gone.log"))
+
+
+def _studio_calls(log: Path) -> list:
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+@pytest.mark.fakes_only
+def test_stop_studio_stops_each_model_through_studio_then_its_services(
+    runner, studio_bin, fake_docker, studio_gone
+):
+    set_containers, stop_log = fake_docker
+    set_containers([
+        _studio_service("eeeeeeeeeeee01", "tt_studio_backend_api_prod"),
+        _studio_model("eeeeeeeeeeee02", "tt-inference-server-ab12"),
+        _studio_model(
+            "eeeeeeeeeeee03", "Qwen3.5-9B", image="ghcr.io/tenstorrent/tt-studio/studio_images:q"
+        ),
+        _container("ffffffffffff04"),  # tt-inference-server's own: not studio's
+    ])
+    result = runner.invoke(app, ["model", "stop", "--studio"])
+    assert result.exit_code == 0, result.output
+    assert _studio_calls(studio_bin) == [
+        ["--stop-model", "tt-inference-server-ab12"],
+        ["--stop-model", "Qwen3.5-9B"],
+        ["--stop"],
+    ]
+    assert not stop_log.exists()  # studio stopped them, and the other one is untouched
+    assert "Stopped TT-Studio (2 model(s), and its services)." in result.output
+
+
+@pytest.mark.fakes_only
+def test_stop_studio_docker_stops_a_model_studio_could_not(
+    runner, studio_bin, fake_docker, studio_gone, monkeypatch
+):
+    """`--stop` keeps model containers, so one `--stop-model` missed (e.g. still
+    loading) must not be left on the chips."""
+    monkeypatch.setenv("FAKE_STUDIO_STOP_MODEL_FAIL", "1")
+    set_containers, stop_log = fake_docker
+    set_containers([
+        _studio_service("eeeeeeeeeeee01", "tt_studio_backend_api_prod"),
+        _studio_model("eeeeeeeeeeee02", "tt-inference-server-ab12"),
+    ])
+    result = runner.invoke(app, ["model", "stop", "--studio"])
+    assert result.exit_code == 0, result.output
+    assert stop_log.read_text().split() == ["eeeeeeeeeeee"]
+    assert _studio_calls(studio_bin)[-1] == ["--stop"]
+    assert "tt-smi -r" in result.output
+
+
+@pytest.mark.fakes_only
+def test_stop_studio_with_its_backend_down_stops_the_models_with_docker(
+    runner, studio_bin, fake_docker, studio_gone
+):
+    set_containers, stop_log = fake_docker
+    set_containers([_studio_model("eeeeeeeeeeee02", "tt-inference-server-ab12")])
+    result = runner.invoke(app, ["model", "stop", "--studio"])
+    assert result.exit_code == 0, result.output
+    assert stop_log.read_text().split() == ["eeeeeeeeeeee"]
+    assert _studio_calls(studio_bin) == []  # no services, so nothing for run.py to do
+
+
+@pytest.mark.fakes_only
+def test_stop_studio_when_it_is_not_running(runner, studio_bin, fake_docker):
+    set_containers, _ = fake_docker
+    set_containers([_container("ffffffffffff04")])
+    result = runner.invoke(app, ["model", "stop", "--studio"])
+    assert result.exit_code == 0, result.output
+    assert "TT-Studio is not running." in result.output
+    assert _studio_calls(studio_bin) == []
+
+
+@pytest.mark.fakes_only
+def test_stop_studio_reports_a_failed_teardown(
+    runner, studio_bin, fake_docker, studio_gone, monkeypatch
+):
+    monkeypatch.setenv("FAKE_STUDIO_STOP_FAIL", "1")
+    set_containers, _ = fake_docker
+    set_containers([_studio_service("eeeeeeeeeeee01", "tt_studio_backend_api_prod")])
+    result = runner.invoke(app, ["model", "stop", "--studio"])
+    assert result.exit_code == ExitCode.TOOL_FAILED, result.output
+
+
+@pytest.mark.parametrize("extra", [["Qwen3.5-9B"], ["--profile", "p"]])
+def test_stop_studio_takes_no_names_or_profile(runner, extra):
+    result = runner.invoke(app, ["model", "stop", "--studio", *extra])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--studio" in result.output
+
+
+def test_stop_without_names_or_studio_is_a_usage_error(runner):
+    result = runner.invoke(app, ["model", "stop", "--json"])
+    assert result.exit_code == ExitCode.USAGE, result.output
+
+
 # -- tt-model parity: search / profiles / check / login / publish / authoring ------------
 def _last_argv(log: Path) -> list[str]:
     return json.loads(log.read_text().splitlines()[-1])["argv"]
