@@ -272,24 +272,29 @@ class ModelManagerPreparation(Preparation):
             return self.container
         docker = runtime
         wanted = self._repo_id.rsplit("/", 1)[-1].lower()
+        labelled, new = None, []
         for row in self._ps(runner, docker):  # docker lists newest first
             fields = row.split("\t")
             if len(fields) < 3:
                 continue
             container, name, repo = (field.strip() for field in fields[:3])
-            # A container that was not there before this serve is ours whatever
-            # its labels say: tt-model names it after the bundle, which can differ
-            # from the id asked for (`<name>-blackhole`).
-            new = self._before is not None and container not in self._before
-            if new or name.lower() == wanted or repo.lower() == self._repo_id.lower():
-                self.container = container
-                if self.endpoint_port is None:
-                    # --port is honoured exactly, but left to itself tt-model
-                    # walks up from 20000 past whatever is busy — so the
-                    # container, not the default, says where it listens.
-                    self.endpoint_port = _published_port(runner, docker, container)
-                return self.container
-        return None
+            if labelled is None and (name.lower() == wanted or repo.lower() == self._repo_id.lower()):
+                labelled = container
+            if self._before is not None and container not in self._before:
+                new.append(container)
+        # tt-model names the container after the bundle, which can differ from
+        # the id asked for (`<name>-blackhole`); then the one container this
+        # serve started is ours — unless another serve started one too.
+        container = labelled or (new[0] if len(new) == 1 else None)
+        if container is None:
+            return None
+        self.container = container
+        if self.endpoint_port is None:
+            # --port is honoured exactly, but left to itself tt-model
+            # walks up from 20000 past whatever is busy — so the
+            # container, not the default, says where it listens.
+            self.endpoint_port = _published_port(runner, docker, container)
+        return self.container
 
 
 #: tt-model's `--verbose` rows (console.step / _render_result). `--verbose` is a
