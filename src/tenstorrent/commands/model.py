@@ -427,11 +427,7 @@ def _community_rows(
     found = sorted(local + listed, key=lambda b: (b.name.lower(), b.source))
     if cached:  # --cached reads as "what do I have locally" here too
         found = [b for b in found if b.source == "local"]
-    if hardware:
-        found = [
-            b for b in found
-            if any(bundles.hardware_satisfies(hw, hardware) for hw in b.hardware)
-        ]
+    found = [b for b in found if bundles.runs_on(b, hardware)]
     return [_bundle_row(dataclasses.asdict(b)) for b in found]
 
 

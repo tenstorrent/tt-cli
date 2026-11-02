@@ -419,8 +419,9 @@ def _community_entry(name: str) -> ModelInfo:
 
 
 def _community_bundle_names(appctx, device: str | None, *, exclude: set[str]) -> list[str]:
-    """Verified community bundles for the picker, on this device when it is known.
-    The Hub being unreachable costs the extra rows, not the picker."""
+    """Verified community bundles for the picker that run on this device when it is
+    known — the same rows `tt model list` shows for it, so a p150 bundle is offered
+    on a p300x2. The Hub being unreachable costs the extra rows, not the picker."""
     try:
         found = bundles.search_community(config=appctx.config)
     except TTError as err:
@@ -428,11 +429,7 @@ def _community_bundle_names(appctx, device: str | None, *, exclude: set[str]) ->
             f"Could not fetch community bundles: {err.what}. Showing catalog models only."
         )
         return []
-    return [
-        b.name
-        for b in found
-        if b.name not in exclude and (not device or device in b.hardware)
-    ]
+    return [b.name for b in found if b.name not in exclude and bundles.runs_on(b, device)]
 
 
 def _pick_model(appctx, catalog: ModelCatalog, backend: Backend) -> str:

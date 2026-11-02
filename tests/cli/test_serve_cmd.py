@@ -1395,21 +1395,28 @@ def test_picker_for_studio_lists_community_bundles(
 
 
 @pytest.mark.fakes_only
-def test_picker_for_studio_skips_bundles_for_other_devices(
+def test_picker_for_studio_offers_the_bundles_tt_model_list_shows_for_the_device(
     runner, serve_tty, studio_docker, fake_studio, fake_bin, monkeypatch
 ):
+    """Same hardware rule as `tt model list`: a bundle validated on a smaller board
+    of the same chip family runs on a subset of the p300x2's chips."""
     monkeypatch.setenv("TT_TOOL_BIN_TT_SMI", str(fake_bin / "tt-smi"))
     monkeypatch.setenv("FAKE_SMI_SCENARIO", "multi")  # p300x2
     monkeypatch.setattr(
         "tenstorrent.modelhub.bundles.search_community",
         lambda **kw: [
-            BundleInfo(name="acme/here", hardware=["p300x2"]),
-            BundleInfo(name="acme/other", hardware=["p300"]),
+            BundleInfo(name="acme/exact", hardware=["p300x2"]),
+            BundleInfo(name="acme/one-chip", hardware=["p150"]),
+            BundleInfo(name="acme/mesh", hardware=["p150x4"]),
+            BundleInfo(name="acme/too-big", hardware=["p150x8"]),
+            BundleInfo(name="acme/wormhole", hardware=["n300"]),
         ],
     )
     result = runner.invoke(app, ["serve", "--studio"], input="1\n")
-    assert "acme/here" in result.output
-    assert "acme/other" not in result.output
+    for shown in ("acme/exact", "acme/one-chip", "acme/mesh"):
+        assert shown in result.output
+    for hidden in ("acme/too-big", "acme/wormhole"):
+        assert hidden not in result.output
 
 
 @pytest.mark.fakes_only

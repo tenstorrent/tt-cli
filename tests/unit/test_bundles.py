@@ -135,6 +135,15 @@ def test_hardware_satisfies_resolves_t3k_to_its_n300x4_equivalent():
     assert not hardware_satisfies("p150", "t3k")  # different arch
 
 
+def test_runs_on_matches_any_validated_board_and_no_target_means_no_filter():
+    bundle = bundles.BundleInfo(name="acme/b", hardware=["n300", "p150"])
+    assert bundles.runs_on(bundle, "p300x2")  # via p150
+    assert bundles.runs_on(bundle, "t3k")  # via n300
+    assert not bundles.runs_on(bundle, "p100")
+    assert bundles.runs_on(bundle, None)
+    assert not bundles.runs_on(bundles.BundleInfo(name="acme/none"), "p150")
+
+
 def test_hardware_tag_rejects_a_zero_mesh_multiplier():
     assert _hardware_chips("p150x0") is None
     assert not hardware_satisfies("p150", "p150x0")
