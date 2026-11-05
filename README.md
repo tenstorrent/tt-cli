@@ -116,7 +116,7 @@ without one it says so up front rather than stopping at a prompt you cannot see.
 ## Interactive clients with `tt launch`
 
 > [!TIP]
-> **Want a chat UI or coding agent on your model?** See **[Client launchers](/docs/client-launchers.md)** for every app `tt launch` can attach: web UIs tt pulls and runs for you (Open WebUI, AnythingLLM) and coding agents you install yourself (OpenCode, pi, Aider, Qwen Code, Hermes Agent). It also lists what to install first for each, and explains where TT Studio fits.
+> **Want a chat UI or coding agent on your model?** See **[Client launchers](/docs/client-launchers.md)** for every app `tt launch` can attach: web UIs tt pulls and runs for you (Open WebUI, AnythingLLM), tt-deep-research started from your checkout, and coding agents you install yourself (OpenCode, pi, Aider, Qwen Code, Hermes Agent). It also lists what to install first for each, and explains where TT Studio fits.
 
 `tt serve` gives you an OpenAI-compatible endpoint; `tt launch` points a client at it. tt discovers what is running by asking the server itself (`GET /v1/models`) and configures the client's endpoint for you. `tt model ps` lists what is being served and on which port, using the same probe.
 
@@ -128,6 +128,8 @@ tt launch stop openwebui               # stop it, keeping its data
 tt launch hermes                       # Hermes Agent's terminal UI on the served model
 tt launch hermes --web                 # its web dashboard and chat, on the same model
 tt launch stop hermes                  # stop that dashboard (any running Hermes dashboard)
+tt launch deep-research                # tt-deep-research from ~/tt-deep-research, recipe matched to the served bundle
+tt launch stop deep-research           # its `ttdr down`: app containers stop, models keep serving
 ```
 
 ## Serving backends

@@ -56,6 +56,10 @@ DEFAULTS: dict[str, Any] = {
         # `owner/repo`, a git URL, or a local checkout path (for plugin development).
         "marketplace_source": "tenstorrent/skills",
     },
+    "launch": {
+        # Empty string = ~/tt-deep-research.
+        "deep_research_path": "",
+    },
 }
 
 TEMPLATE = """\
@@ -137,6 +141,12 @@ pager = true
 # registered with Claude Code under the name the repo declares (tenstorrent-skills).
 # Per-run override: TT_AGENT_MARKETPLACE=<source>.
 marketplace_source = "tenstorrent/skills"
+
+[launch]
+# The tt-deep-research checkout `tt launch deep-research` runs from
+# (https://github.com/rnabeelTT/tt-deep-research). Empty = ~/tt-deep-research.
+# Per-run override: --path.
+deep_research_path = ""
 """
 
 

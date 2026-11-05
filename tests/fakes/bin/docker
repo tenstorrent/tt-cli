@@ -7,8 +7,9 @@ NetworkSettings.Ports/Labels/Ports — the last a raw `docker ps --format {{.Por
 string, e.g. "0.0.0.0:20000->20000/tcp". `ps` lists running records only — one with
 no State at all counts as running — unless --all/-a is passed, like the real thing;
 --filter label=k[=v] narrows by top-level Labels, `--format {{.Label "k"}}` prints
-that label, `--format {{.Ports}}` prints the Ports string, everything else prints
-one 12-char id per line (what tt asks for).
+that label (each placeholder, when a format has several), `--format {{.Ports}}`
+prints the Ports string, everything else prints one 12-char id per line (what tt
+asks for).
 FAKE_DOCKER_STOP_LOG collects stopped ids. `logs` records its full argv as one JSON
 line in FAKE_DOCKER_ARGV_LOG and prints a marker line plus a fake HF token, so tests
 can assert exactly which flags tt forwarded and that tt redacts what comes back.
@@ -33,12 +34,14 @@ def _label_filter(args: list) -> str | None:
     return None
 
 
+_LABEL_RE = re.compile(r'\{\{\.Label "([^"]+)"\}\}')
+
+
 def _label_format(args: list) -> str | None:
-    """`--format {{.Label "k"}}` → k."""
+    """A `--format` made of `{{.Label "k"}}` placeholders (and any text between)."""
     for a in args:
-        m = re.fullmatch(r'\{\{\.Label "([^"]+)"\}\}', a)
-        if m:
-            return m.group(1)
+        if _LABEL_RE.search(a):
+            return a
     return None
 
 
@@ -63,7 +66,8 @@ def main() -> int:
         wanted_label = _label_format(args)
         if wanted_label is not None:
             for entry in entries:
-                print((entry.get("Labels") or {}).get(wanted_label, ""))
+                labels = entry.get("Labels") or {}
+                print(_LABEL_RE.sub(lambda m: labels.get(m.group(1), ""), wanted_label))
             return 0
         if "{{.Ports}}" in args:
             for entry in entries:

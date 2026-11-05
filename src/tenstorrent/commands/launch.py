@@ -6,7 +6,7 @@
 tt does not start the model's server: it discovers what `tt serve` (or tt-model)
 has running, checks the model can do what the client needs, and then either
 configures an installed client and hands over the terminal, or — with consent —
-starts a client that runs as a container.
+starts a client that runs as a container (or, for deep-research, from a checkout).
 
 One connect command per client, all sharing `_connect` and telling themselves
 apart by `ctx.info_name`, so `tt launch --help` enumerates the clients and adding
@@ -19,6 +19,7 @@ import dataclasses
 import json
 import shlex
 import sys
+from pathlib import Path
 
 import typer
 from rich.console import Group
@@ -96,14 +97,23 @@ def _local_candidate_ports(appctx) -> list[int]:
         ports += [c.port for c in inference.running_containers() if c.port]
     except TTError:
         pass  # no docker/podman, or it failed — model_manager or the plain default may still work
-    model_manager = ModelManagerBackend(
-        appctx.registry, appctx.runner, appctx.config, appctx.output
-    )
     try:
-        ports += model_manager.running_ports()
+        ports += _model_manager(appctx).running_ports()
     except TTError:
         pass
     return ports
+
+
+def _model_manager(appctx) -> ModelManagerBackend:
+    return ModelManagerBackend(appctx.registry, appctx.runner, appctx.config, appctx.output)
+
+
+def _running_bundles(appctx) -> list[str]:
+    """tt-model bundles being served, for an app that matches its recipe to them."""
+    try:
+        return _model_manager(appctx).running_repos()
+    except TTError:
+        return []
 
 
 def _discover_local(appctx) -> list[RunningModel]:
@@ -288,6 +298,70 @@ def _connect(
         web_port_pinned=web_port is not None,
         web=web,
     )
+    _start(
+        appctx, launcher, target, options, executable,
+        yes=yes, no_exec=no_exec, dry_run=dry_run, json_mode=json_mode,
+    )
+
+
+def _connect_checkout(
+    ctx: typer.Context,
+    path: Path = typer.Option(
+        None,
+        "--path",
+        help="The app's checkout (default: the launch.deep_research_path setting, "
+        "else ~/tt-deep-research).",
+    ),
+    recipe: str = typer.Option(
+        None,
+        "--recipe",
+        help="Recipe to start, relative to the checkout (default: the one matching "
+        "the bundle tt is serving).",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt."
+    ),
+    no_exec: bool = typer.Option(
+        False, "--no-exec", help="Check everything but do not start it."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be done, and change nothing."
+    ),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """An app run from a local checkout: it picks its own models, by recipe."""
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    launcher = _launcher(ctx.info_name)
+    checkout = launcher.checkout(appctx.config, path)
+    recipe = launcher.recipe_for(checkout, recipe, [] if recipe else _running_bundles(appctx))
+    target = launcher.served_llm()
+    executable = (
+        _installed_or_none(launcher, appctx.config, appctx.output)
+        if dry_run
+        else resolve_executable(launcher, appctx.config, appctx.output)
+    )
+    _start(
+        appctx, launcher, target, LaunchOptions(checkout=checkout, recipe=recipe), executable,
+        yes=yes, no_exec=no_exec, dry_run=dry_run, json_mode=json_mode,
+    )
+
+
+def _start(
+    appctx,
+    launcher: Launcher,
+    target: RunningModel,
+    options: LaunchOptions,
+    executable: str | None,
+    *,
+    yes: bool,
+    no_exec: bool,
+    dry_run: bool,
+    json_mode: bool,
+) -> None:
     prep = launcher.plan(target, options, executable=executable, runner=appctx.runner)
     # A terminal client is still configured under --no-exec — that is what the flag
     # is for. For a service, starting it is the only action, so it waits for start.
@@ -307,7 +381,13 @@ for _name, _launcher_obj in LAUNCHERS.items():
     launch_app.command(
         _name,
         help=f"Connect {_name} ({'terminal client' if _launcher_obj.hands_over_terminal else 'web service'}).",
-    )(handle_tt_errors(_connect))
+    )(
+        handle_tt_errors(
+            _connect_checkout
+            if getattr(_launcher_obj, "runs_from_checkout", False)
+            else _connect
+        )
+    )
 
 
 # -- list -------------------------------------------------------------------------
@@ -334,14 +414,20 @@ def _catalog(appctx) -> list[dict]:
         # Only container clients have a state to report; asking is one `docker
         # inspect`, so it stays cheap enough for a listing.
         state = getattr(launcher, "container_state", None)
+        # Beyond its binary, e.g. the checkout an app runs from.
+        missing = getattr(launcher, "missing", None)
+        unmet = missing(appctx.config) if missing else None
+        needs = " or ".join(launcher.binaries)
         rows.append(
             {
                 "tool": launcher.id,
                 "kind": "terminal" if launcher.hands_over_terminal else "web service",
                 "requires_tool_calling": launcher.requires_tool_calling,
+                # For a client that chooses its own models rather than any served one.
+                "model": getattr(launcher, "model_requirement", None),
                 "configures": launcher.target(),
-                "needs": " or ".join(launcher.binaries),
-                "available": executable is not None,
+                "needs": f"{needs} and {unmet}" if unmet else needs,
+                "available": executable is not None and unmet is None,
                 "container_state": state(executable, appctx.runner) if state else None,
             }
         )
@@ -364,7 +450,8 @@ def _catalog_renderer(rows: list[dict]) -> Table:
         table.add_row(
             row["tool"],
             row["kind"],
-            "tool calling" if row["requires_tool_calling"] else "any chat model",
+            row["model"]
+            or ("tool calling" if row["requires_tool_calling"] else "any chat model"),
             status,
             row["configures"],
         )
@@ -382,7 +469,7 @@ def stop(
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """Stop a client's web service (a container, or Hermes' dashboard), keeping its data."""
+    """Stop a client's web service (a container, Hermes' dashboard, or an app), keeping its data."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(tool)
@@ -486,7 +573,7 @@ def _renderer(payload: dict) -> Group:
     table.add_row("model", model)
     table.add_row("endpoint", payload["base_url"])
     table.add_row("tool-call parser", payload["tool_call_parser"] or "—")
-    for key in ("container", "image", "endpoint_in_container"):
+    for key in ("container", "image", "endpoint_in_container", "checkout", "recipe", "app"):
         if payload.get(key):
             table.add_row(key.replace("_", " "), payload[key])
     if payload["config_path"]:

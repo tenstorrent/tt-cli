@@ -633,3 +633,171 @@ def test_hermes_web_moves_to_the_next_free_port_unless_pinned(monkeypatch):
     pinned = plan(LaunchOptions(web=True, web_port=3000, web_port_pinned=True))
     assert pinned.url == "http://localhost:3000"
 
+
+
+# -- deep-research: an app run from a local checkout ------------------------------
+COHOST = "raahemnabeel/cohost-ornith-35b-qwen3vl"
+
+
+@pytest.fixture
+def ttdr_checkout(tmp_path):
+    root = tmp_path / "tt-deep-research"
+    (root / "recipes").mkdir(parents=True)
+    (root / "recipe.toml").write_text("")
+    for recipe in ("ornith-35b-cohost", "ornith-122b", "qwen38-27b", "rerank"):
+        (root / "recipes" / f"{recipe}.toml").write_text("")
+    return root
+
+
+class _Config:
+    def __init__(self, values=None):
+        self.values = values or {}
+
+    def get(self, key):
+        return self.values.get(key)
+
+
+class _ComposePs:
+    """`docker ps` for the ttdr Compose project: one service<TAB>working_dir per line."""
+
+    def __init__(self, lines: str, returncode: int = 0):
+        self.lines, self.returncode, self.calls = lines, returncode, []
+
+    def capture(self, argv, **kwargs):
+        self.calls.append(list(argv))
+        return CaptureResult(returncode=self.returncode, stdout=self.lines, stderr="")
+
+
+@pytest.fixture
+def with_docker(monkeypatch):
+    monkeypatch.setattr(
+        "tenstorrent.launchers.apps.deep_research.shutil.which",
+        lambda name, **_: "/usr/bin/docker" if name == "docker" else None,
+    )
+
+
+def _deep_research_plan(checkout, runner, recipe="recipes/ornith-35b-cohost.toml"):
+    return LAUNCHERS["deep-research"].plan(
+        RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1"),
+        LaunchOptions(checkout=checkout, recipe=recipe),
+        executable="/usr/bin/uv",
+        runner=runner,
+    )
+
+
+@pytest.mark.parametrize(
+    ("bundles", "recipe"),
+    [
+        ([COHOST], "recipes/ornith-35b-cohost.toml"),
+        (["raahemnabeel/cohost-ornith-122b-qwen3vl"], "recipes/ornith-122b.toml"),
+        (["raahemnabeel/cohost-qwen38-27b-qwen3vl", "other/bundle"], "recipes/qwen38-27b.toml"),
+        (
+            [
+                "raahemnabeel/ornith-1.5-35b-a3b",
+                "raahemnabeel/qwen3-vl-embedding-8b",
+                "raahemnabeel/qwen3-vl-reranker-8b",
+            ],
+            "recipes/rerank.toml",
+        ),
+    ],
+)
+def test_deep_research_picks_the_recipe_for_the_served_bundles(ttdr_checkout, bundles, recipe):
+    assert LAUNCHERS["deep-research"].recipe_for(ttdr_checkout, None, bundles) == recipe
+
+
+def test_deep_research_without_its_bundles_says_what_to_serve(ttdr_checkout):
+    """The LLM alone is not enough: `ttdr up` would serve the missing embedder and
+    reranker itself."""
+    with pytest.raises(TTError) as err:
+        LAUNCHERS["deep-research"].recipe_for(
+            ttdr_checkout, None, ["raahemnabeel/ornith-1.5-35b-a3b"]
+        )
+    assert err.value.exit_code == ExitCode.ERROR
+    assert f"tt serve {COHOST}" in (err.value.next_step or "")
+    assert "raahemnabeel/ornith-1.5-35b-a3b" in (err.value.why or "")
+
+
+def test_deep_research_recipe_override_must_exist(ttdr_checkout):
+    launcher = LAUNCHERS["deep-research"]
+    assert launcher.recipe_for(ttdr_checkout, "recipes/rerank.toml", []) == "recipes/rerank.toml"
+    with pytest.raises(TTError) as err:
+        launcher.recipe_for(ttdr_checkout, "recipes/nope.toml", [COHOST])
+    assert err.value.exit_code == ExitCode.USAGE
+
+
+def test_deep_research_finds_its_checkout_by_path_then_config_then_home(
+    tmp_path, ttdr_checkout, monkeypatch
+):
+    launcher = LAUNCHERS["deep-research"]
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config = _Config({"launch.deep_research_path": str(ttdr_checkout)})
+    assert launcher.checkout(config) == ttdr_checkout
+    assert launcher.checkout(_Config()) == ttdr_checkout  # ~/tt-deep-research
+    with pytest.raises(TTError) as err:
+        launcher.checkout(config, tmp_path / "elsewhere")
+    assert err.value.exit_code == ExitCode.TOOL_MISSING
+    # Never cloned for the user: the hint says how.
+    assert "git clone https://github.com/rnabeelTT/tt-deep-research" in err.value.next_step
+    assert launcher.missing(_Config()) is None
+    elsewhere = _Config({"launch.deep_research_path": str(tmp_path / "elsewhere")})
+    assert "elsewhere" in launcher.missing(elsewhere)
+
+
+def test_deep_research_refuses_until_every_endpoint_answers(monkeypatch):
+    model = RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1")
+    monkeypatch.setattr(
+        "tenstorrent.launchers.apps.deep_research.probe",
+        lambda url, **_: None if ":8004/" in url else [model],
+    )
+    with pytest.raises(TTError) as err:
+        LAUNCHERS["deep-research"].served_llm()
+    assert err.value.exit_code == ExitCode.ERROR
+    assert "reranker" in err.value.what and "8004" in err.value.what
+
+
+def test_deep_research_plans_ttdr_up_and_asks_first(ttdr_checkout, with_docker, monkeypatch):
+    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: True)
+    prep = _deep_research_plan(ttdr_checkout, _ComposePs(""))
+    assert prep.steps == [
+        ["/usr/bin/uv", "run", "ttdr", "up", "--recipe", "recipes/ornith-35b-cohost.toml"]
+    ]
+    assert prep.consent and str(ttdr_checkout) in prep.consent
+    assert prep.url == "http://localhost:3000"
+    assert prep.rows["checkout"] == str(ttdr_checkout)
+
+
+def test_deep_research_already_running_on_the_same_recipe_does_nothing(
+    ttdr_checkout, with_docker, monkeypatch
+):
+    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: False)
+    (ttdr_checkout / ".env").write_text("KEY=1\nTTDR_RECIPE=recipes/ornith-35b-cohost.toml\n")
+    running = _ComposePs(f"ui-deepagents\t{ttdr_checkout}\nqdrant\t{ttdr_checkout}\n")
+    prep = _deep_research_plan(ttdr_checkout, running)
+    assert prep.steps == [] and prep.consent is None
+    assert prep.url == "http://localhost:3000"
+    # Started with another recipe: `ttdr up` again, which recreates what changed.
+    prep = _deep_research_plan(ttdr_checkout, running, recipe="recipes/rerank.toml")
+    assert prep.steps[0][-1] == "recipes/rerank.toml"
+
+
+def test_deep_research_refuses_a_taken_ui_port(ttdr_checkout, with_docker, monkeypatch):
+    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: False)
+    with pytest.raises(TTError) as err:
+        _deep_research_plan(ttdr_checkout, _ComposePs(""))
+    assert err.value.exit_code == ExitCode.CONFIG
+
+
+def test_deep_research_state_counts_only_app_services(with_docker):
+    """Data services (Qdrant, Redis, SearXNG) outlive `ttdr down`, so they alone
+    do not make the app running."""
+    launcher = LAUNCHERS["deep-research"]
+    assert launcher.container_state(None, _ComposePs("qdrant\t/x\nredis\t/x\n")) == "absent"
+    assert launcher.container_state(None, _ComposePs("engine\t/x\n")) == "running"
+    assert launcher.container_state(None, _ComposePs("", returncode=1)) == "unknown"
+
+
+def test_deep_research_state_is_unknown_without_docker(monkeypatch):
+    monkeypatch.setattr(
+        "tenstorrent.launchers.apps.deep_research.shutil.which", lambda name, **_: None
+    )
+    assert LAUNCHERS["deep-research"].container_state(None, None) == "unknown"

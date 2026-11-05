@@ -320,6 +320,22 @@ class ModelManagerBackend:
         }
         return sorted(ports)
 
+    def running_repos(self) -> list[str]:
+        """Bundles (Hub repo ids) tt-model's own containers are serving right now,
+        read off their labels. Best effort: no docker → nothing."""
+        docker = shutil.which("docker")
+        if docker is None:
+            return []
+        listed = self.runner.capture(
+            [
+                docker, "ps",
+                "--filter", f"label={_LABEL}",
+                "--format", f'{{{{.Label "{_LABEL}.repo"}}}}',
+            ],
+            tool="docker",
+        )
+        return sorted({line.strip() for line in listed.stdout.splitlines() if line.strip()})
+
     def running_profiles(self, repo_id: str) -> list[str]:
         """Profiles of `repo_id`'s containers that are running right now.
 
