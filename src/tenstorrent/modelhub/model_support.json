@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "release_version": "0.25.0",
+ "release_version": "0.26.0",
  "models": [
   {
    "name": "AFM-4.5B",
@@ -534,35 +534,6 @@
    }
   },
   {
-   "name": "Falcon3-7B-Instruct",
-   "hf_repo": "tiiuae/Falcon3-7B-Instruct",
-   "model_type": "llm",
-   "engines": [
-    "forge"
-   ],
-   "tt_model_id": "Falcon3-7B-Instruct",
-   "param_count": 7,
-   "min_disk_gb": 20,
-   "min_ram_gb": 12.0,
-   "devices": {
-    "p150": {
-     "engines": [
-      "forge"
-     ],
-     "status": "EXPERIMENTAL",
-     "max_context": 32768,
-     "supported": true,
-     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.18.0-c49bb76",
-     "impl_id": "forge_vllm_plugin",
-     "version": "0.18.0",
-     "tool_call_parser": null,
-     "reasoning_parser": null,
-     "override_tt_config": null,
-     "mesh_graph_desc": null
-    }
-   }
-  },
-  {
    "name": "FLUX.1-dev",
    "hf_repo": "black-forest-labs/FLUX.1-dev",
    "model_type": "image",
@@ -890,6 +861,64 @@
    }
   },
   {
+   "name": "gemma-4-26B-A4B-it",
+   "hf_repo": "google/gemma-4-26B-A4B-it",
+   "model_type": "llm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "gemma-4-26B-A4B-it",
+   "param_count": 4,
+   "min_disk_gb": 28,
+   "min_ram_gb": 10.0,
+   "devices": {
+    "p150x4": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 262144,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "gemma4_26b_a4b_qb2",
+     "version": "0.26.0",
+     "tool_call_parser": "gemma4",
+     "reasoning_parser": "gemma4",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D",
+      "trace_region_size": 1000000000,
+      "sample_on_device_mode": "all",
+      "trace_mode": "decode_only",
+      "enable_model_warmup": false
+     },
+     "mesh_graph_desc": null,
+     "serve_as": "p300x2",
+     "support_source": "mesh-equivalent"
+    },
+    "p300x2": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 262144,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "gemma4_26b_a4b_qb2",
+     "version": "0.26.0",
+     "tool_call_parser": "gemma4",
+     "reasoning_parser": "gemma4",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D",
+      "trace_region_size": 1000000000,
+      "sample_on_device_mode": "all",
+      "trace_mode": "decode_only",
+      "enable_model_warmup": false
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
    "name": "gemma-4-31B-it",
    "hf_repo": "google/gemma-4-31B-it",
    "model_type": "llm",
@@ -1051,6 +1080,178 @@
      "override_tt_config": {
       "sample_on_device_mode": "all",
       "trace_region_size": 134217728
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "granite-4.2-30b",
+   "hf_repo": "ibm-granite/granite-4.2-30b",
+   "model_type": "llm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "granite-4.2-30b",
+   "param_count": 30,
+   "min_disk_gb": 80,
+   "min_ram_gb": 75.0,
+   "devices": {
+    "p150x4": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "granite42_30b_qb2",
+     "version": "0.26.0",
+     "tool_call_parser": "qwen3_xml",
+     "reasoning_parser": "qwen3",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D_RING",
+      "trace_region_size": 134217728,
+      "sample_on_device_mode": "all"
+     },
+     "mesh_graph_desc": null,
+     "serve_as": "p300x2",
+     "support_source": "mesh-equivalent"
+    },
+    "p300x2": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "granite42_30b_qb2",
+     "version": "0.26.0",
+     "tool_call_parser": "qwen3_xml",
+     "reasoning_parser": "qwen3",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D_RING",
+      "trace_region_size": 134217728,
+      "sample_on_device_mode": "all"
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "K2-Horizon-7B",
+   "hf_repo": "IFM/K2-Horizon-7B",
+   "model_type": "llm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "K2-Horizon-7B",
+   "param_count": 7,
+   "min_disk_gb": 34,
+   "min_ram_gb": 17.5,
+   "devices": {
+    "p150x4": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 524288,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "k2_horizon_7b_qb2",
+     "version": "0.26.0",
+     "tool_call_parser": "k2_horizon",
+     "reasoning_parser": "k2_horizon",
+     "override_tt_config": {
+      "sample_on_device_mode": "all",
+      "trace_mode": "all",
+      "trace_region_size": 200000000,
+      "fabric_config": "FABRIC_1D_RING"
+     },
+     "mesh_graph_desc": null,
+     "serve_as": "p300x2",
+     "support_source": "mesh-equivalent"
+    },
+    "p300x2": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 524288,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "k2_horizon_7b_qb2",
+     "version": "0.26.0",
+     "tool_call_parser": "k2_horizon",
+     "reasoning_parser": "k2_horizon",
+     "override_tt_config": {
+      "sample_on_device_mode": "all",
+      "trace_mode": "all",
+      "trace_region_size": 200000000,
+      "fabric_config": "FABRIC_1D_RING"
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "Kolibri-1-BF16",
+   "hf_repo": "Aleph-Alpha/Kolibri-1-BF16",
+   "model_type": "llm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Kolibri-1-BF16",
+   "param_count": null,
+   "min_disk_gb": 180,
+   "min_ram_gb": 128.0,
+   "devices": {
+    "p150x4": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 262144,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "kolibri_1_qb2",
+     "version": "0.26.0",
+     "tool_call_parser": null,
+     "reasoning_parser": "kolibri1",
+     "override_tt_config": {
+      "sample_on_device_mode": "all",
+      "trace_mode": "all",
+      "trace_region_size": 200000000,
+      "fabric_config": "FABRIC_1D",
+      "decode_interleave_enabled": true,
+      "decode_interleave_prefill_steps": 1,
+      "decode_interleave_decode_steps": 1
+     },
+     "mesh_graph_desc": null,
+     "serve_as": "p300x2",
+     "support_source": "mesh-equivalent"
+    },
+    "p300x2": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 262144,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "kolibri_1_qb2",
+     "version": "0.26.0",
+     "tool_call_parser": null,
+     "reasoning_parser": "kolibri1",
+     "override_tt_config": {
+      "sample_on_device_mode": "all",
+      "trace_mode": "all",
+      "trace_region_size": 200000000,
+      "fabric_config": "FABRIC_1D",
+      "decode_interleave_enabled": true,
+      "decode_interleave_prefill_steps": 1,
+      "decode_interleave_decode_steps": 1
      },
      "mesh_graph_desc": null
     }
@@ -2243,6 +2444,92 @@
    }
   },
   {
+   "name": "Muse-Glimmer-30B",
+   "hf_repo": "meta-models/Muse-Glimmer-30B",
+   "model_type": "llm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Muse-Glimmer-30B",
+   "param_count": 30,
+   "min_disk_gb": 80,
+   "min_ram_gb": 75.0,
+   "devices": {
+    "p150x4": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "muse_glimmer_30b_qb2",
+     "version": "0.26.0",
+     "tool_call_parser": "muse_glimmer",
+     "reasoning_parser": "muse_glimmer",
+     "override_tt_config": {
+      "sample_on_device_mode": "all",
+      "trace_region_size": 0,
+      "fabric_config": "FABRIC_1D_RING"
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_x2_mesh_graph_descriptor.textproto",
+     "serve_as": "p300x2",
+     "support_source": "mesh-equivalent"
+    },
+    "p300x2": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "muse_glimmer_30b_qb2",
+     "version": "0.26.0",
+     "tool_call_parser": "muse_glimmer",
+     "reasoning_parser": "muse_glimmer",
+     "override_tt_config": {
+      "sample_on_device_mode": "all",
+      "trace_region_size": 0,
+      "fabric_config": "FABRIC_1D_RING"
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_x2_mesh_graph_descriptor.textproto"
+    }
+   }
+  },
+  {
+   "name": "olmOCR-2-7B-1025",
+   "hf_repo": "allenai/olmOCR-2-7B-1025",
+   "model_type": "vlm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "olmOCR-2-7B-1025",
+   "param_count": 7,
+   "min_disk_gb": 34,
+   "min_ram_gb": 17.5,
+   "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "tt_transformers",
+     "version": "0.26.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "sample_on_device_mode": "decode_only",
+      "trace_region_size": 60000000
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
    "name": "Qwen2.5-72B",
    "hf_repo": "Qwen/Qwen2.5-72B",
    "model_type": "llm",
@@ -2369,6 +2656,117 @@
      "reasoning_parser": null,
      "override_tt_config": {
       "trace_region_size": 66000000
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "Qwen2.5-VL-32B-Instruct",
+   "hf_repo": "Qwen/Qwen2.5-VL-32B-Instruct",
+   "model_type": "vlm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Qwen2.5-VL-32B-Instruct",
+   "param_count": 32,
+   "min_disk_gb": 84,
+   "min_ram_gb": 80.0,
+   "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "tt_transformers",
+     "version": "0.26.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "Qwen2.5-VL-72B-Instruct",
+   "hf_repo": "Qwen/Qwen2.5-VL-72B-Instruct",
+   "model_type": "vlm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Qwen2.5-VL-72B-Instruct",
+   "param_count": 72,
+   "min_disk_gb": 164,
+   "min_ram_gb": 180.0,
+   "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 98304,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "tt_transformers",
+     "version": "0.26.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "trace_region_size": 28467200
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "Qwen2.5-VL-7B-Instruct",
+   "hf_repo": "Qwen/Qwen2.5-VL-7B-Instruct",
+   "model_type": "vlm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Qwen2.5-VL-7B-Instruct",
+   "param_count": 7,
+   "min_disk_gb": 34,
+   "min_ram_gb": 17.5,
+   "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "tt_transformers",
+     "version": "0.26.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "sample_on_device_mode": "decode_only",
+      "trace_region_size": 60000000
+     },
+     "mesh_graph_desc": null
+    },
+    "galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "tt_transformers",
+     "version": "0.26.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "sample_on_device_mode": "decode_only",
+      "trace_region_size": 100000000,
+      "fabric_config": "FABRIC_1D_RING"
      },
      "mesh_graph_desc": null
     }
@@ -2774,6 +3172,62 @@
    }
   },
   {
+   "name": "Qwen3.5-27B",
+   "hf_repo": "Qwen/Qwen3.5-27B",
+   "model_type": "llm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Qwen3.5-27B",
+   "param_count": 27,
+   "min_disk_gb": 74,
+   "min_ram_gb": 67.5,
+   "devices": {
+    "p150x4": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 262144,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "qwen36_blackhole",
+     "version": "0.26.0",
+     "tool_call_parser": "qwen3_coder",
+     "reasoning_parser": "qwen3",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D",
+      "trace_region_size": 1073741824,
+      "l1_small_size": 24576,
+      "sample_on_device_mode": "decode_only"
+     },
+     "mesh_graph_desc": null
+    },
+    "p300x2": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 262144,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "qwen36_blackhole",
+     "version": "0.26.0",
+     "tool_call_parser": "qwen3_coder",
+     "reasoning_parser": "qwen3",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D",
+      "trace_region_size": 1073741824,
+      "l1_small_size": 24576,
+      "sample_on_device_mode": "decode_only"
+     },
+     "mesh_graph_desc": null,
+     "serve_as": "p150x4",
+     "support_source": "mesh-equivalent"
+    }
+   }
+  },
+  {
    "name": "Qwen3.6-27B",
    "hf_repo": "Qwen/Qwen3.6-27B",
    "model_type": "llm",
@@ -2792,9 +3246,9 @@
      "status": "EXPERIMENTAL",
      "max_context": 262144,
      "supported": true,
-     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.20.0-de59f8a-03fa3af",
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
      "impl_id": "qwen36_blackhole",
-     "version": "0.20.0",
+     "version": "0.26.0",
      "tool_call_parser": "qwen3_coder",
      "reasoning_parser": "qwen3",
      "override_tt_config": {
@@ -2803,9 +3257,7 @@
       "l1_small_size": 24576,
       "sample_on_device_mode": "decode_only"
      },
-     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_x2_mesh_graph_descriptor.textproto",
-     "serve_as": "p300x2",
-     "support_source": "mesh-equivalent"
+     "mesh_graph_desc": null
     },
     "p300x2": {
      "engines": [
