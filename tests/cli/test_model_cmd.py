@@ -1838,7 +1838,7 @@ def test_model_stop_keeps_the_inference_server_path_when_studio_is_not_involved(
     assert not studio_bin.exists()
 
 
-# -- tt-model parity: search / profiles / curl / login / publish / authoring ------------
+# -- tt-model parity: search / profiles / check / login / publish / authoring ------------
 def _last_argv(log: Path) -> list[str]:
     return json.loads(log.read_text().splitlines()[-1])["argv"]
 
@@ -1998,72 +1998,72 @@ def test_model_profiles_catalog_typo_is_a_catalog_error(runner, isolated_dirs):
 
 
 @pytest.mark.fakes_only
-def test_model_curl_forwards_prompt_body_options_and_the_port(
+def test_model_check_forwards_prompt_body_options_and_the_port(
     runner, fake_model_manager, isolated_dirs
 ):
     result = runner.invoke(
-        app, ["model", "curl", "hi there", "--port", "8100", "--max-tokens", "8", "--print"]
+        app, ["model", "check", "hi there", "--port", "8100", "--max-tokens", "8", "--print"]
     )
     assert result.exit_code == 0, result.output
     assert _last_argv(fake_model_manager) == [
-        "curl", "hi there", "--base-url", "http://127.0.0.1:8100", "--print",
+        "check", "hi there", "--base-url", "http://127.0.0.1:8100", "--print",
         "--max-tokens", "8",
     ]
 
 
 @pytest.mark.fakes_only
-def test_model_curl_defaults_to_the_served_port(
+def test_model_check_defaults_to_the_served_port(
     runner, fake_model_manager, isolated_dirs, monkeypatch
 ):
     """With one server running, tt finds its port the way `tt launch` does."""
     monkeypatch.setattr("tenstorrent.commands.launch._local_candidate_ports", lambda appctx: [20010])
-    result = runner.invoke(app, ["model", "curl"])
+    result = runner.invoke(app, ["model", "check"])
     assert result.exit_code == 0, result.output
-    assert _last_argv(fake_model_manager) == ["curl", "--base-url", "http://127.0.0.1:20010"]
+    assert _last_argv(fake_model_manager) == ["check", "--base-url", "http://127.0.0.1:20010"]
 
 
 @pytest.mark.fakes_only
-def test_model_curl_falls_back_to_tt_models_default_port(
+def test_model_check_falls_back_to_tt_models_default_port(
     runner, fake_model_manager, isolated_dirs, monkeypatch
 ):
     monkeypatch.setattr("tenstorrent.commands.launch._local_candidate_ports", lambda appctx: [])
-    assert runner.invoke(app, ["model", "curl", "--model", "acme/w"]).exit_code == 0
+    assert runner.invoke(app, ["model", "check", "--model", "acme/w"]).exit_code == 0
     assert _last_argv(fake_model_manager) == [
-        "curl", "--base-url", "http://127.0.0.1:20000", "--model", "acme/w",
+        "check", "--base-url", "http://127.0.0.1:20000", "--model", "acme/w",
     ]
 
 
 @pytest.mark.fakes_only
-def test_model_curl_with_several_servers_asks_for_a_port(
+def test_model_check_with_several_servers_asks_for_a_port(
     runner, fake_model_manager, isolated_dirs, monkeypatch
 ):
     monkeypatch.setattr(
         "tenstorrent.commands.launch._local_candidate_ports", lambda appctx: [8100, 20000]
     )
-    result = runner.invoke(app, ["model", "curl"])
+    result = runner.invoke(app, ["model", "check"])
     assert result.exit_code == ExitCode.USAGE
     assert "--port" in result.output
     assert not fake_model_manager.exists()
 
 
 @pytest.mark.fakes_only
-def test_model_curl_url_strips_a_v1_suffix(runner, fake_model_manager, isolated_dirs):
+def test_model_check_url_strips_a_v1_suffix(runner, fake_model_manager, isolated_dirs):
     assert runner.invoke(
-        app, ["model", "curl", "--url", "http://box:9000/v1/"]
+        app, ["model", "check", "--url", "http://box:9000/v1/"]
     ).exit_code == 0
-    assert _last_argv(fake_model_manager) == ["curl", "--base-url", "http://box:9000"]
+    assert _last_argv(fake_model_manager) == ["check", "--base-url", "http://box:9000"]
 
 
-def test_model_curl_url_and_port_conflict(runner, isolated_dirs):
-    result = runner.invoke(app, ["model", "curl", "--url", "http://x", "--port", "1"])
+def test_model_check_url_and_port_conflict(runner, isolated_dirs):
+    result = runner.invoke(app, ["model", "check", "--url", "http://x", "--port", "1"])
     assert result.exit_code == ExitCode.USAGE
 
 
 @pytest.mark.fakes_only
-def test_model_curl_never_installs_tt_model(runner, isolated_dirs, monkeypatch):
+def test_model_check_never_installs_tt_model(runner, isolated_dirs, monkeypatch):
     """Asking a running server a question must not fetch a git repo first."""
     monkeypatch.delenv("TT_TOOL_BIN_TT_MODEL", raising=False)
-    result = runner.invoke(app, ["model", "curl", "--port", "1"])
+    result = runner.invoke(app, ["model", "check", "--port", "1"])
     assert result.exit_code == ExitCode.TOOL_MISSING
     assert "tt update" in result.output
 
@@ -2205,7 +2205,7 @@ def test_model_pull_bundle_flags_are_refused_for_catalog_and_weights_only(runner
 
 def test_model_help_lists_every_tt_model_verb(runner):
     result = runner.invoke(app, ["model", "--help"])
-    for verb in ("serve", "search", "profiles", "curl", "login", "publish", "unpublish",
+    for verb in ("serve", "search", "profiles", "check", "login", "publish", "unpublish",
                  "package", "package-thin", "push"):
         assert f" {verb} " in result.output or f" {verb}\n" in result.output, verb
 
@@ -2411,7 +2411,7 @@ def test_model_info_spec_hf_repo_alias_still_wins_over_the_bundle_path(
     assert not fake_model_manager.exists()
 
 
-@pytest.mark.parametrize("argv", [["model", "curl", "hi"], ["model", "login"]])
+@pytest.mark.parametrize("argv", [["model", "check", "hi"], ["model", "login"]])
 def test_plain_text_model_verbs_refuse_json_clearly(runner, argv):
     # They declare --json so it reaches this error rather than "No such option".
     result = runner.invoke(app, [*argv, "--json"])
@@ -2457,3 +2457,73 @@ def test_model_stop_keeps_going_past_one_it_cannot_stop(runner, fake_docker, iso
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
     assert stop_log.read_text().split() == ["aaaaaaaaaaaa"]
     assert "Could not stop Llama-3.1-8B-Instruct" in result.output
+
+
+@pytest.mark.fakes_only
+def test_model_check_forwards_task_tools_and_output(runner, fake_model_manager, isolated_dirs):
+    result = runner.invoke(
+        app,
+        ["model", "check", "--port", "8100", "--task", "text-to-image", "--no-tools",
+         "-o", "out.png", "--print"],
+    )
+    assert result.exit_code == 0, result.output
+    assert _last_argv(fake_model_manager) == [
+        "check", "--base-url", "http://127.0.0.1:8100", "--print",
+        "--task", "text-to-image", "--no-tools", "--output", "out.png",
+    ]
+
+
+@pytest.mark.fakes_only
+def test_model_curl_is_a_hidden_alias_for_check(runner, fake_model_manager, isolated_dirs):
+    assert "curl" not in runner.invoke(app, ["model", "--help"]).output
+    assert runner.invoke(app, ["model", "curl", "hi", "--port", "8100"]).exit_code == 0
+    assert _last_argv(fake_model_manager) == ["check", "hi", "--base-url", "http://127.0.0.1:8100"]
+
+
+def _serving(monkeypatch, served_id):
+    from tenstorrent.launchers.discovery import RunningModel
+
+    monkeypatch.setattr(
+        "tenstorrent.commands.model.discover",
+        lambda base: [RunningModel(served_id=served_id, base_url=base, entry=None)],
+    )
+
+
+@pytest.mark.fakes_only
+@pytest.mark.parametrize(
+    "served, extra",
+    [
+        ("meta-llama/Llama-3.1-8B-Instruct", ["--task", "text-generation", "--tools"]),
+        ("openai/whisper-large-v3", ["--task", "automatic-speech-recognition"]),
+        ("resnet-50", ["--task", "image-classification"]),
+        ("Qwen/Qwen3-32B", ["--task", "text-generation", "--tools"]),
+    ],
+)
+def test_model_check_infers_task_and_tools_for_a_catalog_model(
+    runner, fake_model_manager, isolated_dirs, monkeypatch, served, extra
+):
+    """A catalog model has no manifest, so tt supplies what the support list knows."""
+    _serving(monkeypatch, served)
+    assert runner.invoke(app, ["model", "check", "--port", "8100"]).exit_code == 0
+    assert _last_argv(fake_model_manager) == ["check", "--base-url", "http://127.0.0.1:8100", *extra]
+
+
+@pytest.mark.fakes_only
+def test_model_check_leaves_unknown_models_to_tt_model(
+    runner, fake_model_manager, isolated_dirs, monkeypatch
+):
+    """A community bundle is not in the catalog: tt-model reads its own manifest."""
+    _serving(monkeypatch, "acme/community-bundle")
+    assert runner.invoke(app, ["model", "check", "--port", "8100"]).exit_code == 0
+    assert _last_argv(fake_model_manager) == ["check", "--base-url", "http://127.0.0.1:8100"]
+
+
+@pytest.mark.fakes_only
+def test_model_check_explicit_task_beats_the_catalog(
+    runner, fake_model_manager, isolated_dirs, monkeypatch
+):
+    _serving(monkeypatch, "meta-llama/Llama-3.1-8B-Instruct")
+    runner.invoke(app, ["model", "check", "--port", "8100", "--no-tools"])
+    assert _last_argv(fake_model_manager) == [
+        "check", "--base-url", "http://127.0.0.1:8100", "--no-tools",
+    ]

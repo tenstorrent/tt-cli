@@ -150,6 +150,43 @@ def test_override_details_are_reflowed_to_one_line():
     )
 
 
+# -- compatibility matrix corrections --------------------------------------------------
+def test_compat_overrides_list_the_pairs_a_mark_pulls():
+    compat = build.build_compat_overrides(
+        SPEC, build.Overrides(marks=[_override(device="t3k")])
+    )
+    assert compat["release"] == "v0.18.0"
+    assert compat["removals"] == [{"model": "Demo-8B", "device": "t3k", "reason": "broken"}]
+    assert compat["additions"] == []
+
+
+def test_compat_overrides_list_the_pairs_a_fallback_fills():
+    compat = build.build_compat_overrides(SPEC, build.Overrides(fallbacks=[_fallback()]))
+    assert compat["removals"] == []
+    assert compat["additions"] == [
+        {"model": "Demo-8B", "device": "p150x4", "copy_from": "p300x2"}
+    ]
+
+
+def test_a_rescued_board_is_both_removed_and_added():
+    """Its own spec is broken, so the matrix must drop that entry and show the copy."""
+    compat = build.build_compat_overrides(
+        SPEC,
+        build.Overrides(
+            marks=[_override(device="t3k")],
+            fallbacks=[_fallback(device="t3k", serve_as="p300x2")],
+        ),
+    )
+    assert {"model": "Demo-8B", "device": "t3k", "reason": "broken"} in compat["removals"]
+    assert {"model": "Demo-8B", "device": "t3k", "copy_from": "p300x2"} in compat["additions"]
+
+
+def test_compat_overrides_leave_out_serve_overrides():
+    serve = [{"model": "Demo-8B", "docker_image": "img:1", "details": "x"}]
+    compat = build.build_compat_overrides(SPEC, build.Overrides(serve=serve))
+    assert compat["removals"] == [] and compat["additions"] == []
+
+
 # -- device fallbacks ------------------------------------------------------------------
 def _fallback(**kwargs):
     rule = {

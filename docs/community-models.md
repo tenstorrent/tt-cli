@@ -75,7 +75,7 @@ tt model profiles you/mymodel        # serve profiles a container package offers
 tt serve you/mymodel                 # served via tt-model-manager
 tt serve you/mymodel --profile p150x2 --port 8080 -- --max-model-len 4096
                                      # pick a profile; unrecognized args pass through to the bundle's engine
-tt model curl "hello" --max-tokens 40   # one chat completion against whatever is serving
+tt model check "hello" --max-tokens 40   # a request suited to whatever is serving
 tt model stop you/mymodel
 ```
 
@@ -160,7 +160,6 @@ This asks for a one-line subject, collects everything support usually asks for (
 
 In the spirit of every good bring-up log, the caveats up front rather than discovered later:
 
-- **tt-model-manager is still in beta.** No support guarantees; the bundle format can change. tt-cli itself is also beta software — expect breaking changes as features land.
 - Tenstorrent does not maintain community models brought up and posted via Hugging Face; the tooling makes them accessible.
 - Compatibility is **checked, not guaranteed**. Architecture mismatch fails hard on purpose; other mismatches warn and can be forced.
 

@@ -82,6 +82,7 @@ OUTPUT_PATH = MODELHUB / "model_support.json"
 
 SUPPORT_SCHEMA_VERSION = 1
 OVERRIDES_SCHEMA_VERSION = 1
+COMPAT_OVERRIDES_SCHEMA_VERSION = 1
 VALID_REASONS = ("broken", "unsupported")
 # docker_image / override_tt_config become run.py flags of their own; the parsers
 # replace the spec's metadata, which tt already turns into --vllm-override-args.
@@ -445,6 +446,40 @@ def build_document(spec: dict[str, Any], overrides: Overrides) -> tuple[dict, li
     return document, warnings
 
 
+def build_compat_overrides(spec: dict[str, Any], overrides: Overrides) -> dict[str, Any]:
+    """The corrections the data pipeline applies to this release's compatibility matrix.
+
+    Explicit (model, device) pairs, not rules. A removal is a spec entry the marks
+    pulled; an addition is a device the fallback filled, copied from `copy_from`.
+    A pair in both lists is a board whose own spec is broken but which runs the copy
+    instead. Uploaded to model-spec-overrides/<tag>/overrides.json in the
+    compatibility bucket. Serve-time overrides are left out: they change how tt
+    launches a model, not whether it runs.
+    """
+    models = build_models(spec)
+    apply_overrides(models, overrides.marks)
+    removals = [
+        {"model": model["name"], "device": device, "reason": record["unsupported"]["reason"]}
+        for model in models
+        for device, record in model["devices"].items()
+        if not record["supported"]
+    ]
+    apply_device_fallbacks(models, overrides.fallbacks)
+    additions = [
+        {"model": model["name"], "device": device, "copy_from": record["serve_as"]}
+        for model in models
+        for device, record in model["devices"].items()
+        if record.get("serve_as")
+    ]
+    return {
+        "schema_version": COMPAT_OVERRIDES_SCHEMA_VERSION,
+        "release": f"v{spec.get('release_version', '')}",
+        "source": "tt-cli",
+        "removals": removals,
+        "additions": additions,
+    }
+
+
 def render(document: dict[str, Any]) -> str:
     return json.dumps(document, indent=1, sort_keys=False) + "\n"
 
@@ -530,6 +565,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="download release_model_spec.json at the pinned server version first",
     )
+    parser.add_argument(
+        "--compat-overrides",
+        type=Path,
+        metavar="PATH",
+        help="also write the compatibility matrix corrections (overrides.json) to PATH",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -544,6 +585,14 @@ def main(argv: list[str] | None = None) -> int:
     except BuildError as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
+
+    if args.compat_overrides:
+        compat = build_compat_overrides(spec, overrides)
+        args.compat_overrides.write_text(render(compat))
+        print(
+            f"Wrote {args.compat_overrides} ({len(compat['removals'])} removals, "
+            f"{len(compat['additions'])} additions)"
+        )
 
     rendered = render(document)
     previous = json.loads(OUTPUT_PATH.read_text()) if OUTPUT_PATH.exists() else None
