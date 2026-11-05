@@ -41,7 +41,7 @@ RECIPES = {
     ),
 }
 RECOMMENDED_SERVE = (
-    "tt serve raahemnabeel/cohost-ornith-35b-qwen3vl --yes --port 8000 -- --profile ornith35b"
+    "tt-model serve raahemnabeel/cohost-ornith-35b-qwen3vl --local-only --port 8000 --detach"
 )
 _COMPOSE = "com.docker.compose"
 _PROJECT = "ttdr"

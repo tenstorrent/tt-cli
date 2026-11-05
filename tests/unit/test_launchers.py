@@ -713,7 +713,7 @@ def test_deep_research_without_its_bundles_says_what_to_serve(ttdr_checkout):
             ttdr_checkout, None, ["raahemnabeel/ornith-1.5-35b-a3b"]
         )
     assert err.value.exit_code == ExitCode.ERROR
-    assert f"tt serve {COHOST}" in (err.value.next_step or "")
+    assert f"tt-model serve {COHOST}" in (err.value.next_step or "")
     assert "raahemnabeel/ornith-1.5-35b-a3b" in (err.value.why or "")
 
 
