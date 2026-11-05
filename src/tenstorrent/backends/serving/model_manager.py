@@ -192,6 +192,12 @@ class ModelManagerBackend:
             )
         )
 
+    def serve_detached(self, repo_id: str, serve_flags: list[str]) -> int:
+        """Start a bundle with tt-model's own --detach, without tt's boot view: for
+        a caller that waits on the bundle's readiness itself (`tt launch`)."""
+        plan = self.prepare(repo_id, serve_flags=serve_flags)
+        return self.runner.stream(plan.argv, env=self._env(), tool=TOOL)
+
     @staticmethod
     def _engine(repo_id: str) -> str:
         """Which stack the bundle boots, for picking the container template.

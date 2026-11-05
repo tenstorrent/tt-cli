@@ -5,16 +5,22 @@
 
 Neither a binary tt configures nor a container tt runs: `uv run ttdr up` starts
 the app from the user's checkout of https://github.com/rnabeelTT/tt-deep-research.
-It needs an LLM, an embedder and a reranker, all already served by tt; the recipe
-describing them is picked from the bundles tt-model reports running. `ttdr up`
-serves any model of its recipe that does not answer, so every endpoint is checked
-first: tt never lets it start a model on chips the running ones already hold.
+It needs an LLM, an embedder and a reranker; the recipe describing them is picked
+from the bundles tt-model reports running. With none of them running and nothing
+else on the board, tt serves the default cohost bundle first and waits for it.
+`ttdr up` serves any model of its recipe that does not answer, so every endpoint
+is checked first: tt never lets it start a model on chips the running ones hold.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
+from typing import Callable
 
 from ...errors import ExitCode, TTError
 from ..base import LaunchEnv, LaunchOptions, Preparation, RunningModel
@@ -40,9 +46,16 @@ RECIPES = {
         "raahemnabeel/qwen3-vl-reranker-8b",
     ),
 }
-RECOMMENDED_SERVE = (
-    "tt-model serve raahemnabeel/cohost-ornith-35b-qwen3vl --local-only --port 8000 --detach"
-)
+# Served by tt when nothing is: the LLM, embedder and reranker as one bundle.
+DEFAULT_BUNDLE = "raahemnabeel/cohost-ornith-35b-qwen3vl"
+DEFAULT_RECIPE = "recipes/ornith-35b-cohost.toml"
+DEFAULT_MODEL = "ornith-ai/Ornith-1.5-35B-A3B"
+SERVE_FLAGS = ("--local-only", "--port", "8000", "--detach")
+RECOMMENDED_SERVE = f"tt-model serve {DEFAULT_BUNDLE} {' '.join(SERVE_FLAGS)}"
+# The cohost's own status: each member reports whether it is ready.
+STATUS_URL = "http://127.0.0.1:8006"
+SERVE_TIMEOUT_S = 30 * 60  # a cold start takes 10-15 minutes
+_POLL_S = 5.0
 _COMPOSE = "com.docker.compose"
 _PROJECT = "ttdr"
 # What `ttdr down` stops; its data services (Qdrant, SearXNG, Redis) keep running.
@@ -60,6 +73,11 @@ class DeepResearch:
     model_requirement = "a bundle its recipes name"
     hands_over_terminal = False
     runs_from_checkout = True
+    # What tt serves itself when none of its recipes' bundles is running.
+    default_bundle = DEFAULT_BUNDLE
+    default_recipe = DEFAULT_RECIPE
+    default_model = DEFAULT_MODEL
+    serve_flags = SERVE_FLAGS
 
     def target(self) -> str:
         return "tt-deep-research app"
@@ -83,7 +101,10 @@ class DeepResearch:
         root = self._root(config)
         return None if (root / "recipe.toml").is_file() else f"a checkout at {root}"
 
-    def recipe_for(self, checkout: Path, wanted: str | None, bundles: list[str]) -> str:
+    def recipe_for(
+        self, checkout: Path, wanted: str | None, bundles: list[str]
+    ) -> str | None:
+        """--recipe, else the recipe whose bundles are all running; None if none is."""
         if wanted:
             if not (checkout / wanted).is_file():
                 raise TTError(
@@ -97,15 +118,90 @@ class DeepResearch:
         for recipe, needed in RECIPES.items():
             if set(needed) <= set(bundles):
                 return recipe
-        raise TTError(
+        return None
+
+    def not_served(self, bundles: list[str], blocker: str | None = None) -> TTError:
+        why = (
+            "It needs an LLM, an embedder and a reranker from a bundle one of its "
+            f"recipes names; tt-model is serving {', '.join(bundles) or 'nothing'}."
+        )
+        return TTError(
             "tt is not serving the models deep-research needs.",
-            why="It needs an LLM, an embedder and a reranker from a bundle one of its "
-            f"recipes names; tt-model is serving {', '.join(bundles) or 'nothing'}.",
+            why=f"{why} {blocker}" if blocker else why,
             next_step=f"Serve the recommended bundle (all three models): `{RECOMMENDED_SERVE}`, "
             "then re-run. For another bundle, pass --recipe.",
             exit_code=ExitCode.ERROR,
             details={"tool": self.id, "serving": bundles},
         )
+
+    def serve_blocker(self, bundles: list[str]) -> str | None:
+        """Why tt must not serve the default bundle here: the board or one of its
+        ports is already someone else's."""
+        if bundles:
+            return "tt will not serve another bundle over those."
+        for role, port in ENDPOINTS.items():
+            models = probe(f"http://127.0.0.1:{port}/v1")
+            if models:
+                return (
+                    f"Port {port} (its {role}) already serves {models[0].served_id}, "
+                    "so tt will not serve over it."
+                )
+        return None
+
+    def model_bundles(self, bundles: list[str]) -> list[str]:
+        """Which of the running bundles are ones its recipes use."""
+        known = {bundle for needed in RECIPES.values() for bundle in needed}
+        return [bundle for bundle in bundles if bundle in known]
+
+    def ready(self) -> bool:
+        """Whether the cohost reports every member ready, or failing that,
+        whether all three endpoints answer."""
+        try:
+            with urllib.request.urlopen(STATUS_URL, timeout=5.0) as response:
+                members = (json.load(response) or {}).get("members") or {}
+            if members and all(
+                isinstance(m, dict) and m.get("ready") is True for m in members.values()
+            ):
+                return True
+        except (urllib.error.URLError, OSError, ValueError, AttributeError):
+            pass
+        return all(probe(f"http://127.0.0.1:{port}/v1") for port in ENDPOINTS.values())
+
+    def wait_until_served(
+        self,
+        alive: Callable[[], bool],
+        on_tick: Callable[[float], None] = lambda elapsed: None,
+        timeout_s: float = SERVE_TIMEOUT_S,
+    ) -> None:
+        """Poll until the default bundle is ready; `alive` says whether its
+        container is still running."""
+        logs = (
+            f"See its boot with `tt model logs {DEFAULT_BUNDLE} --follow` "
+            "(tt-model logs), or `docker ps -a` and `docker logs <container>`."
+        )
+        start = time.monotonic()
+        while True:
+            if self.ready():
+                return
+            elapsed = time.monotonic() - start
+            if not alive():
+                raise TTError(
+                    f"{DEFAULT_BUNDLE} stopped before it was ready.",
+                    why="Its container is no longer running.",
+                    next_step=logs,
+                    exit_code=ExitCode.TOOL_FAILED,
+                    details={"tool": self.id, "bundle": DEFAULT_BUNDLE},
+                )
+            if elapsed >= timeout_s:
+                raise TTError(
+                    f"{DEFAULT_BUNDLE} was not ready after {int(timeout_s // 60)} minutes.",
+                    why=f"Its status ({STATUS_URL}) never reported every member ready.",
+                    next_step=f"{logs} Once it is, re-run `tt launch {self.id}`.",
+                    exit_code=ExitCode.TOOL_FAILED,
+                    details={"tool": self.id, "bundle": DEFAULT_BUNDLE},
+                )
+            on_tick(elapsed)
+            time.sleep(_POLL_S)
 
     def served_llm(self) -> RunningModel:
         """The LLM, once all three endpoints answer."""

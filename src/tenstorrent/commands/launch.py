@@ -327,6 +327,11 @@ def _connect_checkout(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would be done, and change nothing."
     ),
+    serve: bool = typer.Option(
+        True,
+        "--serve/--no-serve",
+        help="Serve its default models first when none of its bundles is running.",
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
     verbose: VerboseFlag = False,
@@ -337,17 +342,58 @@ def _connect_checkout(
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(ctx.info_name)
     checkout = launcher.checkout(appctx.config, path)
-    recipe = launcher.recipe_for(checkout, recipe, [] if recipe else _running_bundles(appctx))
-    target = launcher.served_llm()
+    bundles = [] if recipe else _running_bundles(appctx)
+    chosen = launcher.recipe_for(checkout, recipe, bundles)
+    serve_argv = None
+    if chosen is None:
+        blocker = launcher.serve_blocker(bundles) if serve else None
+        if not serve or blocker:
+            raise launcher.not_served(bundles, blocker)
+        chosen = launcher.recipe_for(checkout, launcher.default_recipe, [])
+        serve_argv = ["tt-model", "serve", launcher.default_bundle, *launcher.serve_flags]
     executable = (
         _installed_or_none(launcher, appctx.config, appctx.output)
         if dry_run
         else resolve_executable(launcher, appctx.config, appctx.output)
     )
+    options = LaunchOptions(checkout=checkout, recipe=chosen)
+    if serve_argv is None:
+        target = launcher.served_llm()
+    elif dry_run or no_exec:
+        target = RunningModel(
+            served_id=launcher.default_model, base_url="http://127.0.0.1:8000/v1"
+        )
+    else:
+        _ask(
+            appctx,
+            f"Serve {launcher.default_bundle} (its LLM, embedder and reranker; 10-15 minutes "
+            f"from cold), then start {launcher.id} from {checkout}",
+            yes=yes,
+        )
+        _serve_default(appctx, launcher)
+        target = launcher.served_llm()
+        yes = True  # starting the app was part of what was just agreed to
     _start(
-        appctx, launcher, target, LaunchOptions(checkout=checkout, recipe=recipe), executable,
+        appctx, launcher, target, options, executable,
         yes=yes, no_exec=no_exec, dry_run=dry_run, json_mode=json_mode,
+        rows={"serve": " ".join(serve_argv)} if serve_argv else None,
     )
+
+
+def _serve_default(appctx, launcher: Launcher) -> None:
+    """Serve the app's default bundle with tt-model and wait until it is ready."""
+    model_manager = _model_manager(appctx)
+    appctx.output.status(
+        f"Serving {launcher.default_bundle} via tt-model (10-15 minutes from cold) …"
+    )
+    model_manager.serve_detached(launcher.default_bundle, list(launcher.serve_flags))
+    with appctx.output.ui.step(f"Waiting for {launcher.default_bundle} to be ready") as step:
+        launcher.wait_until_served(
+            alive=lambda: launcher.default_bundle in _running_bundles(appctx),
+            on_tick=lambda elapsed: step.set(
+                f"Waiting for {launcher.default_bundle} to be ready ({int(elapsed // 60)} min)"
+            ),
+        )
 
 
 def _start(
@@ -361,8 +407,11 @@ def _start(
     no_exec: bool,
     dry_run: bool,
     json_mode: bool,
+    rows: dict | None = None,
 ) -> None:
     prep = launcher.plan(target, options, executable=executable, runner=appctx.runner)
+    if rows:
+        prep = dataclasses.replace(prep, rows={**rows, **prep.rows})
     # A terminal client is still configured under --no-exec — that is what the flag
     # is for. For a service, starting it is the only action, so it waits for start.
     start = not dry_run and not no_exec and not (json_mode and launcher.hands_over_terminal)
@@ -464,6 +513,11 @@ def _catalog_renderer(rows: list[dict]) -> Table:
 def stop(
     ctx: typer.Context,
     tool: str = typer.Argument(help="Client to stop.", autocompletion=complete_tool),
+    models: bool = typer.Option(
+        False,
+        "--models",
+        help="Also stop the model bundles it was using (deep-research).",
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
     verbose: VerboseFlag = False,
@@ -484,14 +538,30 @@ def stop(
             f"{launcher.id}` to undo its configuration.",
             exit_code=ExitCode.USAGE,
         )
+    model_bundles = getattr(launcher, "model_bundles", None)
+    if models and model_bundles is None:
+        raise TTError(
+            f"{launcher.id} has no models of its own to stop.",
+            why="--models is for an app that chooses its own model bundles.",
+            next_step="Drop --models; `tt model stop <model>` stops a served model.",
+            exit_code=ExitCode.USAGE,
+        )
     executable = resolve_executable(launcher, appctx.config, appctx.output)
+    payload: dict = {"tool": launcher.id, "stopped": False}
     if state(executable, appctx.runner) != "running":
         appctx.output.status(f"{launcher.target()} is not running.")
-        appctx.output.emit({"tool": launcher.id, "stopped": False}, renderer=lambda _: None)
-        return
-    launcher.stop(LaunchEnv(executable, appctx.runner, appctx.output))
-    appctx.output.status(f"Stopped {launcher.target()}; its data is kept.")
-    appctx.output.emit({"tool": launcher.id, "stopped": True}, renderer=lambda _: None)
+    else:
+        launcher.stop(LaunchEnv(executable, appctx.runner, appctx.output))
+        appctx.output.status(f"Stopped {launcher.target()}; its data is kept.")
+        payload["stopped"] = True
+    if models:
+        bundles = model_bundles(_running_bundles(appctx))
+        for bundle in bundles:
+            _model_manager(appctx).stop(bundle)
+        if not bundles:
+            appctx.output.status(f"No model bundle of {launcher.id}'s is running.")
+        payload["models_stopped"] = bundles
+    appctx.output.emit(payload, renderer=lambda _: None)
 
 
 @launch_app.command("disconnect", no_args_is_help=True)
@@ -573,7 +643,9 @@ def _renderer(payload: dict) -> Group:
     table.add_row("model", model)
     table.add_row("endpoint", payload["base_url"])
     table.add_row("tool-call parser", payload["tool_call_parser"] or "—")
-    for key in ("container", "image", "endpoint_in_container", "checkout", "recipe", "app"):
+    for key in (
+        "container", "image", "endpoint_in_container", "serve", "checkout", "recipe", "app"
+    ):
         if payload.get(key):
             table.add_row(key.replace("_", " "), payload[key])
     if payload["config_path"]:

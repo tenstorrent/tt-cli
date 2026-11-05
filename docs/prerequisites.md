@@ -192,7 +192,7 @@ clients additionally need a model that supports tool calling.
 | `aider` | `aider` on PATH | https://aider.chat/docs/install.html |
 | `qwencode` | `qwen` on PATH; Node.js 22+ | `npm install -g @qwen-code/qwen-code` |
 | `hermes` | `hermes` on PATH | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` |
-| `deep-research` | `uv` on PATH; docker with Compose; a checkout at `~/tt-deep-research` (or `--path`, or `launch.deep_research_path`); its LLM, embedder and reranker answering on 8000, 8005 and 8004; host port 3000 free | `git clone https://github.com/rnabeelTT/tt-deep-research` |
+| `deep-research` | `uv` on PATH; docker with Compose; a checkout at `~/tt-deep-research` (or `--path`, or `launch.deep_research_path`); its LLM, embedder and reranker answering on 8000, 8005 and 8004 (tt serves the default cohost bundle there when the board is free); host port 3000 free | `git clone https://github.com/rnabeelTT/tt-deep-research` |
 
 ## Interactive prompts and automation
 

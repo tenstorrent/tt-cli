@@ -128,8 +128,8 @@ tt launch stop openwebui               # stop it, keeping its data
 tt launch hermes                       # Hermes Agent's terminal UI on the served model
 tt launch hermes --web                 # its web dashboard and chat, on the same model
 tt launch stop hermes                  # stop that dashboard (any running Hermes dashboard)
-tt launch deep-research                # tt-deep-research from ~/tt-deep-research, recipe matched to the served bundle
-tt launch stop deep-research           # its `ttdr down`: app containers stop, models keep serving
+tt launch deep-research                # tt-deep-research from ~/tt-deep-research; serves its models first if none are running
+tt launch stop deep-research           # its `ttdr down`: app containers stop, models keep serving (--models stops them too)
 ```
 
 ## Serving backends
