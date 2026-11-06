@@ -73,6 +73,27 @@ def _stdin_isatty() -> bool:
 # studio path declares no phases.
 PHASES = ["Checks", "Prepare", START_PHASE]
 
+def _parse_device_ids(raw: str | None) -> list[int] | None:
+    """Parse `--device-id 0` or `--device-id 2,3` into a list of chip ints."""
+    if raw is None:
+        return None
+    parts = [p.strip() for p in raw.split(",")]
+    if not parts or any(not p or not p.isdigit() for p in parts):
+        raise TTError(
+            f"Invalid --device-id value {raw!r}.",
+            why="--device-id expects a chip index or comma-separated chip indices (e.g. 0 or 2,3).",
+            next_step="Pass non-negative integer chip IDs such as `--device-id 0` or `--device-id 2,3`.",
+            exit_code=ExitCode.USAGE,
+            reason="serve.device.invalid",
+        )
+    seen: list[int] = []
+    for p in parts:
+        val = int(p)
+        if val not in seen:
+            seen.append(val)
+    return seen
+
+
 
 def _autodetect_device(appctx) -> str | None:
     """Best-effort device config from our own tt-smi snapshot. run.py's built-in
@@ -140,6 +161,11 @@ def serve(
         None,
         "--device",
         help="Device config override (e.g. p300x2); default: auto-detect on host.",
+    ),
+    device_id: str = typer.Option(
+        None,
+        "--device-id",
+        help="Comma-separated chip IDs to serve on (e.g. 0 or 2,3).",
     ),
     port: int = typer.Option(
         None,
@@ -246,12 +272,15 @@ def serve(
         )
         if on
     ]
+    device_ids = _parse_device_ids(device_id)
     catalog = ModelCatalog()
     if model is None:
         model = _pick_model(appctx, catalog, backend)
     entry = catalog.find(model)
     chosen = _resolve_backend(entry, model, backend, catalog_origin=catalog.origin)
     if chosen is Backend.model_manager:
+        if device_ids is not None and "--device-id" not in extra_args:
+            extra_args = [*extra_args, "--device-id", ",".join(map(str, device_ids))]
         _serve_with_tt_model_manager(
             appctx, model, catalog_origin=catalog.origin,
             workflow=workflow, device=device, offline=offline,
@@ -297,7 +326,12 @@ def serve(
         # No preflight and no install: a dry run must not require docker, or fetch
         # a checkout, to describe what it would do.
         plan = server.plan(
-            entry, workflow=workflow.value, device=device, port=port, force=force
+            entry,
+            workflow=workflow.value,
+            device=device,
+            device_ids=device_ids,
+            port=port,
+            force=force,
         )
         appctx.output.emit(plan, renderer=_plan_renderer)
         return
@@ -313,6 +347,7 @@ def serve(
             entry,
             workflow=workflow.value,
             device=device,
+            device_ids=device_ids,
             offline=offline,
             port=port,
             force=force,
@@ -491,6 +526,8 @@ def _plan_renderer(plan: dict) -> Group:
             if bundle["arch"] and bundle["device_count"]:
                 device += f"  [dim]({bundle['arch']}, {bundle['device_count']} chips)[/dim]"
             table.add_row("device", device)
+        if plan.get("device_ids"):
+            table.add_row("device ids", ", ".join(map(str, plan["device_ids"])))
             table.add_row("engine", bundle["engine"] or "—")
             table.add_row("docker image", bundle["image"] or "—")
             table.add_row("tool-call parser", bundle["tool_call_parser"] or "—")
