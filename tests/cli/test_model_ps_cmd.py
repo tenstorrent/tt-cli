@@ -413,3 +413,28 @@ def test_ps_names_prints_one_stoppable_name_per_line(runner, fake_docker):
     result = runner.invoke(app, ["model", "ps", "-n"])
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == ["Qwen3-32B", "raahemnabeel/qwen3-coder-30b-a3b"]
+
+
+@pytest.mark.fakes_only
+def test_ps_ignores_ad_hoc_container_from_bundle_image_without_profile_label(
+    runner, fake_docker
+):
+    """A container started by hand from a bundle image inherits image labels like
+    `org.tenstorrent.tt-model` and `.profiles`, but only `tt-model serve` sets
+    `org.tenstorrent.tt-model.profile`."""
+    set_containers, _ = fake_docker
+    image_only_labels = {
+        k: v for k, v in TT_MODEL_LABELS.items() if k != "org.tenstorrent.tt-model.profile"
+    }
+    image_only_labels["org.tenstorrent.tt-model.profiles"] = "default"
+    probe_container = _record(
+        "999999999999" + "0" * 52,
+        "chip-probe",
+        image="tt-model/ornith-1.0-35b-p150:1",
+        labels=image_only_labels,
+    )
+    set_containers([probe_container, _tt_model()])
+    result = runner.invoke(app, ["model", "ps", "--no-probe", "--json"])
+    assert result.exit_code == 0
+    rows = _served(result)["served"]
+    assert [r["container"] for r in rows] == ["tt-model-qwen3-coder-30b-a3b-default"]
