@@ -54,6 +54,9 @@ class Preparation:
     def evidence(self) -> list[str]:
         return []
 
+    def before_launch(self, runner, runtime: str) -> None:
+        """A look at the host before the backend starts."""
+
     def resolve_container(self, runner, runtime: str) -> str | None:
         """A last look once the backend has exited, for one that never said."""
         return self.container
@@ -137,6 +140,7 @@ class ModelManagerPreparation(Preparation):
         self._labels: dict[str, str] = {}
         self._events = False
         self.diagnosis: dict | None = None
+        self._before: set[str] | None = None  # containers there before this serve
 
     def feed(self, line: str) -> list[Event]:
         event = _as_event(line)
@@ -241,6 +245,17 @@ class ModelManagerPreparation(Preparation):
     def evidence(self) -> list[str]:
         return list(self._tail)
 
+    def before_launch(self, runner, runtime: str) -> None:
+        self._before = {row.split("\t")[0] for row in self._ps(runner, runtime)}
+
+    def _ps(self, runner, docker: str) -> list[str]:
+        listed = runner.capture(
+            [docker, "ps", "-a", "--filter", f"label={self.LABEL}", "--format",
+             '{{.ID}}\t{{.Label "%s"}}\t{{.Label "%s.repo"}}' % (self.LABEL, self.LABEL)],
+            tool="docker", check=False,
+        )
+        return listed.stdout.splitlines()
+
     def resolve_container(self, runner, runtime: str) -> str | None:
         """Ask docker which container this bundle left running.
 
@@ -256,26 +271,30 @@ class ModelManagerPreparation(Preparation):
         if self.container is not None:
             return self.container
         docker = runtime
-        listed = runner.capture(
-            [docker, "ps", "-a", "--filter", f"label={self.LABEL}", "--format",
-             '{{.ID}}\t{{.Label "%s"}}\t{{.Label "%s.repo"}}' % (self.LABEL, self.LABEL)],
-            tool="docker", check=False,
-        )
         wanted = self._repo_id.rsplit("/", 1)[-1].lower()
-        for row in listed.stdout.splitlines():  # docker lists newest first
+        labelled, new = None, []
+        for row in self._ps(runner, docker):  # docker lists newest first
             fields = row.split("\t")
             if len(fields) < 3:
                 continue
             container, name, repo = (field.strip() for field in fields[:3])
-            if name.lower() == wanted or repo.lower() == self._repo_id.lower():
-                self.container = container
-                if self.endpoint_port is None:
-                    # --port is honoured exactly, but left to itself tt-model
-                    # walks up from 20000 past whatever is busy — so the
-                    # container, not the default, says where it listens.
-                    self.endpoint_port = _published_port(runner, docker, container)
-                return self.container
-        return None
+            if labelled is None and (name.lower() == wanted or repo.lower() == self._repo_id.lower()):
+                labelled = container
+            if self._before is not None and container not in self._before:
+                new.append(container)
+        # tt-model names the container after the bundle, which can differ from
+        # the id asked for (`<name>-blackhole`); then the one container this
+        # serve started is ours — unless another serve started one too.
+        container = labelled or (new[0] if len(new) == 1 else None)
+        if container is None:
+            return None
+        self.container = container
+        if self.endpoint_port is None:
+            # --port is honoured exactly, but left to itself tt-model
+            # walks up from 20000 past whatever is busy — so the
+            # container, not the default, says where it listens.
+            self.endpoint_port = _published_port(runner, docker, container)
+        return self.container
 
 
 #: tt-model's `--verbose` rows (console.step / _render_result). `--verbose` is a
