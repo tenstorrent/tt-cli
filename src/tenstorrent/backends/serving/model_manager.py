@@ -25,7 +25,7 @@ from pathlib import Path
 from ...config.store import ConfigStore
 from ...errors import ExitCode, TTError
 from ...modelhub import bundles
-from ...modelhub.hub import hf_home_dir, hf_token
+from ...modelhub.hub import hf_cache_dir, hf_home_dir, hf_token
 from ...output import OutputManager
 from ...tools.registry import ToolRegistry
 from ...tools.runner import Runner
@@ -90,7 +90,9 @@ class ModelManagerBackend:
         backends. `watched` adds the progress contract, only for a serve tt
         renders itself.
         """
-        env = {**os.environ, "HF_HOME": str(hf_home_dir(self.config))}
+        home = hf_home_dir(self.config)
+        hub_cache = hf_cache_dir(self.config) or str(home / "hub")
+        env = {**os.environ, "HF_HOME": str(home), "HF_HUB_CACHE": hub_cache}
         token = hf_token(self.config)
         if token:
             env.setdefault("HF_TOKEN", token[0])

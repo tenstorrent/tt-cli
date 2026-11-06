@@ -1822,3 +1822,15 @@ def test_serve_refuses_the_whole_board_while_a_chip_is_held(
     result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct", "--device", "p300x2"])
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
     assert "needs the whole board" in result.output
+
+
+
+@pytest.mark.fakes_only
+def test_serve_host_hf_cache_honors_hf_hub_cache_env(
+    runner, docker_present, fake_server, monkeypatch
+):
+    monkeypatch.setenv("HF_HUB_CACHE", "/opt/tenstorrent/models/hub")
+    result = runner.invoke(app, ["serve", "Llama-3.1-8B-Instruct"])
+    assert result.exit_code == 0, result.output
+    argv = json.loads(fake_server.read_text().splitlines()[-1])
+    assert argv[argv.index("--host-hf-cache") + 1] == "/opt/tenstorrent/models/hub"
