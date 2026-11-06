@@ -17,6 +17,7 @@ from ..base import (
     config_consent,
     json_config_drop,
     json_config_has,
+    output_budget,
     read_json_config,
     user_config_dir,
     write_json_config,
@@ -64,7 +65,7 @@ class OpenCode:
         )
         # Merge rather than replace: a model configured by an earlier launch stays
         # selectable in OpenCode's own picker.
-        provider.setdefault("models", {})[model.served_id] = {"name": model.served_id}
+        provider.setdefault("models", {})[model.served_id] = self._model_entry(model)
         if created:
             doc.setdefault("$schema", _SCHEMA)
         return Preparation(
@@ -97,6 +98,16 @@ class OpenCode:
 
     def disconnect(self, env: LaunchEnv) -> None:
         json_config_drop(self.config_path(), ("provider",), PROVIDER_KEY)
+
+    def _model_entry(self, model: RunningModel) -> dict:
+        entry = {"name": model.served_id}
+        # Without a limit it requests 32000 output tokens whatever the window.
+        if model.max_context:
+            entry["limit"] = {
+                "context": model.max_context,
+                "output": output_budget(model.max_context),
+            }
+        return entry
 
     def _argv(self, executable: str, model: RunningModel) -> list[str]:
         # served_id is whatever the API expects, so a repo-shaped id makes a ref

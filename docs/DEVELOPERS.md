@@ -123,7 +123,7 @@ the loop; the mapping is one-to-one and tt shells out to the pinned `tt-model`:
 | `tt model pull NS/NAME [--force] [--no-weights]` | `pull [--force] [--with-weights]` | tt asks for the weights by default; tt-model does not |
 | `tt model profiles NS/NAME` | `profiles` | `--json` reads the pulled manifest instead |
 | `tt serve NS/NAME [--port] [--profile] [--detach] [--print] [--refresh] [--no-update-check] [--no-weights] [-- …]` | `serve` | `--offline` becomes `--local-only`; everything after the id is tt-model's passthrough |
-| `tt model curl [PROMPT] [--port/--url] [--model] [--print] [--key value…]` | `curl` | the port defaults to the one server tt is running, found like `tt launch` does |
+| `tt model check [PROMPT] [--port/--url] [--model] [--task] [--tools/--no-tools] [-o] [--print] [--key value…]` | `check` | the port defaults to the one server tt is running, found like `tt launch` does |
 | `tt model ps` / `tt model logs NS/NAME [-f] [--profile]` | `logs` | |
 | `tt model stop NS/NAME [--profile]` | `stop` | |
 | `tt model rm NS/NAME [--keep-cache] [--include-weights]` | `rm` | tt adds `--dry-run` (prints the delegation) and a confirmation |
@@ -152,6 +152,7 @@ weights alone do not make a model servable.
 | `TT_TOOL_BIN_<CLIENT>` | Also how `tt launch` finds a client (`TT_TOOL_BIN_OPENCODE`, `TT_TOOL_BIN_AIDER`, …), or `tt config set tools.override.<client> <path>` |
 | `TT_SERVE_READY_TIMEOUT` | How long `tt serve` waits for a catalog model's server to answer, in seconds (default 3600). A cold boot compiles kernels and can take most of an hour |
 | `SERVICE_PORT` | Default host port for `tt serve` on the tt-inference-server path when `--port` is not given (tt's own default is 20000) |
+| `TT_TOOL_BIN_CLAUDE` / `TT_AGENT_MARKETPLACE` | How `tt agent` finds Claude Code, and where it registers the plugin marketplace from (GitHub `owner/repo`, git URL, or a local checkout path; default `tenstorrent/skills`, also `tt config set agent.marketplace_source …`) |
 | `TT_NO_UPDATE_CHECK` | Skip the daily "newer tt available?" lookup for this run (`tt config set update.check false` to turn it off for good) |
 | `TT_UPDATE_CHECK_URL` | Where that lookup reads PyPI-shaped project JSON from (URL or local file; default `https://pypi.org/pypi/tenstorrent/json`) |
 | `HF_TOKEN` | Hugging Face token handed to tt-inference-server, which requires one for every containerized serve. Falls back to the token `hf auth login` stores; `tt serve` refuses up front when neither exists |

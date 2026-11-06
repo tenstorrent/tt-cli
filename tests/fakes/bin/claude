@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Fake `claude` (Claude Code) for tests: records argv and answers the two plugin
+subcommands `tt agent` reads. Never touches the network or ~/.claude."""
+
+import json
+import os
+import sys
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    log = os.environ.get("FAKE_CLAUDE_LOG")
+    if log:
+        with open(log, "a") as fh:
+            fh.write(json.dumps({"argv": argv}) + "\n")
+    if argv[:4] == ["plugin", "marketplace", "list", "--json"]:
+        # FAKE_CLAUDE_MARKETPLACES: JSON list as `claude plugin marketplace list --json` prints.
+        print(os.environ.get("FAKE_CLAUDE_MARKETPLACES", "[]"))
+        return 0
+    if argv[:2] == ["plugin", "install"] and os.environ.get("FAKE_CLAUDE_INSTALL_FAIL"):
+        print(f"fake claude: failed to install {argv[2]}", file=sys.stderr)
+        return 1
+    if argv[:3] == ["plugin", "marketplace", "update"] and os.environ.get("FAKE_CLAUDE_UPDATE_FAIL"):
+        print("fake claude: marketplace update failed", file=sys.stderr)
+        return 1
+    print(f"fake claude: {' '.join(argv)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

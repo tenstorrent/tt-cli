@@ -1,0 +1,67 @@
+name: publish-compat-overrides
+
+# Build the compatibility matrix overrides (overrides.json) from the pinned
+# tt-inference-server spec and model_support_overrides.toml, and upload them to
+# model-spec-overrides/<release>/overrides.json in the compatibility matrix bucket.
+# The data pipeline picks the file up on its next hourly run.
+#
+# Runs by hand, and from release.yml for each release. The file is always kept as a
+# run artifact; `upload: false` stops there.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: "Upload to S3 (otherwise only build the artifact)"
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      upload:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-compat-overrides
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish compatibility matrix overrides
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      # --check fails on a stale model_support.json, so the upload always matches
+      # the artifact tt ships.
+      - name: Build overrides.json
+        run: |
+          python3 -m pip install --quiet "tomlkit>=0.12"
+          python3 scripts/build_model_support.py --check --compat-overrides overrides.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: compat-overrides
+          path: overrides.json
+          if-no-files-found: error
+
+      - name: Upload to S3
+        if: inputs.upload
+        env:
+          COMPAT_SFTP_HOST: ${{ secrets.COMPAT_SFTP_HOST }}
+          COMPAT_SFTP_USER: ${{ secrets.COMPAT_SFTP_USER }}
+          COMPAT_SFTP_KEY: ${{ secrets.COMPAT_SFTP_KEY }}
+          COMPAT_SFTP_KNOWN_HOSTS: ${{ secrets.COMPAT_SFTP_KNOWN_HOSTS }}
+        run: |
+          export COMPAT_SFTP_KEY_FILE="${RUNNER_TEMP}/compat_sftp_key"
+          export COMPAT_SFTP_KNOWN_HOSTS_FILE="${RUNNER_TEMP}/compat_known_hosts"
+          (umask 077 && printf '%s\n' "${COMPAT_SFTP_KEY}" > "${COMPAT_SFTP_KEY_FILE}")
+          printf '%s\n' "${COMPAT_SFTP_KNOWN_HOSTS}" > "${COMPAT_SFTP_KNOWN_HOSTS_FILE}"
+          scripts/publish_compat_overrides.sh overrides.json

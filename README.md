@@ -6,7 +6,7 @@ One command for everything Tenstorrent.
 function natively or delegates to an existing tool (tt-smi, tt-installer, etc.) behind a stable interface.
 
 > [!IMPORTANT]
-> This is beta software. Expect breaking changes often as we add features. We welcome your feedback to help us improve tt-cli. If you have an issue or a comment, please don't hesitate to let us know through the GitHub [issues page](https://github.com/tenstorrent/tt-cli/issues/new).
+> We welcome your feedback to help us improve tt-cli. If you have an issue or a comment, please don't hesitate to let us know through the GitHub [issues page](https://github.com/tenstorrent/tt-cli/issues/new).
 
 ## Prerequisites
 
@@ -67,7 +67,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt model pull NAME` | Download a catalog model's weights, a tt-model bundle, or any HuggingFace repo's weights (`--bundle` / `--weights-only` override detection; `--offline`; bundles: `--force`, `--no-weights`) |
 | `tt model profiles NAME` | A pulled bundle's serve profiles and its default |
 | `tt serve [NAME] [-- ARGS…]` | Serve a model via tt-inference-server, TT-Studio, or tt-model-manager for a community bundle id (`--inference-server`, `--studio` or `--model-manager` forces a path; with no NAME, pick from what that backend serves; bundles: `--profile`, `--detach`, `--print`, `--refresh`, `--no-update-check`, `--no-weights`) — see [Serving backends](#serving-backends) |
-| `tt model curl [PROMPT]` | Send a chat completion to the model being served; unknown options go into the request body (`--max-tokens 40`), `--print` shows the curl instead |
+| `tt model check [PROMPT]` | Send the served model a request suited to its task (chat, tool call, image, embedding); unknown options go into the request body (`--max-tokens 40`), `--print` shows the curl instead |
 | `tt model stop NAME...` | Stop running model servers; when studio deployed one, studio stops the model and then its own containers and services (`--profile` to stop only one profile of a bundle; `tt model stop $(tt model ps --names)` stops everything) |
 | `tt model rm NAME` | Remove a model's local artifacts, keeping its weights unless `--include-weights` (`--dry-run`, `--yes`) |
 | `tt model login` | Log in to the Hugging Face Hub for gated or private bundles and weights (`--token`) |
@@ -82,6 +82,7 @@ This is not an exhaustive list. For the full list of commands and options in eac
 | `tt report issue` | Open a prefilled GitHub issue on tt-cli (environment details auto-collected; `--no-browser` to just print the URL) |
 | `tt report bundle` | Collect a redacted support bundle (environment, tt-smi snapshot, config, tt and inference-server logs, container logs) and open a pre-filled email to support@tenstorrent.com with it attached (`--title` for the subject, `--no-open` to only write the files, `--mailto` for webmail, `--output` to choose the path) |
 | `tt self update` | Upgrade `tt` itself where it owns its environment (`--check` to only look) — see [Keeping tt up to date](/docs/DEVELOPERS.md) |
+| `tt agent [GOAL]` | Set up Claude Code with the Tenstorrent skills for today's task (deploy a model, bring up a model, or develop) and launch it (`--dry-run` to preview; `--no-launch` to only install the plugins) |
 | `tt launch <client>` | Attach a chat UI or coding agent to the served model (`tt launch list` shows them) — see [Client launchers](/docs/client-launchers.md) |
 
 For a comprehensive view on packaging, publishing and pulling down community models [read more here](/docs/community-models.md)
@@ -140,6 +141,24 @@ tt launch stop hermes                  # stop that dashboard (any running Hermes
 `tt model info` shows the paths a model is served by (`inference-server, studio` for a model both offer). `--inference-server`, `--studio` or `--model-manager` forces a path and refuses one the model does not offer. With no model, `tt serve --studio` (or `--inference-server`, `--model-manager`) lists what that path serves on this machine — for studio, its whole catalog — and asks for a number; the picker needs a terminal and is off under `--json`/`--quiet`.
 
 Every path inherits a Hugging Face token: `HF_TOKEN` from the shell if set, else the token `hf auth login` stored (`HF_TOKEN_PATH`, then `<HF_HOME>/token`). `tt serve --dry-run` names the source without printing the token.
+
+## Coding agents with `tt agent`
+
+`tt agent` gets Claude Code ready for Tenstorrent work. It checks that Claude Code is installed (and offers the documented installer if not), asks what you are looking to do today, installs the matching plugins from the [tenstorrent/skills](https://github.com/tenstorrent/skills) marketplace, and hands the terminal to `claude`.
+
+| Goal | Plugins loaded |
+|---|---|
+| `deploy` — Deploy a model on your Tenstorrent hardware | `tt-serve-model` |
+| `bringup` — Bring up a new model | `tt-model-bringup` and the `tt-autodebug` it requires |
+| `develop` — Actively develop | `tt-skills`, `tt-review-skills`, `tt-autodebug` |
+
+```bash
+tt agent                       # pick interactively, then launch claude
+tt agent deploy --dry-run      # show what would be installed and run
+tt agent develop -- --resume   # anything after -- goes to claude
+```
+
+While developing plugins, point it at a local checkout: `tt config set agent.marketplace_source ~/src/skills` (or `TT_AGENT_MARKETPLACE=~/src/skills` for one run).
 
 ## Configuration
 
