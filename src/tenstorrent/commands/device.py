@@ -8,11 +8,14 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
+from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.table import Table
 
 from ..backends.device import get_device_backend
+from ..backends.smi import load_snapshot_file, parse_snapshot
 from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
@@ -71,15 +74,28 @@ def status(
     raw: bool = typer.Option(
         False, "--raw", help="Dump tt-smi's own snapshot JSON (no schema promise)."
     ),
+    snapshot_file: Optional[Path] = typer.Option(
+        None,
+        "--snapshot",
+        "-f",
+        help="Read device state from a saved tt-smi JSON snapshot file instead of querying live hardware.",
+    ),
 ) -> None:
     """Show detected devices: board, temperature, power, clock, DRAM state."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
-    backend = get_device_backend(appctx)
-    if raw:
-        print(json.dumps(backend.raw_snapshot(), indent=2))
-        return
-    snap = backend.snapshot()
+    if snapshot_file is not None:
+        raw_data = load_snapshot_file(snapshot_file)
+        if raw:
+            print(json.dumps(raw_data, indent=2))
+            return
+        snap = parse_snapshot(raw_data)
+    else:
+        backend = get_device_backend(appctx)
+        if raw:
+            print(json.dumps(backend.raw_snapshot(), indent=2))
+            return
+        snap = backend.snapshot()
     for warning in snap.warnings:
         appctx.output.warn(f"snapshot: {warning}")
     if not snap.devices:
@@ -116,6 +132,12 @@ def _info_tables(payload: dict) -> Table:
 def info(
     ctx: typer.Context,
     index: list[int] = typer.Argument(None, help="Device index(es); default all."),
+    snapshot_file: Optional[Path] = typer.Option(
+        None,
+        "--snapshot",
+        "-f",
+        help="Read device metadata from a saved tt-smi JSON snapshot file instead of querying live hardware.",
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
     verbose: VerboseFlag = False,
@@ -124,7 +146,11 @@ def info(
     """Show device metadata: PCI IDs, board revision, serial, firmware versions."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
-    snap = get_device_backend(appctx).snapshot()
+    snap = (
+        parse_snapshot(load_snapshot_file(snapshot_file))
+        if snapshot_file is not None
+        else get_device_backend(appctx).snapshot()
+    )
     for warning in snap.warnings:
         appctx.output.warn(f"snapshot: {warning}")
     if not snap.devices:
