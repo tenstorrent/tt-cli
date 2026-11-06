@@ -211,7 +211,6 @@ def isolated_dirs(request, tmp_path, monkeypatch):
     for var in (
         "TT_MANIFEST_PATH",
         "TT_GOLDEN_PATH",
-        "TT_STUDIO_MODELS_PATH",
         "TT_COMMUNITY_CATALOG_PATH",
         "HF_TOKEN",
         "HF_TOKEN_PATH",

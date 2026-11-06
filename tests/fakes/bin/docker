@@ -9,7 +9,9 @@ no State at all counts as running — unless --all/-a is passed, like the real t
 --filter label=k[=v] narrows by top-level Labels, `--format {{.Label "k"}}` prints
 that label, `--format {{.Ports}}` prints the Ports string, everything else prints
 one 12-char id per line (what tt asks for).
-FAKE_DOCKER_STOP_LOG collects stopped ids. `logs` records its full argv as one JSON
+FAKE_DOCKER_GONE names a file of container names (one per line) that no longer
+exist — the fake tt-studio's `--stop-model` appends to it, the way studio's own
+stop removes the container. FAKE_DOCKER_STOP_LOG collects stopped ids. `logs` records its full argv as one JSON
 line in FAKE_DOCKER_ARGV_LOG and prints a marker line plus a fake HF token, so tests
 can assert exactly which flags tt forwarded and that tt redacts what comes back.
 FAKE_DOCKER_LOGS, a JSON object {"<12-char id>": {"stdout": "...", "stderr": "..."}},
@@ -23,7 +25,13 @@ import sys
 
 
 def _containers() -> list:
-    return json.loads(os.environ.get("FAKE_DOCKER_CONTAINERS") or "[]")
+    entries = json.loads(os.environ.get("FAKE_DOCKER_CONTAINERS") or "[]")
+    gone_log = os.environ.get("FAKE_DOCKER_GONE")
+    if gone_log and os.path.exists(gone_log):
+        with open(gone_log) as fh:
+            gone = {line.strip() for line in fh if line.strip()}
+        entries = [e for e in entries if str(e.get("Name", "")).lstrip("/") not in gone]
+    return entries
 
 
 def _label_filter(args: list) -> str | None:
