@@ -1,3 +1,4 @@
+FILE_MODE = 0o600
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
@@ -68,7 +69,19 @@ class Paths:
 
     @property
     def logs_dir(self) -> Path:
-        return self.data_dir / "logs"
+        path = self.data_dir / "logs"
+        if path.is_dir() and not path.is_symlink():
+            try:
+                os.chmod(path, 0o700)
+                for log_file in path.glob("*.log"):
+                    if log_file.is_file() and not log_file.is_symlink():
+                        try:
+                            os.chmod(log_file, 0o600)
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+        return path
 
     @property
     def installer_work_dir(self) -> Path:

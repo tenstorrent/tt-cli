@@ -58,15 +58,22 @@ def open_secure_file(
         flags = os.O_RDWR | os.O_CREAT | os.O_TRUNC
     elif "a" in mode:
         flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    flags |= getattr(os, "O_NOFOLLOW", 0)
 
     fd = os.open(path, flags, file_mode)
-    try:
-        os.chmod(path, file_mode, follow_symlinks=False)
-    except (OSError, NotImplementedError):
+    if hasattr(os, "fchmod"):
         try:
-            os.chmod(path, file_mode)
+            os.fchmod(fd, file_mode)
         except OSError:
             pass
+    else:
+        try:
+            os.chmod(path, file_mode, follow_symlinks=False)
+        except (OSError, NotImplementedError):
+            try:
+                os.chmod(path, file_mode)
+            except OSError:
+                pass
 
     if "b" in mode:
         return open(fd, mode, buffering=buffering)

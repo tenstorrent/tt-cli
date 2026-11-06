@@ -100,3 +100,38 @@ def test_open_run_log_redacts_argv_secrets(tmp_path: Path):
     assert "$ tt serve --token '<redacted>' 'HF_AUTH=<redacted>'" in content
 
 
+def test_open_secure_file_rejects_symlink(tmp_path: Path):
+    if not hasattr(os, "O_NOFOLLOW"):
+        pytest.skip("O_NOFOLLOW not available on this platform")
+    real_file = tmp_path / "real.txt"
+    real_file.write_text("do not overwrite")
+    
+    link_path = tmp_path / "logs" / "symlink.log"
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    link_path.symlink_to(real_file)
+
+    with pytest.raises(OSError):
+        open_secure_file(link_path, "w")
+
+    assert real_file.read_text() == "do not overwrite"
+    
+
+def test_paths_logs_dir_tightens_existing_logs_on_resolution(tmp_path: Path):
+    from tenstorrent.config.paths import Paths
+
+    data_dir = tmp_path / "data"
+    logs = data_dir / "logs"
+    logs.mkdir(parents=True)
+    legacy_log = logs / "serve-old.log"
+    legacy_log.write_text("legacy log")
+    
+    paths = Paths(
+        config_dir=tmp_path / "cfg",
+        data_dir=data_dir,
+        cache_dir=tmp_path / "cache",
+    )
+    resolved = paths.logs_dir
+    assert resolved == logs
+    assert (logs.stat().st_mode & 0o777) == DIR_MODE
+    assert (legacy_log.stat().st_mode & 0o777) == FILE_MODE
+
