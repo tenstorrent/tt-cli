@@ -7,6 +7,10 @@ These are services, not terminal clients: tt pulls the image, starts the
 container detached and prints its URL. Starting one *is* the whole action, so it
 never happens without consent. Subclasses supply the image, names and
 environment; the pull/adopt/drift mechanics are identical and live here.
+
+The container holds only settings, baked into its environment; the user's data
+lives in its volume. So a container set up for another model is recreated rather
+than reused, and stopping one removes it.
 """
 
 from __future__ import annotations
@@ -77,6 +81,7 @@ class ContainerLauncher:
     volume_path: str  # where the volume mounts inside the container
     container_port: int
     base_url_env: str  # the env var carrying the model endpoint
+    model_env: str | None = None  # the env var naming the model, if it pins one
     extra_run_args: tuple[str, ...] = ()
 
     def container_env(self, model: RunningModel, inner_url: str) -> dict:
@@ -107,15 +112,19 @@ class ContainerLauncher:
         runner,
     ) -> Preparation:
         inner = container_base_url(model.base_url)
-        state, configured_for, published = (
-            self._existing(executable, runner) if executable else ("unknown", None, None)
+        state, current, published = (
+            self._existing(executable, runner) if executable else ("unknown", {}, None)
+        )
+        wanted = self.container_env(model, inner)
+        stale = state in ("running", "stopped") and any(
+            current.get(key) != value for key, value in wanted.items()
         )
         # An existing container's published port was fixed when it was created, so
-        # --web-port cannot move it. Report where it actually answers.
-        web_port = published if state in ("running", "stopped") else free_web_port(options)
+        # --web-port cannot move it. Report where it actually answers, and keep it
+        # on a recreate so an open browser tab still works.
+        web_port = published or free_web_port(options)
         url = f"http://localhost:{web_port}"
-        if state == "running":
-            self._check_endpoint(configured_for, inner)
+        if state == "running" and not stale:
             return Preparation(
                 rows={
                     "container": f"{self.container} (already running)",
@@ -124,8 +133,20 @@ class ContainerLauncher:
                 url=url,
             )
         exe = executable or self.binaries[0]
-        if state == "stopped":
-            self._check_endpoint(configured_for, inner)
+        if stale:
+            if state == "stopped":
+                self._check_port(web_port, existing=True)
+            steps = [[exe, "stop", self.container]] if state == "running" else []
+            steps += [
+                [exe, "rm", self.container],
+                self._run_argv(exe, model, inner, web_port),
+            ]
+            consent = (
+                f"Recreate {self.container} for {model.served_id} "
+                f"({self._describe_drift(current, wanted)}); "
+                f"its data volume {self.volume} is kept"
+            )
+        elif state == "stopped":
             # Its port may have been taken by something else while it was down.
             self._check_port(web_port, existing=True)
             steps = [[exe, "start", self.container]]
@@ -146,7 +167,7 @@ class ContainerLauncher:
                 # where the bare name is the honest answer.
                 "container": self.container
                 if state == "unknown"
-                else f"{self.container} ({state})",
+                else f"{self.container} ({state}{', to be recreated' if stale else ''})",
                 "image": self.image,
                 "endpoint_in_container": inner,
             },
@@ -175,8 +196,11 @@ class ContainerLauncher:
         )
 
     def stop(self, env: LaunchEnv) -> None:
-        # stop, never kill or remove: the volume holds the user's chats.
-        env.runner.stream([env.executable, "stop", self.container], tool=self.id)
+        # Removed as well, so the next launch is set up for whatever model is served
+        # then. Never the volume: it holds the user's chats.
+        if self.container_state(env.executable, env.runner) == "running":
+            env.runner.stream([env.executable, "stop", self.container], tool=self.id)
+        env.runner.stream([env.executable, "rm", self.container], tool=self.id)
 
     def disconnect_plan(self, executable: str | None, runner) -> str | None:
         if executable is None or self.container_state(executable, runner) == "absent":
@@ -188,10 +212,8 @@ class ContainerLauncher:
 
     def disconnect(self, env: LaunchEnv) -> None:
         # Not `rm -f`, and never `volume rm`: the container is tt's, the data is the
-        # user's. A stopped container is removable as-is.
-        if self.container_state(env.executable, env.runner) == "running":
-            self.stop(env)
-        env.runner.stream([env.executable, "rm", self.container], tool=self.id)
+        # user's.
+        self.stop(env)
 
     def container_state(self, executable: str | None, runner) -> str:
         """One of running / stopped / absent / unknown, for `tt launch list`.
@@ -228,22 +250,23 @@ class ContainerLauncher:
             details={"web_port": web_port, "container_exists": existing},
         )
 
-    def _existing(self, executable: str, runner) -> tuple[str, str | None, int | None]:
-        """("running"|"stopped"|"absent", endpoint it was created for, host port)."""
+    def _existing(self, executable: str, runner) -> tuple[str, dict, int | None]:
+        """("running"|"stopped"|"absent", environment it was created with, host port)."""
         result = runner.capture(
             [executable, "inspect", "--format", "{{json .}}", self.container],
             check=False,
         )
         if result.returncode != 0:
-            return "absent", None, None
+            return "absent", {}, None
         try:
             doc = json.loads(result.stdout)
         except json.JSONDecodeError:
-            return "absent", None, None
-        configured_for = None
-        for item in (doc.get("Config") or {}).get("Env") or []:
-            if item.startswith(f"{self.base_url_env}="):
-                configured_for = item.split("=", 1)[1]
+            return "absent", {}, None
+        env = dict(
+            item.split("=", 1)
+            for item in (doc.get("Config") or {}).get("Env") or []
+            if "=" in item
+        )
         running = bool((doc.get("State") or {}).get("Running"))
         # PortBindings, not NetworkSettings.Ports: the latter is empty while stopped.
         bindings = (doc.get("HostConfig") or {}).get("PortBindings") or {}
@@ -251,20 +274,13 @@ class ContainerLauncher:
         for binding in bindings.get(f"{self.container_port}/tcp") or []:
             with suppress(TypeError, ValueError):
                 published = int(binding.get("HostPort"))
-        return ("running" if running else "stopped"), configured_for, published
+        return ("running" if running else "stopped"), env, published
 
-    def _check_endpoint(self, configured_for: str | None, wanted: str) -> None:
-        """An existing container has its endpoint baked into its env, so reusing one
-        built for a different server would quietly serve the wrong model."""
-        if configured_for is None or configured_for == wanted:
-            return
-        raise TTError(
-            f"{self.container} is pointed at a different model server.",
-            why=f"It was created for {configured_for}, not {wanted}.",
-            next_step=f"Remove it and re-run: docker rm -f {self.container}",
-            exit_code=ExitCode.CONFIG,
-            details={"container": self.container, "configured_for": configured_for},
-        )
+    def _describe_drift(self, current: dict, wanted: dict) -> str:
+        key = self.model_env or self.base_url_env
+        if current.get(key) != wanted[key]:
+            return f"it was set up for {current.get(key) or 'another model'}"
+        return "its settings are out of date"
 
     def _run_argv(
         self, executable: str, model: RunningModel, inner_url: str, web_port: int

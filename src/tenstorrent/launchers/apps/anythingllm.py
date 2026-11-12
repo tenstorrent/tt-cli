@@ -25,6 +25,7 @@ class AnythingLLM(ContainerLauncher):
     volume_path = "/app/server/storage"
     container_port = 3001
     base_url_env = "GENERIC_OPEN_AI_BASE_PATH"
+    model_env = "GENERIC_OPEN_AI_MODEL_PREF"
     # Its own docs require this for the bundled LanceDB and native embedder.
     extra_run_args = ("--cap-add", "SYS_ADMIN")
 
@@ -39,7 +40,7 @@ class AnythingLLM(ContainerLauncher):
             self.base_url_env: inner_url,
             "GENERIC_OPEN_AI_API_KEY": "tt-local",
             # It has no model discovery, so the choice is made here.
-            "GENERIC_OPEN_AI_MODEL_PREF": model.served_id,
+            self.model_env: model.served_id,
             "GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT": str(context),
             # Its default is 1024, which a reasoning model spends before answering.
             "GENERIC_OPEN_AI_MAX_TOKENS": str(output_budget(context)),
