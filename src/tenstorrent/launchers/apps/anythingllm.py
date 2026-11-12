@@ -9,7 +9,7 @@ id and the context window are pinned into its environment.
 
 from __future__ import annotations
 
-from ..base import RunningModel
+from ..base import RunningModel, output_budget
 from ..container import ContainerLauncher
 
 IMAGE = "mintplexlabs/anythingllm:latest"
@@ -29,6 +29,7 @@ class AnythingLLM(ContainerLauncher):
     extra_run_args = ("--cap-add", "SYS_ADMIN")
 
     def container_env(self, model: RunningModel, inner_url: str) -> dict:
+        context = model.max_context or _FALLBACK_CONTEXT
         return {
             "STORAGE_DIR": self.volume_path,
             # Embeddings and vectors stay local: no second provider to configure.
@@ -39,7 +40,7 @@ class AnythingLLM(ContainerLauncher):
             "GENERIC_OPEN_AI_API_KEY": "tt-local",
             # It has no model discovery, so the choice is made here.
             "GENERIC_OPEN_AI_MODEL_PREF": model.served_id,
-            "GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT": str(
-                model.max_context or _FALLBACK_CONTEXT
-            ),
+            "GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT": str(context),
+            # Its default is 1024, which a reasoning model spends before answering.
+            "GENERIC_OPEN_AI_MAX_TOKENS": str(output_budget(context)),
         }
