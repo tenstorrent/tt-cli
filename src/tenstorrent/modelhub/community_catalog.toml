@@ -299,6 +299,14 @@ validation = "separate"
 validated_on = "2026-10-13"
 
 [[bundle]]
+repo = "ndaly/Nemotron-3.5-Super-VL-120B-A12B-BF16"
+kind = "container"
+engine = "vllm-plugin"
+hardware = ["p300x2"]
+validation = "separate"
+validated_on = "2026-11-12"
+
+[[bundle]]
 repo = "ndaly/Voxtral-Mini-4B-Realtime-2602"
 kind = "container"
 engine = "vllm-plugin"
