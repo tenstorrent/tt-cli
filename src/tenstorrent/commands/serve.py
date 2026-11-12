@@ -37,7 +37,7 @@ from ..backends.serving.model_manager import (
     looks_like_bundle_id,
 )
 from ..backends.serving.studio import StudioBackend
-from .._compat import IntRange, confirm, prompt
+from .._compat import confirm, prompt
 from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
 from ..context import get_app_context
 from ..errors import ExitCode, TTError
@@ -453,8 +453,28 @@ def _pick_model(appctx, catalog: ModelCatalog, backend: Backend) -> str:
     for i, text in enumerate(choices_display or choices, start=1):
         appctx.output.status(f"  {i:>3}. {text}")
     # err=True keeps the prompt on stderr: stdout stays the tool's own output.
-    choice = prompt("Model", default=1, type=IntRange(1, len(choices)), err=True)
+    choice = prompt(
+        "Model", default="1", value_proc=_choice_parser(len(choices)), err=True
+    )
     return choices[choice - 1]
+
+
+def _choice_parser(count: int):
+    """A `prompt(value_proc=...)` that accepts a list number from 1 to `count`.
+
+    Raising BadParameter makes the prompt ask again instead of aborting the
+    command. This is deliberately not a click ParamType (IntRange): Typer does
+    not re-export those, and the vendored module that held them was removed in
+    Typer 0.29.0.
+    """
+
+    def parse(value: str) -> int:
+        text = value.strip()
+        if text.isdecimal() and 1 <= int(text) <= count:
+            return int(text)
+        raise typer.BadParameter(f"enter a number from 1 to {count}")
+
+    return parse
 
 
 def _serve_with_studio(
