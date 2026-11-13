@@ -15,10 +15,6 @@ on:
     - cron: "0 8 * * 1" # Mondays 08:00 UTC
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
-
 concurrency:
   group: bump-pins
   cancel-in-progress: false
@@ -27,27 +23,66 @@ jobs:
   bump:
     name: bump pins
     runs-on: ubuntu-latest
+    # Job-level, so anything not listed is `none`. The PR is pushed and opened with
+    # the ephemeral token from OSPO Vault (below), not GITHUB_TOKEN, so the job
+    # itself only reads the repo; id-token lets it prove who it is to Tailscale
+    # and Vault and grants no repo access.
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VAULT_URL: https://vault-ospo.eng-svc.aws.tenstorrent.com
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1 # no floating major tag past v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Bump pins
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: uv run scripts/bump_pins.py --summary "$RUNNER_TEMP/pr-body.md"
-      # Re-runs update the same branch/PR in place; if nothing changed, no PR is
-      # opened and an existing one is left alone.
-      #
       # Token: a PR created with the default GITHUB_TOKEN does not trigger the
       # `tests` workflow (GitHub's guard against recursive runs), so the hardware
-      # smoke test would not run on it. Set the BUMP_PINS_TOKEN repo secret to a
-      # fine-grained PAT or GitHub App token with contents + pull-requests write to
-      # get CI on the PR; without it the PR still opens, but someone has to
-      # close/reopen it (or push to it) to start the checks. The default token also
-      # needs "Allow GitHub Actions to create and approve pull requests" enabled
-      # under Settings → Actions → General.
-      - uses: peter-evans/create-pull-request@v8
+      # smoke test would not run on it. Instead the job fetches a short-lived
+      # GitHub token (contents + pull-requests write on this repo) from OSPO Vault,
+      # so no long-lived token is stored as a repo secret. Vault is reachable only
+      # over Tailscale and identifies the job by its OIDC token; the token setup
+      # allows runs from `main` only (schedule, or "Run workflow" on main).
+      #
+      # These steps sit after the bump on purpose: the Vault login lasts 15 minutes
+      # and the token can end with it, so it is fetched right before its one use.
+      - name: Join tailnet
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
         with:
-          token: ${{ secrets.BUMP_PINS_TOKEN || secrets.GITHUB_TOKEN }}
+          oauth-client-id: ${{ vars.TS_VAULT_OSPO_CLIENT_ID }}
+          audience: ${{ vars.TS_VAULT_OSPO_AUDIENCE }}
+          tags: tag:tt-gha-vault-ospo
+          args: --accept-routes
+      - name: Wait for Vault
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            curl -fsS --max-time 5 "${VAULT_URL}/v1/sys/health?standbyok=true&uninitcode=204&sealedcode=204" >/dev/null && exit 0
+            sleep 2
+          done
+          echo "Vault ${VAULT_URL} did not become reachable over Tailscale" >&2
+          exit 1
+      - name: Get ephemeral GitHub token
+        id: vault
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: ${{ env.VAULT_URL }}
+          method: jwt
+          path: jwt-github
+          role: <role-name> # TODO: role name from the OSPO ticket
+          jwtGithubAudience: ${{ env.VAULT_URL }}
+          exportEnv: false
+          # TODO: <token-name> from the OSPO ticket. No comments inside the block:
+          # everything in it goes to Vault.
+          secrets: |
+            github/token/<token-name> token | GH_TOKEN
+      # Re-runs update the same branch/PR in place; if nothing changed, no PR is
+      # opened and an existing one is left alone.
+      - uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8.1.3
+        with:
+          token: ${{ steps.vault.outputs.GH_TOKEN }}
           branch: bot/bump-pins
           delete-branch: true
           commit-message: Bump pinned upstream tool versions
