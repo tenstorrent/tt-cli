@@ -71,13 +71,12 @@ jobs:
           url: ${{ env.VAULT_URL }}
           method: jwt
           path: jwt-github
-          role: <role-name> # TODO: role name from the OSPO ticket
+          role: tenstorrent--tt-cli--bump-pins
           jwtGithubAudience: ${{ env.VAULT_URL }}
           exportEnv: false
-          # TODO: <token-name> from the OSPO ticket. No comments inside the block:
-          # everything in it goes to Vault.
+          # No comments inside the block: everything in it goes to Vault.
           secrets: |
-            github/token/<token-name> token | GH_TOKEN
+            github/token/tenstorrent--tt-cli--self-pr token | GH_TOKEN
       # Re-runs update the same branch/PR in place; if nothing changed, no PR is
       # opened and an existing one is left alone.
       - uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8.1.3
