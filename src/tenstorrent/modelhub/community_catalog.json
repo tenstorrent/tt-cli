@@ -389,6 +389,17 @@
    "validated_on": "2026-09-25"
   },
   {
+   "repo": "ndaly/Nemotron-3.5-Super-VL-120B-A12B-BF16",
+   "kind": "container",
+   "engine": "vllm-plugin",
+   "arch": "blackhole",
+   "hardware": [
+    "p300x2"
+   ],
+   "validation": "separate",
+   "validated_on": "2026-11-12"
+  },
+  {
    "repo": "ndaly/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
    "kind": "container",
    "engine": "vllm-plugin",
