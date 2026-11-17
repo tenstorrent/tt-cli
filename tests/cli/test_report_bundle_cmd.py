@@ -241,7 +241,19 @@ def test_bundle_collects_tt_container_logs(runner, monkeypatch, tmp_path):
                     "bbbbbbbbbbbb22",
                     "tt-model-llama-n150",
                     "tt-model/llama:1",
-                    labels={"org.tenstorrent.tt-model": "1"},
+                    labels={
+                        "org.tenstorrent.tt-model": "1",
+                        "org.tenstorrent.tt-model.profile": "n150",
+                    },
+                ),
+                _container(
+                    "dddddddddddd44",
+                    "probe-ornith",
+                    "tt-model/ornith:1",
+                    labels={
+                        "org.tenstorrent.tt-model": "ornith",
+                        "org.tenstorrent.tt-model.profiles": "p150",
+                    },
                 ),
                 _container("cccccccccccc33", "nginx", "nginx:1"),
             ]

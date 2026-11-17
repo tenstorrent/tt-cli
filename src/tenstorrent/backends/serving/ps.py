@@ -183,9 +183,9 @@ def _classify(entry: dict, catalog: _Catalog, now: datetime) -> ServedModel | No
         container = ServerContainer(id="", name=name, image=image, hf_repo=hf_repo, volume=volume)
         matched = next((m for m in catalog.models() if container.matches(m)), None)
         model_name = matched.name if matched else (hf_repo or volume or name)
-    elif TT_MODEL_LABEL in labels:
+    elif f"{TT_MODEL_LABEL}.profile" in labels:
         backend = MODEL_MANAGER
-        model_name = str(labels.get(f"{TT_MODEL_LABEL}.repo") or labels[TT_MODEL_LABEL])
+        model_name = str(labels.get(f"{TT_MODEL_LABEL}.repo") or labels.get(TT_MODEL_LABEL) or name)
         profile = labels.get(f"{TT_MODEL_LABEL}.profile") or None
     elif image.startswith(STUDIO_IMAGE_PREFIX) or catalog.is_model_name(name):
         backend = STUDIO
