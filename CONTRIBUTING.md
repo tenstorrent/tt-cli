@@ -57,9 +57,10 @@ Releases are cut by pushing a tag; `.github/workflows/release.yml` does the rest
 
 1. Bump `__version__` in `src/tenstorrent/__init__.py` — the only place the version
    lives, since `pyproject.toml` reads it via `[tool.hatch.version]`.
-2. Commit that to `main`.
-3. Tag it and push: `git tag v1.2.3 && git push origin v1.2.3`. The tag must match
-   `__version__` exactly (bar the `v`), or the workflow stops before building.
+2. Merge that to `main` through a PR.
+3. Tag the merged commit and push: `git tag v1.2.3 && git push origin v1.2.3`. The
+   tag must point at a commit on `main` and match `__version__` exactly (bar the
+   `v`), or the workflow stops before building.
 
 The workflow then builds the sdist and wheel, checks the metadata, installs the wheel
 into a clean environment and runs `tt`, gates on the full test suite (fake-tool matrix
