@@ -42,7 +42,8 @@ jobs:
       # Token: a PR created with the default GITHUB_TOKEN does not trigger the
       # `tests` workflow (GitHub's guard against recursive runs), so the hardware
       # smoke test would not run on it. Instead the job fetches a short-lived
-      # GitHub token (contents + pull-requests write on this repo) from OSPO Vault,
+      # GitHub token (contents, pull-requests and workflows write on this repo; the
+      # bump can rewrite the tt-installer step in tests.yml) from OSPO Vault,
       # so no long-lived token is stored as a repo secret. Vault is reachable only
       # over Tailscale and identifies the job by its OIDC token; the token setup
       # allows runs from `main` only (schedule, or "Run workflow" on main).
