@@ -6,8 +6,8 @@ name: release
 #     git tag v0.1.0 && git push origin v0.1.0
 #
 # The tag drives everything and nothing here rewrites the repo — no bot commits, no
-# temp branches. A tag that disagrees with `__version__` fails in the first job,
-# before anything is built or published.
+# temp branches. A tag that points at a commit outside main, or that disagrees with
+# `__version__`, fails in the first job, before anything is built or published.
 #
 # Order of the publishing jobs is deliberate: the GitHub release (deletable) first,
 # then PyPI last, because a PyPI upload is the one step that cannot be undone or
@@ -45,6 +45,22 @@ jobs:
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
+
+      # Tag creation is restricted, but whoever may create a tag can point it at any
+      # commit. Everything on main went through a reviewed PR, so requiring the tagged
+      # commit to be there means a release can only ship reviewed code.
+      - name: Check the tagged commit is on main
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          # The checkout is shallow; fetch main's history so ancestry can be walked.
+          git fetch --quiet --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main"
+            echo "Releases are cut from main only. Delete the tag, merge the change"
+            echo "through a PR, and tag the resulting commit on main."
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} points at a commit on main"
 
       - uses: actions/setup-python@v7
         with:
