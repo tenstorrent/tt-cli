@@ -247,6 +247,7 @@ jobs:
     if: >-
       github.repository == 'tenstorrent/tt-cli'
       && startsWith(github.ref, 'refs/tags/v')
+      && needs.build.outputs.prerelease == 'false'
     runs-on: ubuntu-latest
     environment:
       name: pypi
