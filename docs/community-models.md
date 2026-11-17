@@ -57,7 +57,7 @@ The launch lineup is genuinely current: Qwen 3.8 Flash Next, Qwen3-Coder-30B, Mu
 tt launch list                         # what can I connect, and is it usable now?
 tt serve Qwen3.6-27B --port 8000
 tt launch openwebui --web-port 3080    # in another terminal: pull and run its container, after you confirm
-tt launch stop openwebui               # stop it, keeping its data
+tt launch stop openwebui               # stop and remove it, keeping its data
 ```
 
 ## Running community bundles
