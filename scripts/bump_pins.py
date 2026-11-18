@@ -354,8 +354,8 @@ _REVIEW_ITEMS = {
     "tt-studio": [
         "Re-check run.py's `run <model>`, `--stop-model <model>` and `--stop` contract "
         "(backends/serving/studio.py) — this is what a prior pin bump broke before v2.11.0.",
-        "Re-copy modelhub/studio_models.json from the new tag's "
-        "app/backend/shared_config/models_from_inference_server.json if it changed.",
+        "Re-check STUDIO_OWN_MODELS in modelhub/studio.py against the `hand_owned` entries "
+        "of the new tag's app/backend/shared_config/models_from_inference_server.json.",
     ],
     "tt-sw-manifest (golden)": [
         "Re-capture the tt-smi parser fixtures after a real `tt update` if the smi version moved.",

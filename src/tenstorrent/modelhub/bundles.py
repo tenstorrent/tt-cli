@@ -141,6 +141,12 @@ def hardware_satisfies(bundle_tag: str, target_tag: str) -> bool:
     return _is_multi_board(bundle_tag) and _is_multi_board(target_tag)
 
 
+def runs_on(bundle: BundleInfo, hardware: str | None) -> bool:
+    """Whether `bundle` runs on `hardware` by any of the boards it was validated on
+    (see hardware_satisfies). No `hardware` means no filter."""
+    return not hardware or any(hardware_satisfies(hw, hardware) for hw in bundle.hardware)
+
+
 def drop_superseded_hardware(profiles: dict[str, object]) -> list[str]:
     """Tags to keep from `profiles` (tag -> whatever actually differs about
     running there, e.g. (max_context, impl_id)) — the model-manager

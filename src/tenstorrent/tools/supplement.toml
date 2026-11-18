@@ -80,13 +80,12 @@ python = "3.10"
 health = ["--version"]
 
 [tools.tt-studio]
-# TT-Studio: the third `tt serve` path, for the models only its catalog carries
-# (bundled copy: modelhub/studio_models.json — re-copy it from
-# app/backend/shared_config/models_from_inference_server.json on a bump). tt
+# TT-Studio: the third `tt serve` path. Its catalog is built from tt's own
+# model_support.json, so tt only lists the few models studio adds itself
+# (STUDIO_OWN_MODELS in modelhub/studio.py — re-check them on a bump). tt
 # delegates the whole lifecycle to the checkout's run.py: `run <model>` deploys,
 # `--stop-model <model>` stops it, `--stop` takes the stack down (after a stop or a
 # failed deploy).
-# Catalog copy taken from dev@f96ec8c7 on 2026-09-22.
 kind = "git-venv"
 golden_version = "v2.12.0"
 repo = "https://github.com/tenstorrent/tt-studio"

@@ -427,11 +427,7 @@ def _community_rows(
     found = sorted(local + listed, key=lambda b: (b.name.lower(), b.source))
     if cached:  # --cached reads as "what do I have locally" here too
         found = [b for b in found if b.source == "local"]
-    if hardware:
-        found = [
-            b for b in found
-            if any(bundles.hardware_satisfies(hw, hardware) for hw in b.hardware)
-        ]
+    found = [b for b in found if bundles.runs_on(b, hardware)]
     return [_bundle_row(dataclasses.asdict(b)) for b in found]
 
 
@@ -1012,10 +1008,14 @@ model_app.command("serve", no_args_is_help=True, context_settings=SERVE_CONTEXT_
 def stop_model(
     ctx: typer.Context,
     names: list[str] = typer.Argument(
+        None,
         help="Model names or tt-model bundle ids, e.g. `tt model stop $(tt model ps --names)`.",
         autocompletion=complete_local_model,
     ),
     profile: str = typer.Option(None, "--profile", help="Stop only this profile."),
+    studio: bool = typer.Option(
+        False, "--studio", help="Stop TT-Studio: every model it deployed, then its services."
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
     verbose: VerboseFlag = False,
@@ -1024,6 +1024,16 @@ def stop_model(
     """Stop running model servers."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    if studio:
+        _stop_studio(appctx, names=names or [], profile=profile)
+        return
+    if not names:
+        raise TTError(
+            "Name a model to stop.",
+            next_step="`tt model ps --names` lists what is running; "
+            "`tt model stop --studio` stops TT-Studio.",
+            exit_code=ExitCode.USAGE,
+        )
     # Every name resolved first: a typo stops nothing.
     targets = [(name, *_dispatch(appctx, name)) for name in dict.fromkeys(names)]
     failed = []
@@ -1051,6 +1061,24 @@ def stop_model(
             why="The others were stopped; the errors above say why these were not.",
             exit_code=ExitCode.TOOL_FAILED,
         )
+
+
+def _stop_studio(appctx, *, names: list[str], profile: str | None) -> None:
+    if names or profile:
+        raise TTError(
+            "--studio stops all of TT-Studio, so it takes no model names or --profile.",
+            next_step="Drop them, or stop one model with `tt model stop <name>`.",
+            exit_code=ExitCode.USAGE,
+        )
+    result = StudioBackend(appctx.registry, appctx.runner, appctx.config, appctx.output).stop_all()
+
+    def render(d: dict) -> str:
+        if not d["running"]:
+            return "TT-Studio is not running."
+        models = f"{len(d['stopped'])} model(s)" if d["stopped"] else "no models"
+        return f"Stopped TT-Studio ({models}{', and its services' if d['services_stopped'] else ''})."
+
+    appctx.output.emit(result, renderer=render)
 
 
 def _studio_is_serving(appctx, model) -> bool:
