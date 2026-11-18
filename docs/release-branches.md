@@ -28,26 +28,28 @@ with a PR targeting `release/1.2.x`. There is no cherry-pick: the fixes reach
 
 Re-test and repeat as needed.
 
-## 4. Tag the release
+## 4. Merge the branch into `main`
 
 Once stable, bump `__version__` in `src/tenstorrent/__init__.py`, commit to
-the release branch, then tag and push:
+the release branch, and open a PR from `release/1.2.x` into `main`. This brings
+the hot fixes and the version bump onto `main` in one go.
+
+## 5. Tag the release
+
+Tag the merged commit on `main` and push the tag:
 
 ```console
+git checkout main && git pull
 git tag v1.2.0
 git push origin v1.2.0
 ```
 
 This triggers `release.yml` for real: build → full test suite → GitHub
-Release → PyPI.
-
-## 5. Merge the branch into `main`
-
-Open a PR from `release/1.2.x` into `main`. This brings the hot fixes and the
-version bump onto `main` in one go.
+Release → PyPI. The workflow refuses a tag whose commit is not on `main`, so
+tagging the release branch itself stops the run before anything is built.
 
 ## 6. Delete the branch
 
-Delete `release/1.2.x` once it's tagged and merged into `main`. Keep it alive only
-if you expect to ship a patch release (`v1.2.1`, `v1.2.2`, ...) against this
-exact line later, after `main` has moved on to unrelated work.
+Delete `release/1.2.x` once it's merged into `main` and the release is tagged.
+A later patch release (`v1.2.1`, `v1.2.2`, ...) is cut the same way, from
+`main`.
