@@ -1,6 +1,6 @@
 # tt — the Tenstorrent CLI
 
-One command for everything Tenstorrent.
+One command for everything Tenstorrent SW releated.
 
 `tt` is the single entry point to the Tenstorrent software stack. It either implements a
 function natively or delegates to an existing tool (tt-smi, tt-installer, etc.) behind a stable interface.
