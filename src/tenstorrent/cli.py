@@ -226,6 +226,7 @@ def root(
 def _register_commands() -> None:
     # Imported here so `import tenstorrent.cli` stays cheap and cycle-free.
     from .commands.agent import agent
+    from .commands.bio import bio_app
     from .commands.config_cmd import config_app
     from .commands.device import device_app
     from .commands.launch import launch_app
@@ -248,6 +249,7 @@ def _register_commands() -> None:
         context_settings=SERVE_CONTEXT_SETTINGS,
     )(serve)
     app.add_typer(launch_app, name="launch", rich_help_panel=PANEL_WORKLOADS)
+    app.add_typer(bio_app, name="bio", rich_help_panel=PANEL_WORKLOADS)
     app.command(
         "agent",
         rich_help_panel=PANEL_WORKLOADS,

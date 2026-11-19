@@ -1824,6 +1824,23 @@ def test_serve_puts_a_single_chip_model_on_a_free_chip(
 
 
 @pytest.mark.fakes_only
+def test_serve_steers_around_a_chip_tt_bio_is_folding_on(
+    runner, fake_docker, fake_server, monkeypatch, tmp_path, tt_bio_lease
+):
+    """No container holds chip 0, but a live tt-bio run does: serve must see it."""
+    root = tmp_path / "dev-tenstorrent"
+    root.mkdir()
+    for i in range(4):
+        (root / str(i)).touch()
+    monkeypatch.setenv("TT_DEVICE_ROOT", str(root))
+    tt_bio_lease(0)
+    result = runner.invoke(app, ["serve", "whisper-large-v3", "--device", "n150"])
+    assert result.exit_code == 0, result.output
+    argv = json.loads(fake_server.read_text().splitlines()[-1])
+    assert argv[argv.index("--device-id") + 1] == "1"
+
+
+@pytest.mark.fakes_only
 def test_serve_refuses_when_every_chip_is_held(runner, docker_present, fake_server, four_chips):
     four_chips(0, 1, 2, 3)
     result = runner.invoke(app, ["serve", "whisper-large-v3", "--device", "n150"])

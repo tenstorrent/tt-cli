@@ -76,8 +76,16 @@ def main() -> int:
         # `--format {{json .}}` is an option value, so only bare ids are targets
         wanted = [a for a in args[1:] if not a.startswith("-") and not a.startswith("{{")]
         found = [e for e in _containers() if str(e.get("Id", ""))[:12] in wanted]
-        for entry in found:
-            print(json.dumps(entry))
+        # Two output shapes, as the real thing has: with `--format {{json .}}` one
+        # object per line, and without any format a single JSON array. Callers read
+        # whichever they asked for — ps.py parses the lines, chips.py the array — so
+        # collapsing them to one shape makes the fake disagree with docker for one
+        # of them.
+        if "--format" in args or any(a.startswith("{{") for a in args):
+            for entry in found:
+                print(json.dumps(entry))
+        else:
+            print(json.dumps(found))
         # Like docker: an unknown target is an error.
         return 0 if len(found) == len(wanted) else 1
     if args[:1] == ["stop"]:
