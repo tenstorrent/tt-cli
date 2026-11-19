@@ -176,6 +176,19 @@ tt bio embed proteins.fasta --model esmc-600m   # protein embeddings
 tt bio run evaluate --help                      # any other tt-bio command, forwarded as-is
 ```
 
+If you have not used tt-bio before, start with the notebook rather than the flags:
+
+```bash
+tt bio notebook
+```
+
+That installs tt-bio if it is missing, reserves the chips nothing else is holding, seeds
+`~/tt-bio-notebooks/start-here.ipynb` and opens JupyterLab on it. The notebook folds a
+20-residue Trp-cage, prints the confidence scores and draws the structure coloured by
+per-residue pLDDT — edit the sequence and re-run. JupyterLab and py3Dmol are installed into
+tt-bio's own environment, so a cell can import `tt_bio` and render a fold from one
+interpreter. An existing `start-here.ipynb` is never overwritten.
+
 Options `tt` does not read are passed straight through, so every tt-bio flag works here the day
 upstream ships it.
 

@@ -31,6 +31,7 @@ reached the grant is simply not set and tt-bio behaves exactly as it does standa
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 
 import typer
 
@@ -132,7 +133,9 @@ def _busy_error(held: list[int], free_now: list[int]) -> TTError:
     )
 
 
-def _grant(appctx: AppContext, args: list[str]) -> tuple[list[str], dict[str, str]]:
+def _grant(
+    appctx: AppContext, args: list[str], *, require_free: bool = True
+) -> tuple[list[str], dict[str, str]]:
     """Resolve the chip grant for a device-opening run.
 
     Returns the argv to forward and the environment to add. Either may be empty:
@@ -157,7 +160,19 @@ def _grant(appctx: AppContext, args: list[str]) -> tuple[list[str], dict[str, st
         return args, {GRANT_ENV: ",".join(str(chip) for chip in wanted)}
 
     if not free_now:
-        raise _busy_error(sorted(chips.all_ids()), [])
+        if require_free:
+            raise _busy_error(sorted(chips.all_ids()), [])
+        # A long-lived session (the notebook) is not a single job: it is worth opening
+        # with nothing free, to read it, edit a sequence or look at an earlier result,
+        # and a chip may come free while it is open. The fold cell fails honestly on
+        # tt-bio's own lease if one never does.
+        appctx.output.warn(
+            "Every chip is in use, so a fold will not run yet — "
+            "`tt model ps` shows what is holding them."
+        )
+        # Deliberately no grant: tt-bio reads an *empty* TT_BIO_LEASE_CARDS as
+        # unbounded, so writing "" here would hand over the whole box.
+        return args, {}
 
     csv = ",".join(str(chip) for chip in free_now)
     appctx.output.ui.note(
@@ -166,6 +181,22 @@ def _grant(appctx: AppContext, args: list[str]) -> tuple[list[str], dict[str, st
         else f"Running on chip(s) {csv}."
     )
     return [*args, "--devices", csv], {GRANT_ENV: csv}
+
+
+def _jupyter_beside(appctx: AppContext, binary: Path) -> Path | None:
+    """Where the notebook server is, given where tt-bio is. None if it is not there.
+
+    Two places, because `uv tool install --with` puts a package *in* the tool's venv
+    without linking its entry points into UV_TOOL_BIN_DIR: only `tt-bio` is symlinked
+    there, while `jupyter` stays in the venv's own bin. So the managed layout is
+    checked explicitly, and `beside the binary` covers a tt-bio resolved through
+    TT_TOOL_BIN_TT_BIO or a config override, where the user owns the environment.
+    """
+    candidates = [
+        Path(binary).parent / "jupyter",
+        appctx.paths.tools_dir / TOOL / "bin" / "jupyter",
+    ]
+    return next((c for c in candidates if c.exists()), None)
 
 
 def _hand_off(ctx: typer.Context, command: str, extra: list[str] | None = None) -> None:
@@ -228,6 +259,106 @@ def run(ctx: typer.Context) -> None:
         args, env = _grant(appctx, rest)
     binary = appctx.registry.ensure(TOOL, offline=appctx.offline)
     appctx.runner.exec_tty([str(binary), command, *args], env=env)
+
+
+@bio_app.command("notebook")
+@handle_tt_errors
+def notebook(
+    ctx: typer.Context,
+    directory: str = typer.Option(
+        None,
+        "--dir",
+        "-d",
+        help="Where to keep notebooks (default: ~/tt-bio-notebooks).",
+    ),
+    port: int = typer.Option(8888, "--port", help="Port for the notebook server."),
+    no_browser: bool = typer.Option(
+        False, "--no-browser", help="Do not open a browser; just print the URL."
+    ),
+    json_mode: bool = typer.Option(
+        False,
+        "--json",
+        help="Report the notebook, chips and port as JSON and exit WITHOUT opening "
+        "the server (handing over the terminal and emitting clean JSON on it are "
+        "mutually exclusive).",
+    ),
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """Open a notebook that folds a protein, on chips nothing else is holding.
+
+    The first thing a new user should run. `tt bio predict` assumes you already know
+    what you want to fold; this hands you a worked example you can edit and re-run,
+    which is how people actually explore these models.
+
+    JupyterLab and py3Dmol live in tt-bio's own environment (see supplement.toml), so
+    the notebook can import tt_bio and render a structure from one interpreter.
+    """
+    from .bio_notebook import STARTER_NAME, write_starter
+
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+
+    workdir = Path(directory).expanduser() if directory else Path.home() / "tt-bio-notebooks"
+
+    # The grant first: it is written into the notebook, so it has to be settled before
+    # the file is created, and a box with nothing free should fail here rather than
+    # after starting a server.
+    _args, env = _grant(appctx, [], require_free=False)
+    chips = [int(c) for c in env[GRANT_ENV].split(",")] if env.get(GRANT_ENV) else None
+
+    binary = appctx.registry.ensure(TOOL, offline=appctx.offline)
+    jupyter = _jupyter_beside(appctx, binary)
+    if jupyter is None:
+        # tt-bio installed before the notebook extras were pinned. The version did not
+        # change, so ensure() had nothing to re-resolve and returned the old venv —
+        # install() re-runs uv at the same pin, which does pick the new `deps` up.
+        # Self-healing on purpose: the alternative is telling someone to run a command
+        # that, for this exact reason, would not fix it either.
+        appctx.output.ui.note("Adding the notebook environment to tt-bio (one time).")
+        binary = appctx.registry.install(appctx.registry.spec(TOOL), offline=appctx.offline).path
+        jupyter = _jupyter_beside(appctx, binary)
+    if jupyter is None:
+        raise TTError(
+            "tt-bio is installed, but the notebook server is not beside it.",
+            why="The `deps` on the tt-bio tool in supplement.toml should have put "
+            "jupyterlab in its environment.",
+            next_step="Report this with `tt report issue` — the install reported success.",
+            exit_code=ExitCode.TOOL_MISSING,
+            details={"tool": TOOL},
+        )
+
+    starter = workdir / STARTER_NAME
+    created = write_starter(starter, chips)
+
+    if json_mode:
+        appctx.output.emit(
+            {
+                "directory": str(workdir),
+                "notebook": str(starter),
+                "created": created,
+                "chips": chips,
+                "port": port,
+            }
+        )
+        return
+
+    appctx.output.ui.note(
+        f"{'Wrote' if created else 'Keeping'} {starter}"
+        + ("" if created else " (already there, left as you had it)")
+    )
+
+    argv = [
+        str(jupyter),
+        "lab",
+        f"--notebook-dir={workdir}",
+        f"--port={port}",
+        f"--ServerApp.default_url=/lab/tree/{STARTER_NAME}",
+    ]
+    if no_browser:
+        argv.append("--no-browser")
+    appctx.runner.exec_tty(argv, env=env)
 
 
 @bio_app.command("status")

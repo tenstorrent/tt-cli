@@ -362,6 +362,86 @@ def bundle_docker_is_fake(hardware_mode, monkeypatch):
 
 
 @pytest.fixture
+def bio_chips(monkeypatch, tmp_path):
+    """present(n) — show `tt bio` n chips under a redirected /dev/tenstorrent."""
+
+    def present(count: int) -> None:
+        root = tmp_path / "dev-tenstorrent"
+        root.mkdir(parents=True, exist_ok=True)
+        for index in range(count):
+            (root / str(index)).write_text("")
+        monkeypatch.setenv("TT_DEVICE_ROOT", str(root))
+
+    return present
+
+
+@pytest.fixture
+def bio_container_on():
+    """record(chip) — a docker inspect record for a container holding one chip,
+    in the shape backends/serving/chips.py reads."""
+
+    def record(chip: int) -> dict:
+        return {
+            "Id": f"{chip:012d}",
+            "Name": f"/tt-model-demo-{chip}",
+            "State": {"Running": True, "Status": "running"},
+            "Config": {"Image": "tt-model/demo:1", "Labels": {}},
+            "HostConfig": {
+                "IpcMode": "host",
+                "Devices": [{"PathOnHost": f"/dev/tenstorrent/{chip}"}],
+            },
+            "Mounts": [],
+        }
+
+    return record
+
+
+@pytest.fixture
+def bio_docker(monkeypatch):
+    """Point `tt bio`'s runtime lookup at the fake docker; returns a seeder.
+
+    The runtime is found with shutil.which inside the command module, so the patch
+    goes there rather than on PATH — same approach as `fake_docker`, and it leaves
+    the interpreter the fake's own shebang needs reachable.
+    """
+    monkeypatch.setattr(
+        "tenstorrent.commands.bio.shutil.which",
+        lambda name: str(FAKE_BIN / "docker") if name == "docker" else None,
+    )
+
+    def seed(*records: dict) -> None:
+        monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(list(records)))
+
+    seed()
+    return seed
+
+
+@pytest.fixture
+def bio_no_runtime(monkeypatch):
+    """A host with neither docker nor podman."""
+    monkeypatch.setattr("tenstorrent.commands.bio.shutil.which", lambda name: None)
+
+
+@pytest.fixture
+def bio_handoff(monkeypatch):
+    """Capture `tt bio`'s exec_tty hand-off instead of replacing the test process.
+
+    Every `tt bio` leaf ends in os.execvpe, so a test that reaches the hand-off
+    without this replaces the *pytest* process and the run ends mid-suite with no
+    report. Request it from any test that can get that far.
+    """
+    recorded: dict = {}
+
+    def fake_exec(file, argv, env):
+        recorded["argv"] = argv
+        recorded["env"] = env
+        raise SystemExit(0)
+
+    monkeypatch.setattr("tenstorrent.tools.runner.os.execvpe", fake_exec)
+    return recorded
+
+
+@pytest.fixture
 def fake_docker(monkeypatch, tmp_path):
     """Point the serving backends' runtime lookup at tests/fakes/bin/docker.
 

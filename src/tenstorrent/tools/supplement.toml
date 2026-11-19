@@ -114,6 +114,13 @@ golden_version = "0.37.0"
 # tests on (Ubuntu 24.04). Pinned because the uv tool venv is ours to provision.
 python = "3.12"
 health = ["--version"]
+# Installed into tt-bio's own venv with `--with`, so `tt bio notebook` gets one
+# interpreter that can both import tt_bio and serve the notebook. Kept here rather
+# than in a second tool entry because a separate venv would re-download ttnn and
+# torch — gigabytes — to reach the same place. Both are small beside that.
+# jupyterlab: the notebook server itself. py3Dmol: renders a fold in the notebook,
+# which is the point of the thing — a structure you can turn, not a path on stdout.
+deps = ["jupyterlab==4.6.6", "py3Dmol==2.5.5"]
 # The install pulls ttnn and torch — gigabytes. Only users who fold need it, so it
 # lands on first use of `tt bio` (`tt update --include-lazy` forces it).
 lazy = true
