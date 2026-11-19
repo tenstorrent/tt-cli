@@ -188,10 +188,14 @@ explicitly and it says which one and who has it, before anything starts:
 
 ```console
 $ tt bio predict prot.yaml --devices 1,2
-Chip(s) 2 are in use by a running model server.
+Chip(s) 2 are in use by a running model server or another tt-bio run.
 → `tt model ps` to see what is running, `tt model stop <model>` to free them, or re-run
   restricted to the free chips: --devices 0,1,3
 ```
+
+It works the other way too: `tt serve` reads tt-bio's lease files and will not place a model on a
+chip a tt-bio run is folding on. A lease only counts while its holder is alive, so a crashed run
+leaves nothing behind that blocks a chip.
 
 If `tt` cannot reach a container runtime it grants nothing and tt-bio behaves exactly as it does
 standalone — a chip that could not be checked is never handed out.

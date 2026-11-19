@@ -21,6 +21,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
+import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -229,8 +232,12 @@ def isolated_dirs(request, tmp_path, monkeypatch):
         "TT_COMMUNITY_CATALOG_PATH",
         "HF_TOKEN",
         "HF_TOKEN_PATH",
+        "TT_BIO_LEASE_HOST",
     ):
         monkeypatch.delenv(var, raising=False)
+    # tt-bio's chip leases are read from a shared directory (/tmp by default), so a
+    # tt-bio run on the developer's box would otherwise show up as a held chip.
+    monkeypatch.setenv("TT_BIO_LEASE_DIR", str(tmp_path / "tt-bio-leases"))
     # The registry's last-resort probe of tt-installer's venv (~/.tenstorrent-venv) is
     # redirected in BOTH modes. Under --hardware HOME stays real (below), so without
     # this a runner provisioned by the installer would make every "nothing installed"
@@ -373,6 +380,46 @@ def fake_docker(monkeypatch, tmp_path):
         monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(entries))
 
     return set_containers, stop_log
+
+
+_LEASE_HOLDER = (
+    "import fcntl, os, sys\n"
+    "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o664)\n"
+    "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+    "print('held', flush=True)\n"
+    "sys.stdin.read()\n"
+)
+
+
+@pytest.fixture
+def tt_bio_lease():
+    """Hold tt-bio's per-card lease the way tt-bio does: a real exclusive flock on
+    `$TT_BIO_LEASE_DIR/<host>-card<N>.json`, from another process.
+
+    Returns hold(card, host=None) -> Popen; the lock lasts until the process ends
+    (kill it to simulate a crashed run, or leave it to the fixture's teardown).
+    """
+    procs: list[subprocess.Popen] = []
+
+    def hold(card: int, host: str | None = None) -> subprocess.Popen:
+        directory = Path(os.environ["TT_BIO_LEASE_DIR"])
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{host or socket.gethostname()}-card{card}.json"
+        proc = subprocess.Popen(
+            [sys.executable, "-c", _LEASE_HOLDER, str(path)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        procs.append(proc)
+        assert proc.stdout.readline().strip() == "held"
+        return proc
+
+    yield hold
+    for proc in procs:
+        proc.stdin.close()
+        proc.wait(timeout=10)
+        proc.stdout.close()
 
 
 @pytest.fixture

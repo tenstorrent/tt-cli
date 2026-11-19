@@ -136,6 +136,19 @@ def test_a_chip_held_by_a_served_model_is_withheld(
     assert handoff["env"][GRANT_ENV] == "0,1,3"
 
 
+def test_a_chip_another_tt_bio_run_holds_is_withheld(
+    runner, bio_bin, handoff, docker_bin, monkeypatch, tmp_path, tt_bio_lease
+):
+    """tt-bio's own lease counts too, so a second run is not granted a card the first
+    one is folding on (it would only block behind it at the device open)."""
+    _chips(monkeypatch, tmp_path, 4)
+    docker_bin(_container_on(0))
+    tt_bio_lease(1)
+    result = runner.invoke(app, ["bio", "predict", "prot.yaml"])
+    assert result.exit_code == 0
+    assert handoff["env"][GRANT_ENV] == "2,3"
+
+
 def test_every_chip_busy_stops_the_run_with_the_way_out(
     runner, bio_bin, docker_bin, monkeypatch, tmp_path
 ):
@@ -216,6 +229,16 @@ def test_status_json_reports_free_and_held(
     assert payload["chips"]["free"] == [0, 1, 2]
     assert payload["chips"]["held"] == [3]
     assert payload["tool"]["installed"] is True
+
+
+def test_status_counts_a_live_tt_bio_lease_as_held(
+    runner, bio_bin, docker_bin, monkeypatch, tmp_path, tt_bio_lease
+):
+    _chips(monkeypatch, tmp_path, 4)
+    tt_bio_lease(2)
+    payload = json.loads(runner.invoke(app, ["bio", "status", "--json"]).output)
+    assert payload["chips"]["held"] == [2]
+    assert payload["chips"]["free"] == [0, 1, 3]
 
 
 def test_bio_is_listed_in_help(runner):

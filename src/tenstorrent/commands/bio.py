@@ -116,9 +116,9 @@ def _parse_ids(value: str) -> list[int] | None:
 def _busy_error(held: list[int], free_now: list[int]) -> TTError:
     held_text = ", ".join(map(str, sorted(held)))
     return TTError(
-        f"Chip(s) {held_text} are in use by a running model server.",
+        f"Chip(s) {held_text} are in use by a running model server or another tt-bio run.",
         why="tt-bio opens a card directly, and a container holding one does not take "
-        "tt-bio's lease — so this run would collide with the server rather than queue "
+        "tt-bio's lease — so this run would collide with a server rather than queue "
         "behind it.",
         next_step="`tt model ps` to see what is running, `tt model stop <model>` to free "
         + (
