@@ -21,6 +21,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
+import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -98,7 +101,10 @@ def _resolve_real_tool(binary: str) -> Path | None:
 @pytest.fixture(scope="session")
 def real_tools() -> dict[str, Path | None]:
     """Real binary paths for the tools tests may drive on hardware, resolved once."""
-    return {name: _resolve_real_tool(name) for name in ("tt-smi", "tt-flash", "uv")}
+    return {
+        name: _resolve_real_tool(name)
+        for name in ("tt-smi", "tt-flash", "uv", "tt-bio")
+    }
 
 
 def _require_real(real_tools: dict[str, Path | None], name: str) -> Path:
@@ -174,6 +180,17 @@ def studio_bin(isolated_dirs, hardware_mode, monkeypatch, tmp_path) -> Path | No
 
 
 @pytest.fixture
+def bio_bin(isolated_dirs, hardware_mode, real_tools, monkeypatch, tmp_path) -> Path | None:
+    if hardware_mode:
+        monkeypatch.setenv("TT_TOOL_BIN_TT_BIO", str(_require_real(real_tools, "tt-bio")))
+        return None
+    log = tmp_path / "tt-bio-argv.jsonl"
+    monkeypatch.setenv("TT_TOOL_BIN_TT_BIO", str(FAKE_BIN / "tt-bio"))
+    monkeypatch.setenv("FAKE_TT_BIO_LOG", str(log))
+    return log
+
+
+@pytest.fixture
 def model_manager_bin(isolated_dirs, hardware_mode, real_tools, monkeypatch, tmp_path) -> Path | None:
     if hardware_mode:
         monkeypatch.setenv("TT_TOOL_BIN_TT_MODEL", str(_require_real(real_tools, "tt-model")))
@@ -215,8 +232,12 @@ def isolated_dirs(request, tmp_path, monkeypatch):
         "TT_COMMUNITY_CATALOG_PATH",
         "HF_TOKEN",
         "HF_TOKEN_PATH",
+        "TT_BIO_LEASE_HOST",
     ):
         monkeypatch.delenv(var, raising=False)
+    # tt-bio's chip leases are read from a shared directory (/tmp by default), so a
+    # tt-bio run on the developer's box would otherwise show up as a held chip.
+    monkeypatch.setenv("TT_BIO_LEASE_DIR", str(tmp_path / "tt-bio-leases"))
     # The registry's last-resort probe of tt-installer's venv (~/.tenstorrent-venv) is
     # redirected in BOTH modes. Under --hardware HOME stays real (below), so without
     # this a runner provisioned by the installer would make every "nothing installed"
@@ -341,6 +362,86 @@ def bundle_docker_is_fake(hardware_mode, monkeypatch):
 
 
 @pytest.fixture
+def bio_chips(monkeypatch, tmp_path):
+    """present(n) — show `tt bio` n chips under a redirected /dev/tenstorrent."""
+
+    def present(count: int) -> None:
+        root = tmp_path / "dev-tenstorrent"
+        root.mkdir(parents=True, exist_ok=True)
+        for index in range(count):
+            (root / str(index)).write_text("")
+        monkeypatch.setenv("TT_DEVICE_ROOT", str(root))
+
+    return present
+
+
+@pytest.fixture
+def bio_container_on():
+    """record(chip) — a docker inspect record for a container holding one chip,
+    in the shape backends/serving/chips.py reads."""
+
+    def record(chip: int) -> dict:
+        return {
+            "Id": f"{chip:012d}",
+            "Name": f"/tt-model-demo-{chip}",
+            "State": {"Running": True, "Status": "running"},
+            "Config": {"Image": "tt-model/demo:1", "Labels": {}},
+            "HostConfig": {
+                "IpcMode": "host",
+                "Devices": [{"PathOnHost": f"/dev/tenstorrent/{chip}"}],
+            },
+            "Mounts": [],
+        }
+
+    return record
+
+
+@pytest.fixture
+def bio_docker(monkeypatch):
+    """Point `tt bio`'s runtime lookup at the fake docker; returns a seeder.
+
+    The runtime is found with shutil.which inside the command module, so the patch
+    goes there rather than on PATH — same approach as `fake_docker`, and it leaves
+    the interpreter the fake's own shebang needs reachable.
+    """
+    monkeypatch.setattr(
+        "tenstorrent.commands.bio.shutil.which",
+        lambda name: str(FAKE_BIN / "docker") if name == "docker" else None,
+    )
+
+    def seed(*records: dict) -> None:
+        monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(list(records)))
+
+    seed()
+    return seed
+
+
+@pytest.fixture
+def bio_no_runtime(monkeypatch):
+    """A host with neither docker nor podman."""
+    monkeypatch.setattr("tenstorrent.commands.bio.shutil.which", lambda name: None)
+
+
+@pytest.fixture
+def bio_handoff(monkeypatch):
+    """Capture `tt bio`'s exec_tty hand-off instead of replacing the test process.
+
+    Every `tt bio` leaf ends in os.execvpe, so a test that reaches the hand-off
+    without this replaces the *pytest* process and the run ends mid-suite with no
+    report. Request it from any test that can get that far.
+    """
+    recorded: dict = {}
+
+    def fake_exec(file, argv, env):
+        recorded["argv"] = argv
+        recorded["env"] = env
+        raise SystemExit(0)
+
+    monkeypatch.setattr("tenstorrent.tools.runner.os.execvpe", fake_exec)
+    return recorded
+
+
+@pytest.fixture
 def fake_docker(monkeypatch, tmp_path):
     """Point the serving backends' runtime lookup at tests/fakes/bin/docker.
 
@@ -359,6 +460,46 @@ def fake_docker(monkeypatch, tmp_path):
         monkeypatch.setenv("FAKE_DOCKER_CONTAINERS", json.dumps(entries))
 
     return set_containers, stop_log
+
+
+_LEASE_HOLDER = (
+    "import fcntl, os, sys\n"
+    "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o664)\n"
+    "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+    "print('held', flush=True)\n"
+    "sys.stdin.read()\n"
+)
+
+
+@pytest.fixture
+def tt_bio_lease():
+    """Hold tt-bio's per-card lease the way tt-bio does: a real exclusive flock on
+    `$TT_BIO_LEASE_DIR/<host>-card<N>.json`, from another process.
+
+    Returns hold(card, host=None) -> Popen; the lock lasts until the process ends
+    (kill it to simulate a crashed run, or leave it to the fixture's teardown).
+    """
+    procs: list[subprocess.Popen] = []
+
+    def hold(card: int, host: str | None = None) -> subprocess.Popen:
+        directory = Path(os.environ["TT_BIO_LEASE_DIR"])
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{host or socket.gethostname()}-card{card}.json"
+        proc = subprocess.Popen(
+            [sys.executable, "-c", _LEASE_HOLDER, str(path)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        procs.append(proc)
+        assert proc.stdout.readline().strip() == "held"
+        return proc
+
+    yield hold
+    for proc in procs:
+        proc.stdin.close()
+        proc.wait(timeout=10)
+        proc.stdout.close()
 
 
 @pytest.fixture

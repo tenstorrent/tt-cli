@@ -94,6 +94,13 @@ class UvToolInstaller:
             self._requirement(spec),
             "--force",  # idempotent re-pinning
         ]
+        # `deps` for a uv-tool are extra distributions that belong in the tool's own
+        # venv but are not the tool itself — what `uv tool install --with` is for.
+        # They land beside the tool rather than in a second environment, so a command
+        # that needs both (a notebook importing the tool it ships next to) finds one
+        # interpreter with everything on it.
+        for dep in spec.deps:
+            argv += ["--with", dep]
         if spec.python:
             argv += ["--python", spec.python]
         if offline:

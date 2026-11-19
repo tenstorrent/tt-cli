@@ -76,7 +76,10 @@ class ToolSpec:
     entry: str | None = None  # git-venv: entry script relative to repo root
     bin: str | None = None  # executable name (defaults to package/name)
     python: str | None = None  # interpreter constraint for isolated venvs
-    deps: tuple[str, ...] = ()  # git-venv: PyPI requirements the entry script needs
+    # git-venv: PyPI requirements the entry script needs.
+    # uv-tool: extra distributions installed into the tool's own venv (`--with`),
+    # for a command that has to import the tool and something else from one interpreter.
+    deps: tuple[str, ...] = ()
     health: tuple[str, ...] = ()  # argv suffix for a health check
     needs_sudo: bool = False
     lazy: bool = False  # Installed on first use by registry.ensure() instead of by `tt update`.
