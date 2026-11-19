@@ -71,3 +71,20 @@ def _claims(info: dict, ids: list[int]) -> set[int]:
         if match:
             taken.add(int(match.group(1)))
     return taken
+
+
+def free(runner: Runner, runtime: str, ids: list[int] | None = None) -> list[int] | None:
+    """The chips no running container holds, or None when that cannot be determined.
+
+    `claimed` already answers "which are taken"; this is the complement, which is
+    what a placement decision actually wants. None (runtime unreachable, inspect
+    unparseable) means *unknown*, never "all of them" — a caller must not place
+    work on a chip it failed to check.
+    """
+    ids = all_ids() if ids is None else ids
+    if not ids:
+        return None
+    taken = claimed(runner, runtime, ids)
+    if taken is None:
+        return None
+    return [i for i in ids if i not in taken]
