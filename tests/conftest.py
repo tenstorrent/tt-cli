@@ -98,7 +98,10 @@ def _resolve_real_tool(binary: str) -> Path | None:
 @pytest.fixture(scope="session")
 def real_tools() -> dict[str, Path | None]:
     """Real binary paths for the tools tests may drive on hardware, resolved once."""
-    return {name: _resolve_real_tool(name) for name in ("tt-smi", "tt-flash", "uv")}
+    return {
+        name: _resolve_real_tool(name)
+        for name in ("tt-smi", "tt-flash", "uv", "tt-bio")
+    }
 
 
 def _require_real(real_tools: dict[str, Path | None], name: str) -> Path:
@@ -170,6 +173,17 @@ def studio_bin(isolated_dirs, hardware_mode, monkeypatch, tmp_path) -> Path | No
     log = tmp_path / "studio-argv.jsonl"
     monkeypatch.setenv("TT_TOOL_BIN_TT_STUDIO", str(FAKES_DIR / "studio-repo" / "run.py"))
     monkeypatch.setenv("FAKE_STUDIO_LOG", str(log))
+    return log
+
+
+@pytest.fixture
+def bio_bin(isolated_dirs, hardware_mode, real_tools, monkeypatch, tmp_path) -> Path | None:
+    if hardware_mode:
+        monkeypatch.setenv("TT_TOOL_BIN_TT_BIO", str(_require_real(real_tools, "tt-bio")))
+        return None
+    log = tmp_path / "tt-bio-argv.jsonl"
+    monkeypatch.setenv("TT_TOOL_BIN_TT_BIO", str(FAKE_BIN / "tt-bio"))
+    monkeypatch.setenv("FAKE_TT_BIO_LOG", str(log))
     return log
 
 
