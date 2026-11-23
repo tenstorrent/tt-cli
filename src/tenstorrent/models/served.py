@@ -38,3 +38,4 @@ class ServedModel:
     uptime_s: int | None  # running rows only
     profile: str | None  # tt-model profile; None for other backends
     served_id: str | None  # the id GET /v1/models reports, once healthy
+    devices: list[int] | None = None  # /dev/tenstorrent ids a running container holds

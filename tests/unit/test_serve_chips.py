@@ -35,7 +35,7 @@ def _container(*, ipc="host", devices=(), mounts=(), privileged=False, labels=No
     ],
 )
 def test_a_container_claims_what_it_was_granted(info, held):
-    assert chips._claims(info, IDS) == held
+    assert chips.held_by(info, IDS) == held
 
 
 def _model(model_type, *devices, mesh=None):
