@@ -218,7 +218,7 @@ def _is_tt_container(record: dict) -> bool:
     image = str(config.get("Image") or "")
     return (
         name.startswith(CONTAINER_PREFIX)
-        or _MODEL_MANAGER_LABEL in labels
+        or f"{_MODEL_MANAGER_LABEL}.profile" in labels
         or image.startswith(_STUDIO_IMAGE_PREFIX)
     )
 
