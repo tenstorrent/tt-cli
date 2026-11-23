@@ -26,6 +26,7 @@ from ...models.device import DeviceSnapshot
 from ...models.model import DeviceSupport, ModelInfo
 from ...modelhub.hub import (
     container_readable_umask,
+    hf_cache_dir,
     hf_home_dir,
     hf_token,
     uses_host_weight_cache,
@@ -428,6 +429,9 @@ class InferenceServerBackend:
         # does not mount (v0.24/v0.25 only for pinned revisions), so the server
         # would find its weight files missing. Keep them in the repo's own folder.
         env.setdefault("HF_HUB_DISABLE_SHARED_BLOBS", "1")
+        hub_cache = hf_cache_dir(self.config)
+        if hub_cache:
+            env["HF_HUB_CACHE"] = hub_cache
         return env
 
     def _python_for(self, entry: Path) -> str:

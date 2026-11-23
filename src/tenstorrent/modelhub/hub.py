@@ -38,17 +38,20 @@ def uses_host_weight_cache(model: ModelInfo) -> bool:
 
 
 def hf_home_dir(config: ConfigStore) -> Path:
-    """The HF cache root, with HF_HOME semantics (hub cache lives at <root>/hub):
-    config override → HF_HOME env → ~/.cache/huggingface.
+    """The resolved HF cache directory mounted by `tt serve` and passed to tools:
+    config override → HF_HUB_CACHE env → HF_HOME env → ~/.cache/huggingface.
 
     This single resolution is shared by `tt model pull` (write side) and
     `tt serve` (run.py --host-hf-cache mount side) so both always agree on one
-    cache and the inference server never re-downloads pulled weights.
-    Limitation: an HF_HUB_CACHE env pointing outside HF_HOME is honored by
-    huggingface_hub but cannot be expressed to run.py, which only takes a root."""
+    cache and the inference server never re-downloads pulled weights. `run.py
+    --host-hf-cache` accepts both an HF_HOME root (`<root>/hub/models--*`) and a
+    direct hub cache directory (`<hub>/models--*`)."""
     configured = str(config.get("paths.hf_model_cache_directory") or "").strip()
     if configured:
         return Path(configured).expanduser()
+    env_hub = os.environ.get("HF_HUB_CACHE", "").strip()
+    if env_hub:
+        return Path(env_hub).expanduser()
     env_home = os.environ.get("HF_HOME", "").strip()
     if env_home:
         return Path(env_home).expanduser()
@@ -85,13 +88,20 @@ def hf_token(config: ConfigStore | None) -> tuple[str, str] | None:
 
 
 def hf_cache_dir(config: ConfigStore) -> str | None:
-    """snapshot_download cache_dir for the resolved root; None defers to HF's
-    own defaults/env when nothing is configured (identical outcome, but keeps
-    HF_HUB_CACHE-style env overrides working for pull)."""
+    """snapshot_download / scan_cache_dir cache_dir for the resolved cache.
+
+    Precedence: `paths.hf_model_cache_directory` (`<root>/hub`) → `HF_HUB_CACHE`
+    → `HF_HOME` (`<home>/hub`) → None (HF default `~/.cache/huggingface/hub`)."""
     configured = str(config.get("paths.hf_model_cache_directory") or "").strip()
-    if not configured:
-        return None
-    return str(hf_home_dir(config) / "hub")
+    if configured:
+        return str(Path(configured).expanduser() / "hub")
+    env_hub = os.environ.get("HF_HUB_CACHE", "").strip()
+    if env_hub:
+        return str(Path(env_hub).expanduser())
+    env_home = os.environ.get("HF_HOME", "").strip()
+    if env_home:
+        return str(Path(env_home).expanduser() / "hub")
+    return None
 
 
 def cached_weights(hf_repo: str, config: ConfigStore) -> tuple[list[str], int]:
