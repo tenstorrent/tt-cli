@@ -97,6 +97,7 @@ class StudioBackend:
                 "chips and ports itself (its own `--device-id` picks chips)."
             )
         binary = Path(self.registry.ensure(TOOL, offline=offline))
+        self._remove_old_checkouts()
         self.output.status(
             f"Starting TT-Studio and deploying {model.name} — Ctrl-C stops watching, "
             f"`tt model stop {model.name}` stops the model and studio."
@@ -115,6 +116,39 @@ class StudioBackend:
                 # a TTError, and "stops watching" as the status line promises.
                 self._teardown(binary, after=f"deploying {model.name} failed")
             raise
+
+    def _old_checkouts(self) -> list[Path]:
+        """Clones an earlier tt left under the tools dir (`tt-studio-<ref>/src/run.py`).
+        The PyPI install lives in plain `tt-studio/`, which this never matches."""
+        tools = self.registry.paths.tools_dir
+        if not tools.is_dir():
+            return []
+        return [
+            d
+            for d in sorted(tools.glob(f"{TOOL}-*"))
+            if d.is_dir() and not d.is_symlink() and (d / "src" / "run.py").is_file()
+        ]
+
+    def _remove_old_checkouts(self) -> None:
+        """Delete the git checkouts the PyPI install replaces (~200 MB each). Best
+        effort, and skipped while a studio stack is up: an old stack's compose files
+        live in its checkout, and `--stop` needs them."""
+        old = self._old_checkouts()
+        if not old:
+            return
+        try:
+            services, models = self._containers(self._docker())
+            if services or models:
+                return
+        except Exception:
+            return  # cannot tell whether a stack is up, so leave the checkouts alone
+        for d in old:
+            try:
+                shutil.rmtree(d)
+            except OSError as exc:
+                self.output.warn(f"Could not remove the old TT-Studio checkout {d}: {exc}")
+                continue
+            self.output.status(f"Removed the old TT-Studio checkout {d} (studio now installs from PyPI).")
 
     def _teardown(self, binary: Path, *, after: str) -> int:
         """`tt-studio --stop`: stop studio's services (not the models it deployed).

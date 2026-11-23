@@ -1633,6 +1633,8 @@ def test_studio_releases_the_ui_before_tt_studio_takes_the_terminal(tmp_path, mo
     events = []
 
     class FakeRegistry:
+        paths = type("P", (), {"tools_dir": tmp_path / "tools"})()
+
         def ensure(self, tool, **kwargs):
             return str(tmp_path / "tt-studio")
 
