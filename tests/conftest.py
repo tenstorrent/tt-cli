@@ -166,9 +166,9 @@ def inference_bin(isolated_dirs, hardware_mode, monkeypatch, tmp_path) -> Path |
 @pytest.fixture
 def studio_bin(isolated_dirs, hardware_mode, monkeypatch, tmp_path) -> Path | None:
     if hardware_mode:
-        pytest.skip("real tt-studio is a managed checkout; no fake to wire")
+        pytest.skip("real tt-studio is a managed install; no fake to wire")
     log = tmp_path / "studio-argv.jsonl"
-    monkeypatch.setenv("TT_TOOL_BIN_TT_STUDIO", str(FAKES_DIR / "studio-repo" / "run.py"))
+    monkeypatch.setenv("TT_TOOL_BIN_TT_STUDIO", str(FAKE_BIN / "tt-studio"))
     monkeypatch.setenv("FAKE_STUDIO_LOG", str(log))
     return log
 
@@ -211,7 +211,6 @@ def isolated_dirs(request, tmp_path, monkeypatch):
     for var in (
         "TT_MANIFEST_PATH",
         "TT_GOLDEN_PATH",
-        "TT_STUDIO_MODELS_PATH",
         "TT_COMMUNITY_CATALOG_PATH",
         "HF_TOKEN",
         "HF_TOKEN_PATH",

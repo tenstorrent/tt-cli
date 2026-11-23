@@ -16,11 +16,12 @@ except ModuleNotFoundError:  # older Typer that depends on real click
 
 # Typer re-exports these at its top level from whichever click it uses, and
 # that surface is stable; the vendored submodule paths are not (0.27.2 moved
-# Abort from typer._click.exceptions to typer.exceptions). IntRange has no
-# typer re-export but lives in <click>.types in both vendored and real click.
+# Abort from typer._click.exceptions to typer.exceptions, and 0.29.0 removed
+# typer._click.types, IntRange included). Do not reach into <click>.<submodule>
+# for anything Typer does not re-export: validate a prompt answer with
+# `prompt(value_proc=...)` raising `typer.BadParameter` instead of a click
+# ParamType.
 from typer import Abort, confirm, prompt, style
-
-IntRange = click.types.IntRange
 
 
 def _exit_exceptions() -> tuple:
@@ -50,7 +51,6 @@ __all__ = [
     "click",
     "Abort",
     "EXIT_EXCEPTIONS",
-    "IntRange",
     "confirm",
     "prompt",
     "style",

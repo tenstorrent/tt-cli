@@ -188,11 +188,10 @@ def _plant(tmp_path: Path, monkeypatch) -> tuple[list[str], list[str]]:
     )
     secrets += ["s3cr3t-inference" "-dotenv-102", JWT_HEX]
 
-    # the tt-studio checkout's .env
-    studio = tmp_path / "studio-repo"
+    # the tt-studio runtime root's .env
+    studio = tmp_path / "studio-home"
     studio.mkdir()
-    shutil.copy(FAKES_DIR / "studio-repo" / "run.py", studio / "run.py")
-    monkeypatch.setenv("TT_TOOL_BIN_TT_STUDIO", str(studio / "run.py"))
+    monkeypatch.setenv("TT_STUDIO_HOME", str(studio))
     (studio / ".env").write_text(f"DJANGO_SECRET_KEY=" f"{DJANGO}\nTT_STUDIO_ROOT=" f"{studio}\n")
     secrets.append(DJANGO)
 

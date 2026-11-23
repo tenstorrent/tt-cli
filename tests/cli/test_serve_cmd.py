@@ -9,14 +9,12 @@ from pathlib import Path
 import pytest
 
 from tenstorrent.cli import app
-from tenstorrent.errors import ExitCode
+from tenstorrent.errors import ExitCode, TTError
+from tenstorrent.modelhub.bundles import BundleInfo
 
 
 SMALL_SUPPORT = (
     Path(__file__).parent.parent / "fakes" / "data" / "model_support_small.json"
-)
-SMALL_STUDIO = (
-    Path(__file__).parent.parent / "fakes" / "data" / "studio_models_small.json"
 )
 
 
@@ -25,7 +23,6 @@ def small_spec(monkeypatch):
     """Pin the catalog to the fixture: these tests assert on the exact flags a
     model's support entry produces."""
     monkeypatch.setenv("TT_MODEL_SUPPORT_PATH", str(SMALL_SUPPORT))
-    monkeypatch.setenv("TT_STUDIO_MODELS_PATH", str(SMALL_STUDIO))
 
 
 @pytest.fixture(autouse=True)
@@ -321,6 +318,12 @@ def verified_test_bundles(curated_catalog):
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_hub(monkeypatch):
+    """The studio picker lists community bundles; keep tests off the Hub."""
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", lambda **kw: [])
+
+
 @pytest.fixture
 def fake_model_manager(model_manager_bin):
     """Recorded-argv log for the fake tt-model binary (fake mode)."""
@@ -500,10 +503,9 @@ def test_serve_tt_model_does_not_warn_about_a_curated_bundle(
 
 @pytest.mark.fakes_only
 def test_serve_tt_model_does_not_ask_about_a_tenstorrent_copy(
-    runner, fake_model_manager, tmp_path, monkeypatch, isolated_dirs
+    runner, fake_model_manager, isolated_dirs
 ):
-    """Verified by its id: no prompt, even when the curated catalog is unreadable."""
-    monkeypatch.setenv("TT_COMMUNITY_CATALOG_PATH", str(tmp_path / "absent.json"))
+    """Verified by its id: no prompt, without needing a catalog entry."""
     result = runner.invoke(app, ["serve", "Tenstorrent/bundle"])
     assert result.exit_code == 0, result.output
     assert "unverified" not in result.output
@@ -1096,7 +1098,7 @@ def studio_docker(monkeypatch):
 
 @pytest.fixture
 def fake_studio(studio_bin):
-    """Recorded-argv log for the fake tt-studio run.py (fake mode only)."""
+    """Recorded-argv log for the fake tt-studio (fake mode only)."""
     return studio_bin
 
 
@@ -1110,16 +1112,10 @@ def _studio_argv(log) -> list[str]:
 
 
 @pytest.mark.fakes_only
-def test_auto_routes_a_studio_only_model_to_studio(
-    runner, studio_docker, fake_studio, fakes_dir, tmp_path, monkeypatch
-):
-    cwd_log = tmp_path / "studio-cwd.log"
-    monkeypatch.setenv("FAKE_STUDIO_CWD_LOG", str(cwd_log))
+def test_auto_routes_a_studio_only_model_to_studio(runner, studio_docker, fake_studio):
     result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
     assert result.exit_code == 0, result.output
     assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]
-    # run.py resolves its compose file, .env and driver from cwd
-    assert cwd_log.read_text().strip() == str((fakes_dir / "studio-repo").resolve())
     assert "stops the model" in result.output
 
 
@@ -1147,15 +1143,14 @@ def test_studio_deploys_a_model_the_inference_server_also_serves(
     assert not fake_server.exists()
 
 
-def test_studio_is_refused_for_a_model_its_catalog_lacks(
+def test_studio_serves_any_support_list_model(
     runner, studio_docker, fake_studio, fake_server
 ):
-    # Qwen3-32B is in the support fixture only
+    # Studio builds its catalog from tt's model_support.json, so a model only the
+    # support list names (Qwen3-32B in the fixture) is still a studio model.
     result = runner.invoke(app, ["serve", "Qwen3-32B", "--studio"])
-    assert result.exit_code == ExitCode.UNSUPPORTED, result.output
-    assert "catalog" in result.output  # "TT-Studio's catalog does not carry it"
-    assert "--inference-server" in result.output
-    assert not fake_studio.exists() and not fake_server.exists()
+    assert result.exit_code == 0, result.output
+    assert fake_studio.exists() and not fake_server.exists()
 
 
 def test_inference_server_refuses_a_studio_only_model(runner, docker_present, fake_server):
@@ -1182,10 +1177,20 @@ def test_path_flags_are_exclusive(runner, fake_studio, fake_server):
     assert not fake_studio.exists() and not fake_server.exists()
 
 
-def test_studio_refuses_a_bundle_id(runner, fake_studio):
-    result = runner.invoke(app, ["serve", "acme/demo", "--studio"])
+def test_studio_refuses_a_non_bundle_name(runner, fake_studio):
+    result = runner.invoke(app, ["serve", "Qwen3-8b", "--studio"])
     assert result.exit_code == ExitCode.UNSUPPORTED, result.output
     assert not fake_studio.exists()
+
+
+@pytest.mark.fakes_only
+def test_studio_serves_a_community_id_through_studio(
+    runner, studio_docker, fake_studio, fake_model_manager
+):
+    result = runner.invoke(app, ["serve", "acme/demo", "--studio"])
+    assert result.exit_code == 0, result.output
+    assert _studio_argv(fake_studio) == ["run", "acme/demo"]
+    assert not fake_model_manager.exists()
 
 
 @pytest.mark.fakes_only
@@ -1229,7 +1234,7 @@ def test_studio_failure_is_tool_failed_and_tears_the_stack_down(
     runner, studio_docker, fake_studio, monkeypatch
 ):
     """A deploy that dies must not leave studio's containers and services up
-    behind the error: run.py --stop follows the failed `run`."""
+    behind the error: `tt-studio --stop` follows the failed `run`."""
     monkeypatch.setenv("FAKE_STUDIO_FAIL", "1")
     result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
@@ -1246,7 +1251,7 @@ def test_studio_teardown_failure_does_not_mask_the_deploy_error(
     monkeypatch.setenv("FAKE_STUDIO_STOP_FAIL", "1")
     result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
-    assert "`run.py --stop` exited with status 1" in result.output
+    assert "`tt-studio --stop` exited with status 1" in result.output
     calls = [json.loads(line) for line in fake_studio.read_text().splitlines()]
     assert calls == [["run", "Qwen3.5-9B"], ["--stop"]]
 
@@ -1259,7 +1264,7 @@ def test_studio_success_leaves_the_stack_up(runner, studio_docker, fake_studio):
     assert calls == [["run", "Qwen3.5-9B"]]
 
 
-def test_studio_dry_run_needs_neither_docker_nor_a_checkout(
+def test_studio_dry_run_needs_neither_docker_nor_an_install(
     runner, isolated_dirs, no_shell_hf_token
 ):
     result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--dry-run", "--json"])
@@ -1267,18 +1272,18 @@ def test_studio_dry_run_needs_neither_docker_nor_a_checkout(
     plan = json.loads(result.output)
     assert plan["backend"] == "studio"
     assert plan["model"] == "Qwen3.5-9B"
-    assert plan["installed"] is False and plan["cwd"] is None
-    assert plan["argv"] == ["<run.py>", "run", "Qwen3.5-9B"]
+    assert plan["installed"] is False and plan["path"] is None
+    assert plan["argv"] == ["<tt-studio>", "run", "Qwen3.5-9B"]
     assert plan["hf_token_source"] is None
-    assert not (isolated_dirs / "data" / "tools").exists()  # nothing cloned
+    assert not (isolated_dirs / "data" / "tools").exists()  # nothing installed
 
 
 @pytest.mark.fakes_only
-def test_studio_dry_run_reports_the_installed_checkout(runner, fake_studio, fakes_dir):
+def test_studio_dry_run_reports_the_installed_binary(runner, fake_studio, fakes_dir):
     result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--studio", "--dry-run"])
     assert result.exit_code == 0, result.output
     assert "TT-Studio" in result.output
-    assert str(fakes_dir / "studio-repo") in result.output
+    assert str(fakes_dir / "bin" / "tt-studio") in result.output
     assert not fake_studio.exists()  # a dry run never launches
 
 
@@ -1289,16 +1294,33 @@ def test_studio_dry_run_reports_the_installed_checkout(runner, fake_studio, fake
 def test_picker_lists_the_backends_models_and_serves_the_choice(
     runner, serve_tty, studio_docker, fake_studio
 ):
-    # no tt-smi wired → no device filter → studio's whole catalog is offered,
-    # the models tt-inference-server also serves included; "3" is Qwen3.8-27B
+    # no tt-smi wired → no device filter → studio's whole catalog is offered:
+    # the support list plus studio's own Qwen3.5-9B; "3" is Qwen3.5-9B
     result = runner.invoke(app, ["serve", "--studio"], input="3\n")
     assert result.exit_code == 0, result.output
     assert "1. Llama-3.1-8B-Instruct" in result.output
-    assert "2. Qwen3.5-9B" in result.output
-    assert "3. Qwen3.8-27B" in result.output
-    assert "4. whisper-large-v3" in result.output
-    assert "Qwen3-32B" not in result.output  # support list only
-    assert _studio_argv(fake_studio) == ["run", "Qwen3.8-27B"]
+    assert "2. Qwen3-32B" in result.output
+    assert "3. Qwen3.5-9B" in result.output
+    assert "6. whisper-large-v3" in result.output
+    assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]
+
+
+@pytest.mark.fakes_only
+@pytest.mark.parametrize("bad", ["0", "7", "-1", "two", "1.5"])
+def test_picker_asks_again_on_an_answer_outside_the_list(
+    runner, serve_tty, studio_docker, fake_studio, bad
+):
+    # six models are offered; anything but 1-6 re-prompts instead of aborting
+    result = runner.invoke(app, ["serve", "--studio"], input=f"{bad}\n3\n")
+    assert result.exit_code == 0, result.output
+    assert "enter a number from 1 to 6" in result.output
+    assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]
+
+
+def test_picker_defaults_to_the_first_model(runner, serve_tty, studio_docker, fake_studio):
+    result = runner.invoke(app, ["serve", "--studio"], input="\n")
+    assert result.exit_code == 0, result.output
+    assert _studio_argv(fake_studio) == ["run", "Llama-3.1-8B-Instruct"]
 
 
 @pytest.mark.fakes_only
@@ -1310,10 +1332,116 @@ def test_picker_filters_to_the_detected_device(
     result = runner.invoke(app, ["serve", "--studio"], input="2\n")
     assert result.exit_code == 0, result.output
     assert "Models for p300x2" in result.output
-    assert "Qwen3.8-27B" in result.output
     # the support list's marks apply to the shared entries: whisper is broken there
     assert "whisper" not in result.output
     assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]
+
+
+@pytest.mark.fakes_only
+def test_studio_unverified_bundle_is_confirmed_by_tt_first(
+    runner, serve_tty, studio_docker, fake_studio, unverified, isolated_dirs
+):
+    result = runner.invoke(app, ["serve", "ns/bundle", "--studio"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert "ns/bundle is not a verified community bundle" in result.output
+    assert "[y/N]" in result.output
+    assert _studio_argv(fake_studio) == ["run", "ns/bundle"]
+
+
+@pytest.mark.fakes_only
+def test_studio_declining_an_unverified_bundle_never_starts_studio(
+    runner, serve_tty, studio_docker, fake_studio, unverified, isolated_dirs
+):
+    result = runner.invoke(app, ["serve", "ns/bundle", "--studio"], input="n\n")
+    assert result.exit_code == 0, result.output
+    assert "Nothing was served" in result.output
+    assert not fake_studio.exists()
+
+
+@pytest.mark.fakes_only
+@pytest.mark.parametrize("extra", [[], ["--yes"]])
+def test_studio_refuses_an_unverified_bundle_without_a_terminal(
+    runner, studio_docker, fake_studio, curated_catalog, isolated_dirs, extra
+):
+    curated_catalog("ns/other")  # CliRunner's stdin is not a TTY
+    # studio asks for itself and cannot be answered by --yes, so fail before its stack-up
+    result = runner.invoke(app, ["serve", "ns/bundle", "--studio", *extra])
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--model-manager" in result.output
+    assert not fake_studio.exists()
+
+
+@pytest.mark.fakes_only
+def test_studio_dry_run_warns_about_an_unverified_bundle(
+    runner, unverified, isolated_dirs
+):
+    result = runner.invoke(app, ["serve", "ns/bundle", "--studio", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "not a verified community bundle" in result.output
+    assert "[y/N]" not in result.output
+
+
+@pytest.mark.fakes_only
+def test_studio_verified_bundle_is_not_warned_about(
+    runner, studio_docker, fake_studio, curated_catalog, isolated_dirs
+):
+    curated_catalog("ns/bundle")
+    result = runner.invoke(app, ["serve", "ns/bundle", "--studio"])
+    assert result.exit_code == 0, result.output
+    assert "not a verified community bundle" not in result.output
+    assert _studio_argv(fake_studio) == ["run", "ns/bundle"]
+
+
+@pytest.mark.fakes_only
+def test_picker_for_studio_lists_community_bundles(
+    runner, serve_tty, studio_docker, fake_studio, monkeypatch
+):
+    monkeypatch.setattr(
+        "tenstorrent.modelhub.bundles.search_community",
+        lambda **kw: [BundleInfo(name="acme/demo", hardware=["p150"])],
+    )
+    result = runner.invoke(app, ["serve", "--studio"], input="7\n")
+    assert result.exit_code == 0, result.output
+    assert "7. acme/demo" in result.output
+    assert _studio_argv(fake_studio) == ["run", "acme/demo"]
+
+
+@pytest.mark.fakes_only
+def test_picker_for_studio_offers_the_bundles_tt_model_list_shows_for_the_device(
+    runner, serve_tty, studio_docker, fake_studio, fake_bin, monkeypatch
+):
+    """Same hardware rule as `tt model list`: a bundle validated on a smaller board
+    of the same chip family runs on a subset of the p300x2's chips."""
+    monkeypatch.setenv("TT_TOOL_BIN_TT_SMI", str(fake_bin / "tt-smi"))
+    monkeypatch.setenv("FAKE_SMI_SCENARIO", "multi")  # p300x2
+    monkeypatch.setattr(
+        "tenstorrent.modelhub.bundles.search_community",
+        lambda **kw: [
+            BundleInfo(name="acme/exact", hardware=["p300x2"]),
+            BundleInfo(name="acme/one-chip", hardware=["p150"]),
+            BundleInfo(name="acme/mesh", hardware=["p150x4"]),
+            BundleInfo(name="acme/too-big", hardware=["p150x8"]),
+            BundleInfo(name="acme/wormhole", hardware=["n300"]),
+        ],
+    )
+    result = runner.invoke(app, ["serve", "--studio"], input="1\n")
+    for shown in ("acme/exact", "acme/one-chip", "acme/mesh"):
+        assert shown in result.output
+    for hidden in ("acme/too-big", "acme/wormhole"):
+        assert hidden not in result.output
+
+
+@pytest.mark.fakes_only
+def test_picker_for_studio_survives_an_unreachable_hub(
+    runner, serve_tty, studio_docker, fake_studio, monkeypatch
+):
+    def down(**kw):
+        raise TTError("Hub unreachable")
+
+    monkeypatch.setattr("tenstorrent.modelhub.bundles.search_community", down)
+    result = runner.invoke(app, ["serve", "--studio"], input="1\n")
+    assert result.exit_code == 0, result.output
+    assert "Could not fetch community bundles" in result.output
 
 
 @pytest.mark.fakes_only
@@ -1496,8 +1624,8 @@ def test_launch_releases_the_ui_before_the_child_takes_the_terminal(monkeypatch)
     assert events == ["handoff", "stream"]
 
 
-def test_studio_releases_the_ui_before_run_py_takes_the_terminal(tmp_path, monkeypatch):
-    """Same contract on the studio path: run.py owns the terminal once it starts."""
+def test_studio_releases_the_ui_before_tt_studio_takes_the_terminal(tmp_path, monkeypatch):
+    """Same contract on the studio path: tt-studio owns the terminal once it starts."""
     from tenstorrent.backends.serving import studio as studio_mod
     from tenstorrent.models.model import ModelInfo
     from tenstorrent.output import OutputManager
@@ -1505,8 +1633,10 @@ def test_studio_releases_the_ui_before_run_py_takes_the_terminal(tmp_path, monke
     events = []
 
     class FakeRegistry:
+        paths = type("P", (), {"tools_dir": tmp_path / "tools"})()
+
         def ensure(self, tool, **kwargs):
-            return str(tmp_path / "tt-studio" / "run.py")
+            return str(tmp_path / "tt-studio")
 
     class FakeRunner:
         def stream(self, argv, **kwargs):

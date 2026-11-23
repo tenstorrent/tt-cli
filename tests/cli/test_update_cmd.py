@@ -514,6 +514,31 @@ def test_update_passes_no_install_flags_for_the_bundled_apps(
     assert "--no-install-studio" in argv
 
 
+def test_update_stops_the_installer_reinstalling_tt(runner, fake_uv, fake_installer):
+    """install.sh 3.6+ installs tt itself, pinned to the release it was cut with
+    (3.6.3 pins 1.0.1), so `tt update` must opt out or it downgrades itself."""
+    result = runner.invoke(app, ["update"])
+    assert result.exit_code == 0, result.output
+    assert "--no-install-tt-cli" in fake_installer.read_text()
+
+
+def test_update_omits_the_tt_cli_flag_for_installers_without_it(
+    runner, fake_uv, fake_installer, tmp_path, monkeypatch
+):
+    """Older install.sh tags have no --(no-)install-tt-cli, and argbash exits on an
+    unknown option, so the flag is only passed when the script declares it."""
+    old = tmp_path / "install-3.5.4.sh"
+    text = (Path(__file__).parents[1] / "fakes" / "install.sh").read_text()
+    old.write_text(text.replace(" [--(no-)install-tt-cli]", ""))
+    old.chmod(0o755)
+    monkeypatch.setenv("TT_TOOL_BIN_TT_INSTALLER", str(old))
+    result = runner.invoke(app, ["update"])
+    assert result.exit_code == 0, result.output
+    argv = fake_installer.read_text()
+    assert "--no-install-studio" in argv
+    assert "--no-install-tt-cli" not in argv
+
+
 @pytest.mark.fakes_only
 def test_update_reinstalls_a_tool_whose_files_were_deleted(
     runner, fake_uv, fake_installer, monkeypatch

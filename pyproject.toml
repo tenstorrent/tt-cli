@@ -28,7 +28,12 @@ classifiers = [
     "Topic :: System :: Installation/Setup",
 ]
 dependencies = [
-    "typer>=0.27.2",
+    # Capped below the next minor on purpose. Typer vendors click and reshuffles
+    # it in minor releases (0.27.2 moved Abort, 0.29.0 removed _click.types), and
+    # a published tt has no lockfile: each fresh install resolves the newest Typer
+    # the range allows. The cap keeps released versions working when the next
+    # minor lands. To raise it, run the suite against the new minor first.
+    "typer>=0.27.2,<0.30",
     "rich>=13",
     "tomlkit>=0.12",
     "platformdirs>=4",

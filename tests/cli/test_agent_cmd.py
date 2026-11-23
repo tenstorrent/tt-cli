@@ -40,7 +40,10 @@ def no_claude(monkeypatch, tmp_path):
     """No Claude Code anywhere tt looks: not on PATH, not in ~/.local/bin."""
     monkeypatch.delenv("TT_TOOL_BIN_CLAUDE", raising=False)
     monkeypatch.setattr("tenstorrent.commands.agent.shutil.which", lambda name: None)
-    # isolated_dirs already points HOME at tmp_path/home, so ~/.local/bin/claude is absent.
+    # isolated_dirs only redirects HOME in fake mode; under --hardware it stays real so
+    # the real tools find their state. Pin it here so ~/.local/bin/claude is absent, and
+    # so the fake installer drops its launcher where find_claude() looks, in both modes.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
 
 @pytest.fixture(autouse=True)
