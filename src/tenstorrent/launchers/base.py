@@ -59,6 +59,7 @@ class LaunchOptions:
     web: bool = False  # open the client's web UI instead of its terminal UI
     checkout: Path | None = None  # for an app run from a local checkout
     recipe: str | None = None  # that app's recipe, relative to its checkout
+    serves_models: bool = False  # no model is running: the app serves its own
 
 
 @dataclass(frozen=True)

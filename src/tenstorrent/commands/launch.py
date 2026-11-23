@@ -330,7 +330,7 @@ def _connect_checkout(
     serve: bool = typer.Option(
         True,
         "--serve/--no-serve",
-        help="Serve its default models first when none of its bundles is running.",
+        help="Start its default recipe, which serves its own models, when none of its bundles is running.",
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
@@ -344,56 +344,30 @@ def _connect_checkout(
     checkout = launcher.checkout(appctx.config, path)
     bundles = [] if recipe else _running_bundles(appctx)
     chosen = launcher.recipe_for(checkout, recipe, bundles)
-    serve_argv = None
-    if chosen is None:
+    serves_models = chosen is None
+    if serves_models:
         blocker = launcher.serve_blocker(bundles) if serve else None
         if not serve or blocker:
             raise launcher.not_served(bundles, blocker)
         chosen = launcher.recipe_for(checkout, launcher.default_recipe, [])
-        serve_argv = ["tt-model", "serve", launcher.default_bundle, *launcher.serve_flags]
     executable = (
         _installed_or_none(launcher, appctx.config, appctx.output)
         if dry_run
         else resolve_executable(launcher, appctx.config, appctx.output)
     )
-    options = LaunchOptions(checkout=checkout, recipe=chosen)
-    if serve_argv is None:
-        target = launcher.served_llm()
-    elif dry_run or no_exec:
-        target = RunningModel(
-            served_id=launcher.default_model, base_url="http://127.0.0.1:8000/v1"
-        )
-    else:
-        _ask(
-            appctx,
-            f"Serve {launcher.default_bundle} (its LLM, embedder and reranker; 10-15 minutes "
-            f"from cold), then start {launcher.id} from {checkout}",
-            yes=yes,
-        )
-        _serve_default(appctx, launcher)
-        target = launcher.served_llm()
-        yes = True  # starting the app was part of what was just agreed to
+    options = LaunchOptions(checkout=checkout, recipe=chosen, serves_models=serves_models)
+    # With nothing running, `ttdr up` serves the models itself; the app's own
+    # endpoints are not there to ask yet.
+    target = (
+        RunningModel(served_id=launcher.default_model, base_url="http://127.0.0.1:8000/v1")
+        if serves_models
+        else launcher.served_llm()
+    )
     _start(
         appctx, launcher, target, options, executable,
         yes=yes, no_exec=no_exec, dry_run=dry_run, json_mode=json_mode,
-        rows={"serve": " ".join(serve_argv)} if serve_argv else None,
+        rows={"serve": "ttdr up serves the models"} if serves_models else None,
     )
-
-
-def _serve_default(appctx, launcher: Launcher) -> None:
-    """Serve the app's default bundle with tt-model and wait until it is ready."""
-    model_manager = _model_manager(appctx)
-    appctx.output.status(
-        f"Serving {launcher.default_bundle} via tt-model (10-15 minutes from cold) …"
-    )
-    model_manager.serve_detached(launcher.default_bundle, list(launcher.serve_flags))
-    with appctx.output.ui.step(f"Waiting for {launcher.default_bundle} to be ready") as step:
-        launcher.wait_until_served(
-            alive=lambda: launcher.default_bundle in _running_bundles(appctx),
-            on_tick=lambda elapsed: step.set(
-                f"Waiting for {launcher.default_bundle} to be ready ({int(elapsed // 60)} min)"
-            ),
-        )
 
 
 def _start(

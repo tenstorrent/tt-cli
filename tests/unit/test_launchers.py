@@ -697,7 +697,7 @@ def _deep_research_plan(checkout, runner, recipe="recipes/ornith-35b-cohost.toml
                 "raahemnabeel/qwen3-vl-embedding-8b",
                 "raahemnabeel/qwen3-vl-reranker-8b",
             ],
-            "recipes/rerank.toml",
+            "recipe.toml",
         ),
     ],
 )
@@ -713,8 +713,15 @@ def test_deep_research_without_its_bundles_says_what_to_serve(ttdr_checkout):
     assert launcher.recipe_for(ttdr_checkout, None, bundles) is None
     err = launcher.not_served(bundles)
     assert err.exit_code == ExitCode.ERROR
-    assert f"tt-model serve {COHOST}" in (err.next_step or "")
+    assert "raahemnabeel/qwen3-vl-embedding-8b" in (err.next_step or "")
+    assert "cohost" not in (err.next_step or "")
     assert "raahemnabeel/ornith-1.5-35b-a3b" in (err.why or "")
+
+
+def test_deep_research_defaults_to_separate_chips_not_the_cohost():
+    launcher = LAUNCHERS["deep-research"]
+    assert launcher.default_recipe == "recipe.toml"
+    assert not hasattr(launcher, "default_bundle")
 
 
 def test_deep_research_never_serves_over_a_running_bundle_or_a_taken_port(monkeypatch):
@@ -730,83 +737,21 @@ def test_deep_research_never_serves_over_a_running_bundle_or_a_taken_port(monkey
     assert launcher.serve_blocker([]) is None
 
 
-@pytest.fixture
-def status_server(monkeypatch):
-    """The cohost's status port: status_server(doc) serves it as JSON."""
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    servers = []
-
-    def start(doc: dict) -> None:
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                body = json.dumps(doc).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(body)
-
-            def log_message(self, *args):
-                pass
-
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        servers.append(server)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        monkeypatch.setattr(
-            "tenstorrent.launchers.apps.deep_research.STATUS_URL",
-            f"http://127.0.0.1:{server.server_port}",
-        )
-
-    yield start
-    for server in servers:
-        server.shutdown()
-
-
-def _members(*ready: bool) -> dict:
-    names = ("ornith", "embed", "rerank")
-    return {"members": {n: {"port": 1, "ready": r} for n, r in zip(names, ready)}}
-
-
-def test_deep_research_ready_reads_the_cohost_status(status_server, monkeypatch):
-    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.probe", lambda url, **_: None)
+def test_deep_research_consent_says_ttdr_serves_the_models_when_none_run(
+    ttdr_checkout, with_docker, monkeypatch
+):
+    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: True)
     launcher = LAUNCHERS["deep-research"]
-    status_server(_members(True, True, False))
-    assert launcher.ready() is False
-    status_server(_members(True, True, True))
-    assert launcher.ready() is True
-
-
-def test_deep_research_ready_falls_back_to_the_three_endpoints(monkeypatch):
-    monkeypatch.setattr(
-        "tenstorrent.launchers.apps.deep_research.STATUS_URL", f"http://127.0.0.1:{_free_port()}"
-    )
     model = RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1")
-    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.probe", lambda url, **_: [model])
-    assert LAUNCHERS["deep-research"].ready() is True
-
-
-def test_deep_research_waits_until_served(monkeypatch):
-    launcher = LAUNCHERS["deep-research"]
-    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research._POLL_S", 0)
-    answers = iter([False, False, True])
-    monkeypatch.setattr(type(launcher), "ready", lambda self: next(answers))
-    ticks: list[float] = []
-    launcher.wait_until_served(alive=lambda: True, on_tick=ticks.append)
-    assert len(ticks) == 2
-
-
-def test_deep_research_wait_stops_when_the_container_exits_or_times_out(monkeypatch):
-    launcher = LAUNCHERS["deep-research"]
-    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research._POLL_S", 0)
-    monkeypatch.setattr(type(launcher), "ready", lambda self: False)
-    with pytest.raises(TTError) as err:
-        launcher.wait_until_served(alive=lambda: False)
-    assert err.value.exit_code == ExitCode.TOOL_FAILED
-    assert f"tt model logs {COHOST}" in err.value.next_step
-    with pytest.raises(TTError) as err:
-        launcher.wait_until_served(alive=lambda: True, timeout_s=0)
-    assert "not ready" in err.value.what
+    for serves in (False, True):
+        prep = launcher.plan(
+            model,
+            LaunchOptions(checkout=ttdr_checkout, recipe="recipe.toml", serves_models=serves),
+            executable="/usr/bin/uv",
+            runner=_ComposePs(""),
+        )
+        assert prep.steps == [["/usr/bin/uv", "run", "ttdr", "up", "--recipe", "recipe.toml"]]
+        assert ("serves its LLM" in prep.consent) is serves
 
 
 def test_deep_research_model_bundles_are_only_its_own():

@@ -7,20 +7,17 @@ Neither a binary tt configures nor a container tt runs: `uv run ttdr up` starts
 the app from the user's checkout of https://github.com/rnabeelTT/tt-deep-research.
 It needs an LLM, an embedder and a reranker; the recipe describing them is picked
 from the bundles tt-model reports running. With none of them running and nothing
-else on the board, tt serves the default cohost bundle first and waits for it.
-`ttdr up` serves any model of its recipe that does not answer, so every endpoint
-is checked first: tt never lets it start a model on chips the running ones hold.
+else on the board, the default recipe (`recipe.toml`: the three models on separate
+chips) starts and `ttdr up` serves them itself; a cohost bundle is only used when
+it is already running or asked for with --recipe. `ttdr up` serves any model of
+its recipe that does not answer, so when some bundle is running every endpoint is
+checked first: tt never lets it start a model on chips the running ones hold.
 """
 
 from __future__ import annotations
 
-import json
 import shutil
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
-from typing import Callable
 
 from ...errors import ExitCode, TTError
 from ..base import LaunchEnv, LaunchOptions, Preparation, RunningModel
@@ -33,29 +30,24 @@ DEFAULT_CHECKOUT = "~/tt-deep-research"
 UI_PORT = 3000
 # Where every recipe below expects its models.
 ENDPOINTS = {"LLM": 8000, "embedder": 8005, "reranker": 8004}
-# Each recipe, with the bundles it expects tt to be serving; cohosts serve all
-# three models from one bundle. recipe.toml itself also wants Laya on :8002, so
-# the separate bundles map to its overlay without it.
+# Each recipe, with the bundles it expects tt-model to be serving. The default,
+# recipe.toml, serves the three models on separate chips (rerank.toml is the same
+# setup under its old name); the cohost recipes serve all three from one bundle.
+SEPARATE_BUNDLES = (
+    "raahemnabeel/ornith-1.5-35b-a3b",
+    "raahemnabeel/qwen3-vl-embedding-8b",
+    "raahemnabeel/qwen3-vl-reranker-8b",
+)
 RECIPES = {
+    "recipe.toml": SEPARATE_BUNDLES,
+    "recipes/rerank.toml": SEPARATE_BUNDLES,
     "recipes/ornith-35b-cohost.toml": ("raahemnabeel/cohost-ornith-35b-qwen3vl",),
     "recipes/ornith-122b.toml": ("raahemnabeel/cohost-ornith-122b-qwen3vl",),
     "recipes/qwen38-27b.toml": ("raahemnabeel/cohost-qwen38-27b-qwen3vl",),
-    "recipes/rerank.toml": (
-        "raahemnabeel/ornith-1.5-35b-a3b",
-        "raahemnabeel/qwen3-vl-embedding-8b",
-        "raahemnabeel/qwen3-vl-reranker-8b",
-    ),
 }
-# Served by tt when nothing is: the LLM, embedder and reranker as one bundle.
-DEFAULT_BUNDLE = "raahemnabeel/cohost-ornith-35b-qwen3vl"
-DEFAULT_RECIPE = "recipes/ornith-35b-cohost.toml"
+# Started when nothing is running: `ttdr up` serves its own models, one bundle per chip group.
+DEFAULT_RECIPE = "recipe.toml"
 DEFAULT_MODEL = "ornith-ai/Ornith-1.5-35B-A3B"
-SERVE_FLAGS = ("--local-only", "--port", "8000", "--detach")
-RECOMMENDED_SERVE = f"tt-model serve {DEFAULT_BUNDLE} {' '.join(SERVE_FLAGS)}"
-# The cohost's own status: each member reports whether it is ready.
-STATUS_URL = "http://127.0.0.1:8006"
-SERVE_TIMEOUT_S = 30 * 60  # a cold start takes 10-15 minutes
-_POLL_S = 5.0
 _COMPOSE = "com.docker.compose"
 _PROJECT = "ttdr"
 # What `ttdr down` stops; its data services (Qdrant, SearXNG, Redis) keep running.
@@ -73,11 +65,9 @@ class DeepResearch:
     model_requirement = "a bundle its recipes name"
     hands_over_terminal = False
     runs_from_checkout = True
-    # What tt serves itself when none of its recipes' bundles is running.
-    default_bundle = DEFAULT_BUNDLE
+    # What starts when none of its recipes' bundles is running: `ttdr up` serves the models.
     default_recipe = DEFAULT_RECIPE
     default_model = DEFAULT_MODEL
-    serve_flags = SERVE_FLAGS
 
     def target(self) -> str:
         return "tt-deep-research app"
@@ -128,14 +118,16 @@ class DeepResearch:
         return TTError(
             "tt is not serving the models deep-research needs.",
             why=f"{why} {blocker}" if blocker else why,
-            next_step=f"Serve the recommended bundle (all three models): `{RECOMMENDED_SERVE}`, "
-            "then re-run. For another bundle, pass --recipe.",
+            next_step=f"With the board free, `tt launch {self.id}` starts the app and "
+            "`ttdr up` serves its models on separate chips. Or serve the bundles one of "
+            f"its recipes names ({', '.join(SEPARATE_BUNDLES)}), then re-run; for another "
+            "recipe, pass --recipe.",
             exit_code=ExitCode.ERROR,
             details={"tool": self.id, "serving": bundles},
         )
 
     def serve_blocker(self, bundles: list[str]) -> str | None:
-        """Why tt must not serve the default bundle here: the board or one of its
+        """Why tt must not start the default recipe here: the board or one of its
         ports is already someone else's."""
         if bundles:
             return "tt will not serve another bundle over those."
@@ -152,56 +144,6 @@ class DeepResearch:
         """Which of the running bundles are ones its recipes use."""
         known = {bundle for needed in RECIPES.values() for bundle in needed}
         return [bundle for bundle in bundles if bundle in known]
-
-    def ready(self) -> bool:
-        """Whether the cohost reports every member ready, or failing that,
-        whether all three endpoints answer."""
-        try:
-            with urllib.request.urlopen(STATUS_URL, timeout=5.0) as response:
-                members = (json.load(response) or {}).get("members") or {}
-            if members and all(
-                isinstance(m, dict) and m.get("ready") is True for m in members.values()
-            ):
-                return True
-        except (urllib.error.URLError, OSError, ValueError, AttributeError):
-            pass
-        return all(probe(f"http://127.0.0.1:{port}/v1") for port in ENDPOINTS.values())
-
-    def wait_until_served(
-        self,
-        alive: Callable[[], bool],
-        on_tick: Callable[[float], None] = lambda elapsed: None,
-        timeout_s: float = SERVE_TIMEOUT_S,
-    ) -> None:
-        """Poll until the default bundle is ready; `alive` says whether its
-        container is still running."""
-        logs = (
-            f"See its boot with `tt model logs {DEFAULT_BUNDLE} --follow` "
-            "(tt-model logs), or `docker ps -a` and `docker logs <container>`."
-        )
-        start = time.monotonic()
-        while True:
-            if self.ready():
-                return
-            elapsed = time.monotonic() - start
-            if not alive():
-                raise TTError(
-                    f"{DEFAULT_BUNDLE} stopped before it was ready.",
-                    why="Its container is no longer running.",
-                    next_step=logs,
-                    exit_code=ExitCode.TOOL_FAILED,
-                    details={"tool": self.id, "bundle": DEFAULT_BUNDLE},
-                )
-            if elapsed >= timeout_s:
-                raise TTError(
-                    f"{DEFAULT_BUNDLE} was not ready after {int(timeout_s // 60)} minutes.",
-                    why=f"Its status ({STATUS_URL}) never reported every member ready.",
-                    next_step=f"{logs} Once it is, re-run `tt launch {self.id}`.",
-                    exit_code=ExitCode.TOOL_FAILED,
-                    details={"tool": self.id, "bundle": DEFAULT_BUNDLE},
-                )
-            on_tick(elapsed)
-            time.sleep(_POLL_S)
 
     def served_llm(self) -> RunningModel:
         """The LLM, once all three endpoints answer."""
@@ -246,11 +188,17 @@ class DeepResearch:
                 details={"web_port": UI_PORT},
             )
         exe = executable or self.binaries[0]
+        consent = f"Run `ttdr up --recipe {recipe}` in {checkout}, starting its app containers"
+        if options.serves_models:
+            consent = (
+                f"Run `ttdr up --recipe {recipe}` in {checkout}: it serves its LLM, "
+                "embedder and reranker (each on its own chips; 10-15 minutes from cold) "
+                "and starts its app containers"
+            )
         return Preparation(
             rows=rows,
             steps=[[exe, "run", "ttdr", "up", "--recipe", recipe]],
-            consent=f"Run `ttdr up --recipe {recipe}` in {checkout}, starting its app "
-            "containers",
+            consent=consent,
             url=url,
         )
 

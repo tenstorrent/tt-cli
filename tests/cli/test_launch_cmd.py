@@ -951,7 +951,7 @@ COHOST = "raahemnabeel/cohost-ornith-35b-qwen3vl"
 @pytest.fixture
 def deep_research(monkeypatch, tmp_path, fake_docker_containers, model_manager_bin):
     """A checkout, a fake `uv` that records what it ran and where, the three
-    endpoints answering (`serve.answering`; None: only once tt-model has served),
+    endpoints answering (`serve.answering`),
     and `serve(*bundles, app_running=False)` to set what docker reports."""
     from tenstorrent.launchers.base import RunningModel
 
@@ -975,14 +975,9 @@ def deep_research(monkeypatch, tmp_path, fake_docker_containers, model_manager_b
         served_id="ornith-ai/Ornith-1.5-35B-A3B", base_url="http://127.0.0.1:8000/v1"
     )
     monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.probe", lambda url, **_: (
-        [llm] if serve.answering or (serve.answering is None and tt_model_calls()) else None
+        [llm] if serve.answering else None
     ))
     monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: True)
-    # Nothing answers on the cohost's status port: readiness comes from the endpoints.
-    monkeypatch.setattr(
-        "tenstorrent.launchers.apps.deep_research.STATUS_URL", "http://127.0.0.1:1"
-    )
-    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research._POLL_S", 0)
 
     def tt_model_calls() -> list[list[str]]:
         if not model_manager_bin.exists():
@@ -1040,20 +1035,20 @@ def test_deep_research_reads_its_checkout_from_config(runner, deep_research):
 
 
 @pytest.mark.fakes_only
-def test_deep_research_serves_its_default_bundle_when_none_is_running(runner, deep_research):
+def test_deep_research_default_is_separate_chips_and_ttdr_serves_them(runner, deep_research):
+    """Nothing running: the default recipe starts, with no tt-model serve and no cohost."""
     deep_research()
-    deep_research.answering = None
+    deep_research.answering = False
     result = runner.invoke(
-        app, ["launch", "deep-research", "--path", str(deep_research.checkout)]
+        app, ["launch", "deep-research", "--path", str(deep_research.checkout), "--yes"]
     )
     assert result.exit_code == 0, result.output
-    assert deep_research.tt_model_calls() == [
-        ["serve", COHOST, "--local-only", "--port", "8000", "--detach"]
-    ]
+    assert deep_research.tt_model_calls() == []
     assert deep_research.calls() == [{
-        "argv": ["run", "ttdr", "up", "--recipe", "recipes/ornith-35b-cohost.toml"],
+        "argv": ["run", "ttdr", "up", "--recipe", "recipe.toml"],
         "cwd": str(deep_research.checkout),
     }]
+    assert "cohost" not in result.output
     assert "http://localhost:3000" in result.output
 
 
@@ -1062,7 +1057,7 @@ def test_deep_research_asks_once_and_warns_a_cold_start_is_slow(
     runner, deep_research, monkeypatch
 ):
     deep_research()
-    deep_research.answering = None
+    deep_research.answering = False
     asked: list[str] = []
     monkeypatch.setattr("tenstorrent.commands.launch.confirm", lambda q: asked.append(q) or True)
     result = runner.invoke(
@@ -1070,13 +1065,16 @@ def test_deep_research_asks_once_and_warns_a_cold_start_is_slow(
     )
     assert result.exit_code == 0, result.output
     assert len(asked) == 1
-    assert COHOST in asked[0] and "10-15 minutes" in asked[0]
+    assert "ttdr up --recipe recipe.toml" in asked[0] and "10-15 minutes" in asked[0]
+    assert "cohost" not in asked[0]
 
 
 @pytest.mark.fakes_only
-def test_deep_research_declining_serves_nothing(runner, deep_research, monkeypatch):
+def test_deep_research_declining_starts_nothing_when_none_is_running(
+    runner, deep_research, monkeypatch
+):
     deep_research()
-    deep_research.answering = None
+    deep_research.answering = False
     monkeypatch.setattr("tenstorrent.commands.launch.confirm", lambda _: False)
     result = runner.invoke(
         app, ["launch", "deep-research", "--path", str(deep_research.checkout)]
@@ -1086,14 +1084,15 @@ def test_deep_research_declining_serves_nothing(runner, deep_research, monkeypat
 
 
 @pytest.mark.fakes_only
-def test_deep_research_no_serve_says_how_to_serve_it(runner, deep_research):
+def test_deep_research_no_serve_says_what_to_serve(runner, deep_research):
     deep_research()
-    deep_research.answering = None
+    deep_research.answering = False
     result = runner.invoke(
         app, ["launch", "deep-research", "--path", str(deep_research.checkout), "--no-serve"]
     )
     assert result.exit_code == ExitCode.ERROR
-    assert "cohost-ornith-35b-qwen3vl" in result.output
+    assert "qwen3-vl-embedding-8b" in result.output
+    assert "cohost" not in result.output
     assert deep_research.tt_model_calls() == [] and deep_research.calls() == []
 
 
@@ -1109,28 +1108,17 @@ def test_deep_research_does_not_serve_over_another_model(runner, deep_research):
 
 
 @pytest.mark.fakes_only
-def test_deep_research_reports_a_bundle_that_exits_while_booting(runner, deep_research):
+def test_deep_research_dry_run_shows_the_default_recipe_and_runs_nothing(runner, deep_research):
     deep_research()
-    deep_research.answering = False  # never ready, and docker never lists it
-    result = runner.invoke(
-        app, ["launch", "deep-research", "--path", str(deep_research.checkout), "--yes"]
-    )
-    assert result.exit_code == ExitCode.TOOL_FAILED
-    assert "tt model logs" in result.output
-    assert deep_research.calls() == []
-
-
-@pytest.mark.fakes_only
-def test_deep_research_dry_run_shows_the_serve_and_runs_nothing(runner, deep_research):
-    deep_research()
-    deep_research.answering = None
+    deep_research.answering = False
     result = runner.invoke(app, [
         "launch", "deep-research", "--path", str(deep_research.checkout), "--dry-run", "--json",
     ])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    assert payload["serve"] == f"tt-model serve {COHOST} --local-only --port 8000 --detach"
-    assert payload["recipe"] == "recipes/ornith-35b-cohost.toml"
+    assert payload["recipe"] == "recipe.toml"
+    assert payload["steps"][0][1:] == ["run", "ttdr", "up", "--recipe", "recipe.toml"]
+    assert "cohost" not in result.stdout
     assert deep_research.tt_model_calls() == [] and deep_research.calls() == []
 
 
