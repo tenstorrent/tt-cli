@@ -102,18 +102,23 @@ stay.
 If the feature is abandoned, delete the branch. Yank its betas on PyPI if they
 should no longer be installable.
 
-## Workflow changes this needs
+## What the workflows enforce
 
-Not yet implemented; the steps above depend on them.
+- **Tag origin.** `release.yml` accepts a stable or `rc` tag only on a commit on
+  `main`. A beta tag (`X.Y.ZbN`) may also point at a commit on exactly one
+  `beta/<feature>` branch. Alpha and dev versions are held to the `main` rule.
+- **PyPI.** Stable releases and betas are published. `rc`, alpha and dev
+  versions get a GitHub pre-release only. `publish-compat-overrides` runs for
+  stable releases only.
+- **Release notes.** Every release is diffed against the latest stable tag it
+  contains, never against another pre-release, so one feature's beta notes never
+  pick up another's. A beta from a beta branch is named after it, e.g.
+  `v1.3.0b3 (beta: bio)`.
+- **No beta versions on `main`.** The `no beta version on main` check in
+  `tests.yml` fails any PR into `main` whose `__version__` is an alpha or beta.
 
-- **Tag origin:** `release.yml` only accepts tags on `main`. Also accept a tag
-  whose commit is on `origin/beta/*` when the version is a beta (`bN`). Stable
-  and `rc` versions must still come from `main`.
-- **PyPI:** `publish-pypi` skips every pre-release today. Let beta versions
-  through. `publish-compat-overrides` keeps skipping them.
-- **Changelog:** stable releases should ignore pre-release tags when picking
-  the previous tag, so they are not diffed against another feature's beta. Beta
-  releases diff against the latest stable tag and name the release after the
-  branch, e.g. "v1.3.0b3 (beta: bio)".
-- **Guard on `main`:** fail any PR into `main` whose `__version__` is an alpha
-  or beta version, so a graduation PR cannot carry the beta version over.
+These rely on two repository settings, configured under Settings → Rules:
+
+- `beta/*` branches have the same protection as `main` (changes through
+  reviewed PRs only, no force pushes), since a beta tag on them reaches PyPI.
+- `no beta version on main` is a required status check for `main`.

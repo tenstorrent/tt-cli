@@ -7,7 +7,9 @@ name: release
 #
 # The tag drives everything and nothing here rewrites the repo — no bot commits, no
 # temp branches. A tag that points at a commit outside main, or that disagrees with
-# `__version__`, fails in the first job, before anything is built or published.
+# `__version__`, fails in the first job, before anything is built or published. The
+# one exception is a beta (`X.Y.ZbN`), which may also be tagged on a `beta/<feature>`
+# branch; see docs/beta-releases.md.
 #
 # Order of the publishing jobs is deliberate: the GitHub release (deletable) first,
 # then PyPI last, because a PyPI upload is the one step that cannot be undone or
@@ -43,24 +45,10 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      beta: ${{ steps.version.outputs.beta }}
+      beta-branch: ${{ steps.origin.outputs.beta-branch }}
     steps:
       - uses: actions/checkout@v7
-
-      # Tag creation is restricted, but whoever may create a tag can point it at any
-      # commit. Everything on main went through a reviewed PR, so requiring the tagged
-      # commit to be there means a release can only ship reviewed code.
-      - name: Check the tagged commit is on main
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          # The checkout is shallow; fetch main's history so ancestry can be walked.
-          git fetch --quiet --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
-            echo "::error::tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main"
-            echo "Releases are cut from main only. Delete the tag, merge the change"
-            echo "through a PR, and tag the resulting commit on main."
-            exit 1
-          fi
-          echo "tag ${GITHUB_REF_NAME} points at a commit on main"
 
       - uses: actions/setup-python@v7
         with:
@@ -84,7 +72,55 @@ jobs:
               raise SystemExit(f"__version__ '{raw}' is not normalised; write '{version}' instead")
           print(f"version={raw}")
           print(f"prerelease={str(version.is_prerelease).lower()}")
+          # A beta (1.3.0b1) is the one pre-release that is published to PyPI and may
+          # be tagged on a beta/<feature> branch. rc, alpha and dev versions are not.
+          beta = version.pre is not None and version.pre[0] == "b" and version.dev is None
+          print(f"beta={str(beta).lower()}")
           PY
+
+      # Tag creation is restricted, but whoever may create a tag can point it at any
+      # commit. Everything on main and on beta/* went through a reviewed PR, so
+      # requiring the tagged commit to be on one of them means a release can only ship
+      # reviewed code. Only a beta may come from beta/*, so a feature still in beta can
+      # never reach a stable or rc release without first being merged into main.
+      - name: Check where the tagged commit lives
+        id: origin
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          BETA: ${{ steps.version.outputs.beta }}
+        run: |
+          # The checkout is shallow; fetch the branch histories so ancestry can be walked.
+          git fetch --quiet --no-tags origin \
+            '+refs/heads/main:refs/remotes/origin/main' \
+            '+refs/heads/beta/*:refs/remotes/origin/beta/*'
+          if git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "tag ${GITHUB_REF_NAME} points at a commit on main"
+            exit 0
+          fi
+          if [ "${BETA}" != "true" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main"
+            echo "Releases are cut from main only; only a beta (X.Y.ZbN) may be tagged"
+            echo "on a beta/<feature> branch. Delete the tag, merge the change through"
+            echo "a PR, and tag the resulting commit on main."
+            exit 1
+          fi
+          # Not on main, so on at most the beta branch it was made on (and any branch
+          # cut from that one, which is ambiguous and refused).
+          mapfile -t branches < <(git for-each-ref --contains "${GITHUB_SHA}" \
+            --format='%(refname:strip=3)' 'refs/remotes/origin/beta/')
+          if [ "${#branches[@]}" -eq 0 ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main or any beta/* branch"
+            echo "A beta is cut from a beta/<feature> branch. Delete the tag, merge the"
+            echo "change through a PR into that branch, and tag the resulting commit."
+            exit 1
+          fi
+          if [ "${#branches[@]}" -gt 1 ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} is on several beta branches: ${branches[*]}"
+            echo "Tag a commit that only one beta/<feature> branch contains."
+            exit 1
+          fi
+          echo "beta-branch=${branches[0]}" >> "$GITHUB_OUTPUT"
+          echo "tag ${GITHUB_REF_NAME} points at a commit on ${branches[0]}"
 
       - name: Check the tag against the packaged version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -194,11 +230,33 @@ jobs:
           name: dist
           path: dist/
 
+      # Diff against the latest *stable* tag this commit contains, never another
+      # pre-release: betas from different beta/<feature> branches share one version
+      # line, so the "previous tag" could be another feature's beta and the notes
+      # would be wrong for both. Also names a beta's release after its branch.
+      - name: Pick the changelog base and release name
+        id: base
+        env:
+          BETA_BRANCH: ${{ needs.build.outputs.beta-branch }}
+        run: |
+          from_tag="$(git tag --merged HEAD --sort=-v:refname 'v*' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | grep -vxF "${GITHUB_REF_NAME}" | head -n 1 || true)"
+          echo "from-tag=${from_tag}" >> "$GITHUB_OUTPUT"
+          echo "changelog base: ${from_tag:-<none, builder default>}"
+          name="${GITHUB_REF_NAME}"
+          if [ -n "${BETA_BRANCH}" ]; then
+            name="${name} (beta: ${BETA_BRANCH#beta/})"
+          fi
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
       - name: Build the changelog
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v6
         with:
           mode: "HYBRID" # merged PRs and direct commits both
+          fromTag: ${{ steps.base.outputs.from-tag }}
+          toTag: ${{ github.ref_name }}
           configurationJSON: |
             {
               "template": "#{{CHANGELOG}}\n\n## Contributors\n#{{CONTRIBUTORS}}\n\n## Install\n\n```bash\nuv tool install tenstorrent==${{ needs.build.outputs.version }}\n# or\npipx install tenstorrent==${{ needs.build.outputs.version }}\n```\n\nThe installed binary is `tt`.",
@@ -217,7 +275,7 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          name: ${{ steps.base.outputs.name }}
           body: ${{ steps.changelog.outputs.changelog }}
           # Formats for model catalogs are documented in scripts/build_model_support.py and scripts/build_community_catalog.py.
           files: |
@@ -241,13 +299,16 @@ jobs:
     uses: ./.github/workflows/publish-compat-overrides.yml
     secrets: inherit
 
+  # Stable releases and betas only. Betas are published so testers can install one
+  # by exact version; pip, uv and `tt self update` never pick them up otherwise. rc,
+  # alpha and dev versions stay off PyPI, since an upload can never be taken back.
   publish-pypi:
     name: Publish to PyPI
     needs: [build, test, github-release]
     if: >-
       github.repository == 'tenstorrent/tt-cli'
       && startsWith(github.ref, 'refs/tags/v')
-      && needs.build.outputs.prerelease == 'false'
+      && (needs.build.outputs.prerelease == 'false' || needs.build.outputs.beta == 'true')
     runs-on: ubuntu-latest
     environment:
       name: pypi
