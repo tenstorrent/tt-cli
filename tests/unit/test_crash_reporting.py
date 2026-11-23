@@ -173,3 +173,18 @@ def test_resume_command_redacts_secrets(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["tt", "serve", "--token", secret])
     assert _resume_command() == "tt serve --token <redacted>"
 
+
+def test_unexpected_error_redacts_token_in_exception_message_and_verbose_trace(
+    monkeypatch, capsys
+):
+    secret = ("hf_" + "excSecretToken1234567890abcdef12")
+    monkeypatch.setattr(sys, "argv", ["tt", "serve", "-v"])
+    try:
+        raise RuntimeError(f"auth failed with token {secret}")
+    except RuntimeError as exc:
+        _report_unexpected(exc)
+
+    err = capsys.readouterr().err
+    assert secret not in err
+    assert "<redacted>" in err
+

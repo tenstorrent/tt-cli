@@ -212,8 +212,9 @@ def watch_serve(
             """Every line, from both halves: to the tee'd file always, and to
             the screen under --verbose, where the checklist prints plainly and
             the two interleave in the order things happened."""
-            sink.write(redactor.text(line) + "\n")
-            output.raw(line)
+            clean_line = redactor.text(line)
+            sink.write(clean_line + "\n")
+            output.raw(clean_line)
 
         view.plan([*prepare.planned, *_boot_steps(engines)])
         view.begin(prepare.label, placeholder=True)
