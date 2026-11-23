@@ -1311,15 +1311,16 @@ def test_picker_lists_the_backends_models_and_serves_the_choice(
     assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]
 
 
-@pytest.mark.parametrize("bad", ["0", "5", "-1", "two", "1.5"])
+@pytest.mark.fakes_only
+@pytest.mark.parametrize("bad", ["0", "7", "-1", "two", "1.5"])
 def test_picker_asks_again_on_an_answer_outside_the_list(
     runner, serve_tty, studio_docker, fake_studio, bad
 ):
-    # four models are offered; anything but 1-4 re-prompts instead of aborting
+    # six models are offered; anything but 1-6 re-prompts instead of aborting
     result = runner.invoke(app, ["serve", "--studio"], input=f"{bad}\n3\n")
     assert result.exit_code == 0, result.output
-    assert "enter a number from 1 to 4" in result.output
-    assert _studio_argv(fake_studio) == ["run", "Qwen3.8-27B"]
+    assert "enter a number from 1 to 6" in result.output
+    assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]
 
 
 def test_picker_defaults_to_the_first_model(runner, serve_tty, studio_docker, fake_studio):
