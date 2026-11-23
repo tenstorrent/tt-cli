@@ -164,7 +164,7 @@ if you serve several models.
 | `tt` and its dependencies | tens of MB |
 | tt-smi / tt-flash / tt-model / TT-Studio venvs | a few hundred MB total (uv may also download a managed Python 3.10 / 3.12 if none is installed) |
 | tt-inference-server checkout | ~180 MB, plus the per-workflow venvs its `run.py` creates |
-| TT-Studio | its tool venv, plus the app tree it stages into `~/.tt-studio` (`$TT_STUDIO_HOME`) |
+| TT-Studio | its tool venv, plus the app tree it stages into `~/.tt-studio` (`$TT_STUDIO_HOME`). Earlier tt versions cloned it to `<data dir>/tools/tt-studio-v*` (~200 MB); that copy is unused now and safe to delete |
 | Model container images | several GB each; the release spec shares 41 images across 67 models |
 | Model weights | from ~12 GB (Whisper distil-large-v3) to 50 GB and more for a large LLM; cached under `HF_HOME` (default `~/.cache/huggingface`) or `paths.hf_model_cache_directory` |
 | `tt launch` web clients | "a few GB" per container image |

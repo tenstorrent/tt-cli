@@ -312,3 +312,24 @@ def test_model_manager_tags_are_pointed_out_once_upstream_publishes_them(gh):
 
     assert not plan.changed
     assert any("now publishes tags (v0.1.0)" in n for n in plan.notes)
+
+
+def test_pypi_lookup_does_not_send_the_github_token(monkeypatch):
+    seen = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"info": {"version": "2.12.0"}}
+
+    def fake_get(url, **kwargs):
+        seen.update(url=url, headers=kwargs.get("headers") or {})
+        return Response()
+
+    monkeypatch.setattr(bump_pins.httpx, "get", fake_get)
+
+    assert bump_pins.GitHub(token="ghs_secret").latest_pypi_version("tt-studio") == "2.12.0"
+    assert seen["url"] == "https://pypi.org/pypi/tt-studio/json"
+    assert "Authorization" not in seen["headers"]

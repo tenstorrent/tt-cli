@@ -69,7 +69,7 @@ def _stdin_isatty() -> bool:
 
 
 # The tt-inference-server and tt-model paths. Start is skipped, not dropped, when
-# the child takes the terminal. Studio's run.py renders its own deploy, so the
+# the child takes the terminal. tt-studio renders its own deploy, so the
 # studio path declares no phases.
 PHASES = ["Checks", "Prepare", START_PHASE]
 

@@ -122,7 +122,7 @@ class GitHub:
         return branch, commit["sha"], commit["commit"]["committer"]["date"][:10]
 
     def latest_pypi_version(self, package: str) -> str:
-        resp = self._client.get(f"https://pypi.org/pypi/{package}/json")
+        resp = httpx.get(f"https://pypi.org/pypi/{package}/json", timeout=60, follow_redirects=True)
         resp.raise_for_status()
         return resp.json()["info"]["version"]
 

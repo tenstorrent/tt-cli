@@ -1624,7 +1624,7 @@ def test_launch_releases_the_ui_before_the_child_takes_the_terminal(monkeypatch)
     assert events == ["handoff", "stream"]
 
 
-def test_studio_releases_the_ui_before_run_py_takes_the_terminal(tmp_path, monkeypatch):
+def test_studio_releases_the_ui_before_tt_studio_takes_the_terminal(tmp_path, monkeypatch):
     """Same contract on the studio path: tt-studio owns the terminal once it starts."""
     from tenstorrent.backends.serving import studio as studio_mod
     from tenstorrent.models.model import ModelInfo

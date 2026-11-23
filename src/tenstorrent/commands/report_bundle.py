@@ -52,6 +52,7 @@ _ENV_ALWAYS = ("HF_TOKEN", "JWT_SECRET", "SERVICE_PORT")
 # Where the serving tools keep the credentials they were given (HF_TOKEN, JWT_SECRET,
 # DJANGO_SECRET_KEY …), relative to the checkout or runtime root.
 _TOOL_DOTENVS = (".env", "app/.env")
+_STUDIO_TOOL = "tt-studio"
 
 
 @dataclasses.dataclass
@@ -318,6 +319,12 @@ def known_secrets(appctx: AppContext, environ: Mapping[str, str] | None = None) 
     except Exception:
         pass
     roots.append(studio_runtime_root())
+    try:
+        found = appctx.registry._resolve_or_none(_STUDIO_TOOL)
+        if found is not None:  # a dev override can point at a checkout with its own .env
+            roots.append(Path(found[0]).parent)
+    except Exception:
+        pass
     for root in roots:
         for rel in _TOOL_DOTENVS:
             values.extend(_dotenv_secrets(root / rel))
