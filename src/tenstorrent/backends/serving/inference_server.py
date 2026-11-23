@@ -76,6 +76,7 @@ _WHOLE_BOARD_LLM_BOARDS = {"n150x4", "t3k"}
 _MESH_DESC_BOARDS = {"p300x2"}
 _SPEECH_TYPES = {"audio", "text_to_speech"}
 _ONE_CHIP_DEVICES = {"e150", "n150", "n300", "p100", "p150"}
+_MULTI_CHIP_COUNTS = {"p300": 2, "p150x2": 2, "n150x4": 4, "p150x4": 4, "p300x2": 4, "t3k": 8, "p150x8": 8}
 
 
 def choose_device(model: ModelInfo, board: str) -> str:
@@ -440,6 +441,7 @@ class InferenceServerBackend:
         *,
         workflow: str = "server",
         device: str | None = None,
+        device_ids: Sequence[int] | None = None,
         port: int | None = None,
         force: bool = False,
         entry: Path | None = None,
@@ -461,6 +463,7 @@ class InferenceServerBackend:
             "workflow": workflow,
             "device_requested": device,
             "device_sent": (support.serve_as or device) if support else device,
+            "device_ids": list(device_ids) if device_ids else None,
             "served_through": support.serve_as if support and support.serve_as else None,
             "engines": list(support.engines) if support else [],
             "status": support.status if support else None,
@@ -496,6 +499,7 @@ class InferenceServerBackend:
             device=device,
             port=port,
             entry=entry,
+            device_ids=device_ids,
         )
         return settings
 
@@ -615,6 +619,7 @@ class InferenceServerBackend:
         *,
         workflow: str = "server",
         device: str | None = None,
+        device_ids: Sequence[int] | None = None,
         offline: bool = False,
         port: int | None = None,
         force: bool = False,
@@ -636,10 +641,13 @@ class InferenceServerBackend:
         # registry.ensure may clone the repo and build a venv — minutes of work
         # that now renders its own steps (see tools/installers.py).
         entry = self.registry.ensure(TOOL, offline=offline)
-        device_ids = None
+        resolved_device_ids = list(device_ids) if device_ids else None
         if workflow == "server":
-            device_ids = self._place(model, support, device)
+            resolved_device_ids = self._place(
+                model, support, device, device_ids=resolved_device_ids
+            )
             port = self._free_service_port(model, port)
+        device_ids = resolved_device_ids
         argv = self._argv(
             model,
             workflow=workflow,
@@ -724,6 +732,7 @@ class InferenceServerBackend:
         *,
         workflow: str = "server",
         device: str | None = None,
+        device_ids: Sequence[int] | None = None,
         offline: bool = False,
         port: int | None = None,
         force: bool = False,
@@ -734,6 +743,7 @@ class InferenceServerBackend:
                 model,
                 workflow=workflow,
                 device=device,
+                device_ids=device_ids,
                 offline=offline,
                 port=port,
                 force=force,
@@ -741,10 +751,36 @@ class InferenceServerBackend:
         )
 
     def _place(
-        self, model: ModelInfo, support: DeviceSupport | None, device: str | None
+        self,
+        model: ModelInfo,
+        support: DeviceSupport | None,
+        device: str | None,
+        *,
+        device_ids: Sequence[int] | None = None,
     ) -> list[int] | None:
         ids = chips.all_ids()
         taken = chips.claimed(self.runner, self.container_runtime(), ids) if ids else None
+        if device_ids is not None:
+            wanted = list(device_ids)
+            if ids:
+                missing = [i for i in wanted if i not in ids]
+                if missing:
+                    missing_str = ", ".join(map(str, missing))
+                    known_str = ", ".join(map(str, ids))
+                    raise TTError(
+                        f"Chip(s) {missing_str} do not exist on this host.",
+                        why=f"Detected chips on this machine: {known_str}.",
+                        next_step="Run `tt device` to inspect available chips, or "
+                        "adjust `--device-id`.",
+                        exit_code=ExitCode.USAGE,
+                        reason="serve.device.missing",
+                    )
+            if taken:
+                busy = [i for i in wanted if i in taken]
+                if busy:
+                    held = ", ".join(map(str, busy))
+                    raise self._in_use(model, f"Chip(s) {held} are in use.")
+            return wanted
         if taken is None:
             return None
         sent = (support.serve_as or device) if support else device
@@ -754,6 +790,27 @@ class InferenceServerBackend:
                 raise self._in_use(model, f"All {len(ids)} chips are in use.")
             self.output.ui.note(f"Serving on chip {free[0]} ({sent}).")
             return free[:1]
+        needed = _MULTI_CHIP_COUNTS.get(sent or "")
+        if needed and len(ids) > needed:
+            free = [i for i in ids if i not in taken]
+            if len(free) < needed:
+                held = ", ".join(map(str, sorted(taken)))
+                raise self._in_use(
+                    model,
+                    f"{model.name} needs {needed} chips ({sent}), and chip(s) {held} are in use.",
+                )
+            chosen = None
+            for start in range(0, len(ids), needed):
+                group = ids[start : start + needed]
+                if len(group) == needed and all(c in free for c in group):
+                    chosen = group
+                    break
+            if chosen is None:
+                chosen = free[:needed]
+            self.output.ui.note(
+                f"Serving on chips {', '.join(map(str, chosen))} ({sent})."
+            )
+            return chosen
         if taken:
             held = ", ".join(map(str, sorted(taken)))
             raise self._in_use(
