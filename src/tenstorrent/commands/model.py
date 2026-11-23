@@ -1929,6 +1929,7 @@ def _ps_table(payload: dict) -> Table | str:
     table.add_column("backend")
     table.add_column("container")
     table.add_column("port")
+    table.add_column("devices")
     table.add_column("health")
     table.add_column("uptime")
     for row in rows:
@@ -1937,6 +1938,7 @@ def _ps_table(payload: dict) -> Table | str:
             row["backend"],
             row["container"] or "—",
             str(row["port"]) if row["port"] else "—",
+            ",".join(map(str, row["devices"] or [])) or "—",
             row["health"],
             human_duration(row["uptime_s"]) or "—",
         )
@@ -1964,7 +1966,7 @@ def ps_models(
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """List the model servers on this machine: name, backend, container, port, health, uptime.
+    """List the model servers on this machine: name, backend, container, port, devices, health, uptime.
 
     Covers tt-inference-server containers (`tt serve`), tt-model bundles and
     TT-Studio model containers. Exits 0 with an empty list when nothing is served.

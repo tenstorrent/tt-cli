@@ -30,6 +30,7 @@ TT_MODEL_LABELS = {
 CONTRACT_KEYS = {
     "name", "backend", "container", "container_id", "image", "port", "base_url",
     "status", "health", "started_at", "uptime_s", "profile", "served_id",
+    "devices",
 }
 
 
@@ -263,6 +264,19 @@ def test_ps_hides_exited_by_default_and_shows_them_with_all(runner, fake_docker)
 
     result = runner.invoke(app, ["model", "ps", "--no-probe", "-a"])
     assert "stopped" in result.output
+
+
+@pytest.mark.fakes_only
+def test_ps_shows_the_devices_a_running_container_holds(runner, fake_docker):
+    set_containers, _ = fake_docker
+    held = _inference_server(labels={"org.tenstorrent.tt-model.devices": "2,0"})
+    set_containers([held, _studio(running=False)])
+
+    result = runner.invoke(app, ["model", "ps", "--no-probe", "--all", "--json"])
+    assert [r["devices"] for r in _served(result)["served"]] == [[0, 2], None]
+
+    result = runner.invoke(app, ["model", "ps", "--no-probe"])
+    assert "0,2" in result.output
 
 
 @pytest.mark.fakes_only

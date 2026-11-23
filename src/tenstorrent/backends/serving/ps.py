@@ -43,6 +43,7 @@ from urllib.parse import urlparse
 from ...launchers import discovery
 from ...models.served import ServedModel
 from ...tools.runner import Runner
+from . import chips
 from .inference_server import CONTAINER_PREFIX, ServerContainer, _identity_from_inspect
 
 UTC = timezone.utc
@@ -81,8 +82,9 @@ def list_served(
     now = now or datetime.now(UTC)
     rows: list[ServedModel] = []
     catalog = _Catalog()
+    device_ids = chips.all_ids()
     for entry in _inspect_all(runner, runtime, include_stopped):
-        row = _classify(entry, catalog, now)
+        row = _classify(entry, catalog, now, device_ids)
         if row is not None:
             rows.append(row)
     if probe:
@@ -169,7 +171,9 @@ class _Catalog:
         return any(model.name == name for model in self.models())
 
 
-def _classify(entry: dict, catalog: _Catalog, now: datetime) -> ServedModel | None:
+def _classify(
+    entry: dict, catalog: _Catalog, now: datetime, device_ids: list[int]
+) -> ServedModel | None:
     """A ServedModel for a container one of the backends started, else None."""
     config = entry.get("Config") or {}
     name = str(entry.get("Name") or "").lstrip("/")
@@ -212,6 +216,7 @@ def _classify(entry: dict, catalog: _Catalog, now: datetime) -> ServedModel | No
         uptime_s=int((now - started).total_seconds()) if running and started else None,
         profile=profile,
         served_id=None,
+        devices=sorted(chips.held_by(entry, device_ids)) if running else None,
     )
 
 

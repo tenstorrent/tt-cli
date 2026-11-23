@@ -46,11 +46,11 @@ def claimed(runner: Runner, runtime: str, ids: list[int]) -> set[int] | None:
     taken: set[int] = set()
     for info in infos if isinstance(infos, list) else []:
         if isinstance(info, dict):
-            taken |= _claims(info, ids)
+            taken |= held_by(info, ids)
     return taken
 
 
-def _claims(info: dict, ids: list[int]) -> set[int]:
+def held_by(info: dict, ids: list[int]) -> set[int]:
     labels = (info.get("Config") or {}).get("Labels") or {}
     taken = {int(x) for x in str(labels.get(_DEVICES_LABEL) or "").split(",") if x.strip().isdigit()}
     host = info.get("HostConfig") or {}
