@@ -63,7 +63,7 @@ exit 4 (`TOOL_MISSING`); one that exists but fails produces exit 5 (`TOOL_FAILED
 
 | Tool | Needed by | Notes |
 |---|---|---|
-| **git** | `tt update` (always: tt-model is installed from a git ref); `tt serve` on first use of the inference-server or studio path; `tt update --include-lazy` | Clones pinned checkouts of tt-inference-server (~180 MB) and TT-Studio (~200 MB) under the data dir |
+| **git** | `tt update` (always: tt-model is installed from a git ref); `tt serve` on first use of the inference-server path; `tt update --include-lazy` | Clones a pinned checkout of tt-inference-server (~180 MB) under the data dir |
 | **sudo** | `tt device reset`; the system phase of `tt update` | `tt` probes `sudo -n true` and prompts on a terminal. Without a TTY (or under `--json`) it exits 6 (`NEEDS_SUDO`) and prints the command to re-run. Running as root skips sudo. Set `tools.sudo_command` to `""` to disable it |
 | **docker or podman** | `tt serve` (inference-server path); `tt model ps` / `stop` / `logs`; `tt launch openwebui` / `anythingllm` | Either runtime works here |
 | **docker** only | `tt serve --studio` (docker compose; podman is not supported); `tt serve <namespace>/<name>` (tt-model bundles) | |
@@ -132,8 +132,8 @@ access." Air-gapped machines can point `TT_GOLDEN_PATH` at a local `golden.json`
 
 | Endpoint | Used by |
 |---|---|
-| **PyPI** | Installing `tt`; `uv tool install` of tt-smi/tt-flash; the daily "newer tt available?" check (one request, 10 s timeout; off with `tt config set update.check false`, `TT_NO_UPDATE_CHECK=1`, or `--offline`) |
-| **GitHub** (`github.com`, release assets) | `golden.json`, `install.sh`, and `git clone` of tt-inference-server, tt-model-manager and TT-Studio |
+| **PyPI** | Installing `tt`; `uv tool install` of tt-smi/tt-flash/TT-Studio; the daily "newer tt available?" check (one request, 10 s timeout; off with `tt config set update.check false`, `TT_NO_UPDATE_CHECK=1`, or `--offline`) |
+| **GitHub** (`github.com`, release assets) | `golden.json`, `install.sh`, and `git clone` of tt-inference-server and tt-model-manager |
 | **Tenstorrent package repositories** | install.sh adds them for tt-kmd, tenstorrent-tools and firmware |
 | **Hugging Face Hub** | `tt model search` / `pull` / `info` (for uninstalled bundles) / `login` / `publish` / `unpublish` / `push`; weights and tokenizers for every serve |
 | **ghcr.io / Docker Hub** | Model images pulled by tt-inference-server, tt-model and TT-Studio; `ghcr.io/open-webui/open-webui:main` and `mintplexlabs/anythingllm:latest` for `tt launch` |
@@ -162,9 +162,9 @@ if you serve several models.
 | Item | Size |
 |---|---|
 | `tt` and its dependencies | tens of MB |
-| tt-smi / tt-flash / tt-model venvs | a few hundred MB total (uv may also download a managed Python 3.10 / 3.12 if none is installed) |
+| tt-smi / tt-flash / tt-model / TT-Studio venvs | a few hundred MB total (uv may also download a managed Python 3.10 / 3.12 if none is installed) |
 | tt-inference-server checkout | ~180 MB, plus the per-workflow venvs its `run.py` creates |
-| TT-Studio checkout | ~200 MB, plus its own `.tt_studio_run_venv` |
+| TT-Studio | its tool venv, plus the app tree it stages into `~/.tt-studio` (`$TT_STUDIO_HOME`). Earlier tt versions cloned it to `<data dir>/tools/tt-studio-v*` (~200 MB); that copy is unused now and safe to delete |
 | Model container images | several GB each; the release spec shares 41 images across 67 models |
 | Model weights | from ~12 GB (Whisper distil-large-v3) to 50 GB and more for a large LLM; cached under `HF_HOME` (default `~/.cache/huggingface`) or `paths.hf_model_cache_directory` |
 | `tt launch` web clients | "a few GB" per container image |
