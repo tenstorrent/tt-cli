@@ -100,8 +100,8 @@ def test_known_secrets_gathers_env_hf_login_and_tool_dotenvs(tmp_path, monkeypat
 
     monkeypatch.setattr(report_bundle, "_inference_backend", lambda appctx: Backend())
     monkeypatch.setattr(report_bundle, "hf_token", lambda config: ("from-hf-login-4", "hf-login"))
-    registry = SimpleNamespace(_resolve_or_none=lambda tool: (str(studio / "run.py"),))
-    appctx = SimpleNamespace(config=None, registry=registry)
+    monkeypatch.setenv("TT_STUDIO_HOME", str(studio))
+    appctx = SimpleNamespace(config=None)
     environ = {"TT_DB_PASS": "from-env-5", "TT_METAL_HOME": "/opt/tt", "PATH": "/usr/bin"}
 
     values = known_secrets(appctx, environ)
@@ -120,7 +120,7 @@ def test_known_secrets_survives_every_lookup_failing(monkeypatch):
 
     monkeypatch.setattr(report_bundle, "_inference_backend", boom)
     monkeypatch.setattr(report_bundle, "hf_token", boom)
-    appctx = SimpleNamespace(config=None, registry=SimpleNamespace(_resolve_or_none=boom))
+    appctx = SimpleNamespace(config=None)
     assert known_secrets(appctx, {"HF_TOKEN": "env-only-value"}) == ["env-only-value"]
 
 

@@ -600,11 +600,11 @@ def _plan_renderer(plan: dict) -> Group:
             table.add_row("passthrough", " ".join(plan["extra_args"]))
     elif plan.get("backend") == "studio":
         table.add_row("backend", "TT-Studio")
-        table.add_row("checkout", plan["cwd"] or "not installed — the first serve clones it")
+        table.add_row("tt-studio", plan["path"] or "not installed — the first serve installs it")
         table.add_row("HF token", _token_cell(plan["hf_token_source"]))
         table.add_row(
             "deploy",
-            "[dim]studio picks the chips and the port; run.py reports the endpoint "
+            "[dim]studio picks the chips and the port; tt-studio reports the endpoint "
             "once the model is healthy[/dim]",
         )
     else:

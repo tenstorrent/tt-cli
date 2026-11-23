@@ -83,16 +83,13 @@ health = ["--version"]
 # TT-Studio: the third `tt serve` path. Its catalog is built from tt's own
 # model_support.json, so tt only lists the few models studio adds itself
 # (STUDIO_OWN_MODELS in modelhub/studio.py — re-check them on a bump). tt
-# delegates the whole lifecycle to the checkout's run.py: `run <model>` deploys,
+# delegates the whole lifecycle to the `tt-studio` command: `run <model>` deploys,
 # `--stop-model <model>` stops it, `--stop` takes the stack down (after a stop or a
-# failed deploy).
-kind = "git-venv"
-golden_version = "v2.12.0"
-repo = "https://github.com/tenstorrent/tt-studio"
-entry = "run.py"
+# failed deploy). The wheel stages its compose files, .env and logs into
+# ~/.tt-studio ($TT_STUDIO_HOME) on first run.
+kind = "uv-tool"
+package = "tt-studio"
+golden_version = "2.12.0"
 python = "3.12"
-# run.py bootstraps its own deps into .tt_studio_run_venv and re-execs itself, so
-# the managed venv only has to provide the interpreter.
-deps = []
-# Only users who serve a studio-only model need the ~200 MB checkout.
+# Only users who serve a studio-only model need it.
 lazy = true

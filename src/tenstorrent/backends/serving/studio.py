@@ -5,19 +5,19 @@
 
 Studio deploys the models in its own catalog (modelhub/studio.py) — most of
 them tt-inference-server's, run from the same images, plus a few only studio
-carries. Its run.py owns the whole stack — docker compose, the deploy, progress
-and health — so tt only finds the pinned checkout and streams `run.py run
-<model>` from it. Stopping a model is `run.py --stop-model <model>` (which
-resets its chips) followed by `run.py --stop` for studio's own services. A plain
-`--stop` leaves model containers running on purpose (they survive a studio
-restart), so `tt model stop --studio` stops each model first (see stop_all).
+carries. The `tt-studio` command owns the whole stack — docker
+compose, the deploy, progress and health — so tt only finds the pinned install
+and streams `tt-studio run <model>`. Stopping a model is `tt-studio --stop-model
+<model>` (which resets its chips) followed by `tt-studio --stop` for studio's own
+services. A plain `--stop` leaves model containers running on purpose (they
+survive a studio restart), so `tt model stop --studio` stops each model first
+(see stop_all).
 """
 
 from __future__ import annotations
 
 import os
 import shutil
-import sys
 from pathlib import Path
 
 from ...config.store import ConfigStore
@@ -34,6 +34,11 @@ TOOL = "tt-studio"
 # the filter (tt_setup/cleanup/_resource_ops.py).
 STUDIO_NETWORK = "tt_studio_network"
 COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
+
+
+def runtime_root() -> Path:
+    """Where the tt-studio wheel stages its compose files, .env and logs."""
+    return Path(os.environ.get("TT_STUDIO_HOME", "").strip() or "~/.tt-studio").expanduser().absolute()
 
 
 class StudioBackend:
@@ -75,13 +80,8 @@ class StudioBackend:
             env.setdefault("HF_TOKEN", found[0])
         return env
 
-    def _python_for(self, entry: Path) -> str:
-        venv_python = entry.parent.parent / "venv" / "bin" / "python"
-        return str(venv_python) if venv_python.exists() else sys.executable
-
-    def _argv(self, model: ModelInfo, *, entry: Path | None) -> list[str]:
-        argv = [self._python_for(entry), str(entry)] if entry else ["<run.py>"]
-        return argv + ["run", model.name]
+    def _argv(self, model: ModelInfo, *, binary: Path | None) -> list[str]:
+        return [str(binary) if binary else "<tt-studio>", "run", model.name]
 
     def serve(
         self,
@@ -96,20 +96,16 @@ class StudioBackend:
                 "--device/--port are tt-inference-server options; studio allocates "
                 "chips and ports itself (its own `--device-id` picks chips)."
             )
-        entry = Path(self.registry.ensure(TOOL, offline=offline))
+        binary = Path(self.registry.ensure(TOOL, offline=offline))
         self.output.status(
             f"Starting TT-Studio and deploying {model.name} — Ctrl-C stops watching, "
             f"`tt model stop {model.name}` stops the model and studio."
         )
-        # Release every live row first: run.py owns the terminal from here on.
+        # Release every live row first: tt-studio owns the terminal from here on.
         self.output.ui.handoff()
-        # run.py resolves the repo root, .env and its compose file from cwd.
         try:
             return self.runner.stream(
-                self._argv(model, entry=entry),
-                env=self._env(),
-                cwd=str(entry.parent),
-                tool=TOOL,
+                self._argv(model, binary=binary), env=self._env(), tool=TOOL
             )
         except TTError as exc:
             if exc.exit_code == ExitCode.TOOL_FAILED:
@@ -117,42 +113,38 @@ class StudioBackend:
                 # model behind it; take it down so the error is the only thing
                 # left. Only a real failure — Ctrl-C is a KeyboardInterrupt, not
                 # a TTError, and "stops watching" as the status line promises.
-                self._teardown(entry, after=f"deploying {model.name} failed")
+                self._teardown(binary, after=f"deploying {model.name} failed")
             raise
 
-    def _teardown(self, entry: Path, *, after: str) -> int:
-        """`run.py --stop`: stop studio's services (not the models it deployed).
+    def _teardown(self, binary: Path, *, after: str) -> int:
+        """`tt-studio --stop`: stop studio's services (not the models it deployed).
         Best-effort — a teardown that fails must not mask what it was cleaning up
         after — so the status is returned, not raised."""
         self.output.status(f"Stopping TT-Studio ({after}) …")
         rc = self.runner.stream(
-            [self._python_for(entry), str(entry), "--stop"],
-            env=self._env(),
-            cwd=str(entry.parent),
-            tool=TOOL,
-            check=False,
+            [str(binary), "--stop"], env=self._env(), tool=TOOL, check=False
         )
         if rc != 0:
             self.output.warn(
-                f"TT-Studio's `run.py --stop` exited with status {rc}; its containers "
-                "may still be running. Check with `docker ps`, or run "
-                f"`python {entry} --stop` from {entry.parent} to retry."
+                f"TT-Studio's `tt-studio --stop` exited with status {rc}; its containers "
+                f"may still be running. Check with `docker ps`, or run `{binary} --stop` "
+                "to retry."
             )
         return rc
 
     def plan(self, model: ModelInfo, *, offline: bool = False) -> dict:
         """What `serve` would run, without installing or touching docker."""
         installed = self.registry._resolve_or_none(TOOL)
-        entry = Path(installed[0]) if installed else None
+        binary = Path(installed[0]) if installed else None
         token = hf_token(self.config)
         return {
             "backend": "studio",
             "model": model.name,
             "offline": offline,
-            "installed": entry is not None,
-            "cwd": str(entry.parent) if entry else None,
+            "installed": binary is not None,
+            "path": str(binary) if binary else None,
             "hf_token_source": token[1] if token else None,
-            "argv": self._argv(model, entry=entry),
+            "argv": self._argv(model, binary=binary),
         }
 
     def unsupported_workflow(self, workflow: str) -> TTError:
@@ -164,9 +156,9 @@ class StudioBackend:
             exit_code=ExitCode.UNSUPPORTED,
         )
 
-    def _installed_entry(self) -> Path:
-        """Resolve the checkout without installing it: teardown must not clone a
-        repo to discover there is nothing to tear down."""
+    def _installed_binary(self) -> Path:
+        """Resolve tt-studio without installing it: teardown must not install it
+        to discover there is nothing to tear down."""
         found = self.registry._resolve_or_none(TOOL)
         if found is None:
             raise TTError(
@@ -183,21 +175,19 @@ class StudioBackend:
         for the stack itself: with the model gone nothing needs studio's
         containers and services, and leaving them up is what people asked
         `tt model stop` to prevent."""
-        entry = self._installed_entry()
-        argv = [self._python_for(entry), str(entry), "--stop-model", model.name]
+        binary = self._installed_binary()
+        argv = [str(binary), "--stop-model", model.name]
         self.output.status(f"Stopping {model.name} via TT-Studio …")
         # check=False: a `--stop-model` that fails (the model already died, or
         # never finished deploying) must not skip the teardown — the stack is
         # still up either way, and leaving it up is the thing this command
         # exists to prevent. The failure is raised once the stack is down.
-        rc = self.runner.stream(
-            argv, env=self._env(), cwd=str(entry.parent), tool=TOOL, check=False
-        )
+        rc = self.runner.stream(argv, env=self._env(), tool=TOOL, check=False)
         after = f"{model.name} stopped" if rc == 0 else f"stopping {model.name} failed"
-        self._teardown(entry, after=after)
+        self._teardown(binary, after=after)
         if rc != 0:
             raise TTError(
-                f"TT-Studio's `run.py --stop-model {model.name}` exited with status {rc}.",
+                f"TT-Studio's `tt-studio --stop-model {model.name}` exited with status {rc}.",
                 exit_code=ExitCode.TOOL_FAILED,
                 details={"tool": TOOL, "returncode": rc},
             )
@@ -236,14 +226,13 @@ class StudioBackend:
         services, models = self._containers(docker)
         if not services and not models:
             return {"running": False, "stopped": [], "services_stopped": False}
-        entry = self._installed_entry() if services else None
-        if entry is not None:
+        binary = self._installed_binary() if services else None
+        if binary is not None:
             for _, name in models:
                 self.output.status(f"Stopping {name} via TT-Studio …")
                 self.runner.stream(
-                    [self._python_for(entry), str(entry), "--stop-model", name],
+                    [str(binary), "--stop-model", name],
                     env=self._env(),
-                    cwd=str(entry.parent),
                     tool=TOOL,
                     check=False,
                 )
@@ -258,10 +247,10 @@ class StudioBackend:
                 f"{', '.join(n for _, n in left)} stopped without TT-Studio's chip reset; "
                 "if the next deploy cannot open the device, run `tt-smi -r`."
             )
-        if entry is not None and self._teardown(entry, after="its models stopped") != 0:
+        if binary is not None and self._teardown(binary, after="its models stopped") != 0:
             raise TTError(
-                "TT-Studio's `run.py --stop` failed; its services may still be running.",
-                next_step=f"Retry with `python {entry} --stop` from {entry.parent}.",
+                "TT-Studio's `tt-studio --stop` failed; its services may still be running.",
+                next_step=f"Retry with `{binary} --stop`.",
                 exit_code=ExitCode.TOOL_FAILED,
                 details={"tool": TOOL},
             )

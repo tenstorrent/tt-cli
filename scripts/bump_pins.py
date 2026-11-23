@@ -21,8 +21,7 @@ What it does, per upstream:
 * **tt-inference-server** — latest release; the bundled release_model_spec.json is
   replaced verbatim from that tag, after checking it parses under our catalog code.
 * **tt-model-manager** — head of the default branch (upstream publishes no tags).
-* **tt-studio** — latest GitHub release (a plain tag bump, like tt-inference-server
-  but with no bundled spec to rebuild).
+* **tt-studio** — latest version on PyPI, the package `uv tool install` pins.
 
 Comments in supplement.toml are preserved but not rewritten — the ones describing the
 last hand verification stay as they were, and the PR body says so.
@@ -64,7 +63,7 @@ INSTALLER_REPO = "tenstorrent/tt-installer"
 MANIFEST_REPO = "tenstorrent/tt-sw-manifest"
 INFERENCE_REPO = "tenstorrent/tt-inference-server"
 MODEL_MANAGER_REPO = "tenstorrent/tt-model-manager"
-STUDIO_REPO = "tenstorrent/tt-studio"
+STUDIO_PACKAGE = "tt-studio"
 
 # Flags `tt update` passes to install.sh (backends/installer.py). A release that drops
 # one would break `tt update`, so its bump is refused rather than proposed.
@@ -89,7 +88,7 @@ class Release:
 
 
 class GitHub:
-    """The handful of GitHub calls the bump needs. Tests substitute a fake."""
+    """The handful of GitHub (and one PyPI) calls the bump needs. Tests substitute a fake."""
 
     def __init__(self, token: str | None = None, client: httpx.Client | None = None):
         headers = {"Accept": "application/vnd.github+json", "User-Agent": "tt-cli bump_pins"}
@@ -121,6 +120,11 @@ class GitHub:
         branch = self._json(f"repos/{repo}")["default_branch"]
         commit = self._json(f"repos/{repo}/commits/{branch}")
         return branch, commit["sha"], commit["commit"]["committer"]["date"][:10]
+
+    def latest_pypi_version(self, package: str) -> str:
+        resp = self._client.get(f"https://pypi.org/pypi/{package}/json")
+        resp.raise_for_status()
+        return resp.json()["info"]["version"]
 
     def tags(self, repo: str) -> list[str]:
         return [t["name"] for t in self._json(f"repos/{repo}/tags?per_page=5")]
@@ -291,11 +295,11 @@ def bump_inference_server(plan: Plan, gh: GitHub) -> None:
 def bump_studio(plan: Plan, gh: GitHub) -> None:
     tool = plan.supplement["tools"]["tt-studio"]
     old = str(tool["golden_version"])
-    tag = gh.latest_release(STUDIO_REPO).tag
-    if tag == old:
+    version = gh.latest_pypi_version(STUDIO_PACKAGE)
+    if version == old:
         return
-    tool["golden_version"] = tag
-    plan.changes.append(Change("tt-studio", old, tag))
+    tool["golden_version"] = version
+    plan.changes.append(Change("tt-studio", old, version))
 
 
 def bump_model_manager(plan: Plan, gh: GitHub) -> None:
@@ -352,8 +356,9 @@ _REVIEW_ITEMS = {
         "container naming `tt model ps` reads (upstream src/tt_kernel/container.py).",
     ],
     "tt-studio": [
-        "Re-check run.py's `run <model>`, `--stop-model <model>` and `--stop` contract "
-        "(backends/serving/studio.py) — this is what a prior pin bump broke before v2.11.0.",
+        "Re-check the `tt-studio` command's `run <model>`, `--stop-model <model>` and `--stop` "
+        "contract (backends/serving/studio.py) — this is what a prior pin bump broke before "
+        "v2.11.0.",
         "Re-check STUDIO_OWN_MODELS in modelhub/studio.py against the `hand_owned` entries "
         "of the new tag's app/backend/shared_config/models_from_inference_server.json.",
     ],

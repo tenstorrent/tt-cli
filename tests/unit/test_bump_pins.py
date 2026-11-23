@@ -51,9 +51,9 @@ repo = "https://github.com/tenstorrent/tt-model-manager"
 golden_version = "0000000000000000000000000000000000000000"
 
 [tools.tt-studio]
-kind = "git-venv"
-golden_version = "v2.11.0"
-repo = "https://github.com/tenstorrent/tt-studio"
+kind = "uv-tool"
+package = "tt-studio"
+golden_version = "2.11.0"
 """
 
 TESTS_YML = "      - uses: tenstorrent/tt-installer@v3.5.4\n"
@@ -88,6 +88,7 @@ class FakeGitHub:
         self.blobs: dict[str, bytes] = {}
         self.head = ("main", "0000000000000000000000000000000000000000", "2026-01-01")
         self.tag_list: list[str] = []
+        self.pypi: dict[str, str] = {}
 
     def add_release(self, repo: str, tag: str, assets: dict[str, bytes], *, latest: bool = False, digest: bool = True):
         rel = bump_pins.Release(tag=tag)
@@ -108,6 +109,9 @@ class FakeGitHub:
     def default_branch_head(self, repo):
         return self.head
 
+    def latest_pypi_version(self, package):
+        return self.pypi[package]
+
     def tags(self, repo):
         return self.tag_list
 
@@ -122,7 +126,7 @@ def gh(tmp_path, monkeypatch) -> FakeGitHub:
     fake.add_release("tenstorrent/tt-installer", "v3.5.4", {"install.sh": _script("v1.0.0")}, latest=True)
     fake.add_release("tenstorrent/tt-sw-manifest", "v1.0.0", {"golden.json": GOLDEN_V1}, latest=True)
     fake.add_release("tenstorrent/tt-inference-server", "v0.18.0", {}, latest=True)
-    fake.add_release("tenstorrent/tt-studio", "v2.11.0", {}, latest=True)
+    fake.pypi["tt-studio"] = "2.11.0"
     # The bundled spec, and the support list generated from it — the script
     # rebuilds the second whenever it re-bundles the first, and compares model
     # counts against it.
@@ -278,16 +282,16 @@ def test_inference_server_bump_is_refused_when_the_spec_cannot_be_bundled(gh, sp
     assert any(reason in n and "left at v0.18.0" in n for n in plan.notes)
 
 
-def test_studio_bump_follows_the_latest_release(gh):
-    gh.add_release("tenstorrent/tt-studio", "v2.12.0", {}, latest=True)
+def test_studio_bump_follows_the_latest_pypi_version(gh):
+    gh.pypi["tt-studio"] = "2.12.0"
 
     plan = _plan(gh)
 
     (change,) = plan.changes
-    assert (change.component, change.old, change.new) == ("tt-studio", "v2.11.0", "v2.12.0")
+    assert (change.component, change.old, change.new) == ("tt-studio", "2.11.0", "2.12.0")
     doc = tomlkit.parse(plan.files[bump_pins.SUPPLEMENT].decode())
-    assert doc["tools"]["tt-studio"]["golden_version"] == "v2.12.0"
-    assert "run.py's" in bump_pins.render_summary(plan)
+    assert doc["tools"]["tt-studio"]["golden_version"] == "2.12.0"
+    assert "`tt-studio` command's" in bump_pins.render_summary(plan)
 
 
 def test_model_manager_tracks_the_default_branch_head(gh):

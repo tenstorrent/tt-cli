@@ -1098,7 +1098,7 @@ def studio_docker(monkeypatch):
 
 @pytest.fixture
 def fake_studio(studio_bin):
-    """Recorded-argv log for the fake tt-studio run.py (fake mode only)."""
+    """Recorded-argv log for the fake tt-studio (fake mode only)."""
     return studio_bin
 
 
@@ -1112,16 +1112,10 @@ def _studio_argv(log) -> list[str]:
 
 
 @pytest.mark.fakes_only
-def test_auto_routes_a_studio_only_model_to_studio(
-    runner, studio_docker, fake_studio, fakes_dir, tmp_path, monkeypatch
-):
-    cwd_log = tmp_path / "studio-cwd.log"
-    monkeypatch.setenv("FAKE_STUDIO_CWD_LOG", str(cwd_log))
+def test_auto_routes_a_studio_only_model_to_studio(runner, studio_docker, fake_studio):
     result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
     assert result.exit_code == 0, result.output
     assert _studio_argv(fake_studio) == ["run", "Qwen3.5-9B"]
-    # run.py resolves its compose file, .env and driver from cwd
-    assert cwd_log.read_text().strip() == str((fakes_dir / "studio-repo").resolve())
     assert "stops the model" in result.output
 
 
@@ -1240,7 +1234,7 @@ def test_studio_failure_is_tool_failed_and_tears_the_stack_down(
     runner, studio_docker, fake_studio, monkeypatch
 ):
     """A deploy that dies must not leave studio's containers and services up
-    behind the error: run.py --stop follows the failed `run`."""
+    behind the error: `tt-studio --stop` follows the failed `run`."""
     monkeypatch.setenv("FAKE_STUDIO_FAIL", "1")
     result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
@@ -1257,7 +1251,7 @@ def test_studio_teardown_failure_does_not_mask_the_deploy_error(
     monkeypatch.setenv("FAKE_STUDIO_STOP_FAIL", "1")
     result = runner.invoke(app, ["serve", "Qwen3.5-9B"])
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
-    assert "`run.py --stop` exited with status 1" in result.output
+    assert "`tt-studio --stop` exited with status 1" in result.output
     calls = [json.loads(line) for line in fake_studio.read_text().splitlines()]
     assert calls == [["run", "Qwen3.5-9B"], ["--stop"]]
 
@@ -1270,7 +1264,7 @@ def test_studio_success_leaves_the_stack_up(runner, studio_docker, fake_studio):
     assert calls == [["run", "Qwen3.5-9B"]]
 
 
-def test_studio_dry_run_needs_neither_docker_nor_a_checkout(
+def test_studio_dry_run_needs_neither_docker_nor_an_install(
     runner, isolated_dirs, no_shell_hf_token
 ):
     result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--dry-run", "--json"])
@@ -1278,18 +1272,18 @@ def test_studio_dry_run_needs_neither_docker_nor_a_checkout(
     plan = json.loads(result.output)
     assert plan["backend"] == "studio"
     assert plan["model"] == "Qwen3.5-9B"
-    assert plan["installed"] is False and plan["cwd"] is None
-    assert plan["argv"] == ["<run.py>", "run", "Qwen3.5-9B"]
+    assert plan["installed"] is False and plan["path"] is None
+    assert plan["argv"] == ["<tt-studio>", "run", "Qwen3.5-9B"]
     assert plan["hf_token_source"] is None
-    assert not (isolated_dirs / "data" / "tools").exists()  # nothing cloned
+    assert not (isolated_dirs / "data" / "tools").exists()  # nothing installed
 
 
 @pytest.mark.fakes_only
-def test_studio_dry_run_reports_the_installed_checkout(runner, fake_studio, fakes_dir):
+def test_studio_dry_run_reports_the_installed_binary(runner, fake_studio, fakes_dir):
     result = runner.invoke(app, ["serve", "Qwen3.5-9B", "--studio", "--dry-run"])
     assert result.exit_code == 0, result.output
     assert "TT-Studio" in result.output
-    assert str(fakes_dir / "studio-repo") in result.output
+    assert str(fakes_dir / "bin" / "tt-studio") in result.output
     assert not fake_studio.exists()  # a dry run never launches
 
 
@@ -1631,7 +1625,7 @@ def test_launch_releases_the_ui_before_the_child_takes_the_terminal(monkeypatch)
 
 
 def test_studio_releases_the_ui_before_run_py_takes_the_terminal(tmp_path, monkeypatch):
-    """Same contract on the studio path: run.py owns the terminal once it starts."""
+    """Same contract on the studio path: tt-studio owns the terminal once it starts."""
     from tenstorrent.backends.serving import studio as studio_mod
     from tenstorrent.models.model import ModelInfo
     from tenstorrent.output import OutputManager
@@ -1640,7 +1634,7 @@ def test_studio_releases_the_ui_before_run_py_takes_the_terminal(tmp_path, monke
 
     class FakeRegistry:
         def ensure(self, tool, **kwargs):
-            return str(tmp_path / "tt-studio" / "run.py")
+            return str(tmp_path / "tt-studio")
 
     class FakeRunner:
         def stream(self, argv, **kwargs):
