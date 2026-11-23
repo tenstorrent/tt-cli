@@ -52,6 +52,13 @@ def test_manifest_loads_with_fixture_golden(isolated_dirs):
     assert not {"smi", "flash", "installer", "test-sha"} & manifest.system.keys()
 
 
+def test_studio_is_a_pypi_package_pinned_to_a_release(isolated_dirs):
+    studio = load_manifest().spec("tt-studio")
+    assert (studio.kind, studio.package, studio.bin_name) == ("uv-tool", "tt-studio", "tt-studio")
+    assert studio.repo is None  # a git source would install from a ref, not PyPI
+    assert studio.lazy and studio.golden_version[0].isdigit()
+
+
 def test_supplement_records_the_golden_pin(isolated_dirs):
     # The [golden] table is the single pin everything hangs off: the tag `tt update`
     # fetches at (and checks install.sh against), the digest the fetch is verified

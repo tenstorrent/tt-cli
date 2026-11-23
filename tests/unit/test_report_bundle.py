@@ -100,7 +100,11 @@ def test_known_secrets_gathers_env_hf_login_and_tool_dotenvs(tmp_path, monkeypat
 
     monkeypatch.setattr(report_bundle, "_inference_backend", lambda appctx: Backend())
     monkeypatch.setattr(report_bundle, "hf_token", lambda config: ("from-hf-login-4", "hf-login"))
-    registry = SimpleNamespace(_resolve_or_none=lambda tool: (str(studio / "run.py"),))
+    override = tmp_path / "studio-checkout"
+    override.mkdir()
+    (override / ".env").write_text("JWT_SECRET=" "from-studio-override-6\n")
+    monkeypatch.setenv("TT_STUDIO_HOME", str(studio))
+    registry = SimpleNamespace(_resolve_or_none=lambda tool: (str(override / "tt-studio"),))
     appctx = SimpleNamespace(config=None, registry=registry)
     environ = {"TT_DB_PASS": "from-env-5", "TT_METAL_HOME": "/opt/tt", "PATH": "/usr/bin"}
 
@@ -111,6 +115,7 @@ def test_known_secrets_gathers_env_hf_login_and_tool_dotenvs(tmp_path, monkeypat
         "from-inference-dotenv-1",
         "from-studio-dotenv-2",
         "from-studio-app-3",
+        "from-studio-override-6",
     }
 
 

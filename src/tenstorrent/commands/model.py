@@ -1044,7 +1044,7 @@ def stop_model(
                     appctx.registry, appctx.runner, appctx.config, appctx.output
                 ).stop(bundle, profile=profile)
             elif studio_only(model) or _studio_is_serving(appctx, model):
-                # Deployed by studio's run.py, so studio stops it (and resets its chips).
+                # Deployed by studio, so studio stops it (and resets its chips).
                 StudioBackend(
                     appctx.registry, appctx.runner, appctx.config, appctx.output
                 ).stop(model)

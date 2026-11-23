@@ -1764,7 +1764,7 @@ def test_model_stop_reports_a_studio_teardown_that_fails(runner, studio_bin, mon
     monkeypatch.setenv("FAKE_STUDIO_STOP_FAIL", "1")
     result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
     assert result.exit_code == 0, result.output  # the model itself did stop
-    assert "`run.py --stop` exited with status 1" in result.output
+    assert "`tt-studio --stop` exited with status 1" in result.output
 
 
 @pytest.mark.fakes_only
@@ -1777,7 +1777,7 @@ def test_model_stop_tears_studio_down_even_when_stop_model_fails(
     monkeypatch.setenv("FAKE_STUDIO_STOP_MODEL_FAIL", "1")
     result = runner.invoke(app, ["model", "stop", "Qwen3.5-9B"])
     assert result.exit_code == ExitCode.TOOL_FAILED, result.output
-    assert "`run.py --stop-model Qwen3.5-9B` exited with status 1" in result.output
+    assert "`tt-studio --stop-model Qwen3.5-9B` exited with status 1" in result.output
     calls = [json.loads(line) for line in studio_bin.read_text().splitlines()]
     assert calls == [["--stop-model", "Qwen3.5-9B"], ["--stop"]]
 
@@ -1916,7 +1916,7 @@ def test_stop_studio_with_its_backend_down_stops_the_models_with_docker(
     result = runner.invoke(app, ["model", "stop", "--studio"])
     assert result.exit_code == 0, result.output
     assert stop_log.read_text().split() == ["eeeeeeeeeeee"]
-    assert _studio_calls(studio_bin) == []  # no services, so nothing for run.py to do
+    assert _studio_calls(studio_bin) == []  # no services, so nothing for tt-studio to do
 
 
 @pytest.mark.fakes_only

@@ -28,6 +28,7 @@ from typing import Any, Callable, Mapping
 from .. import __version__
 from ..backends.device import get_device_backend
 from ..backends.serving.inference_server import CONTAINER_PREFIX, InferenceServerBackend
+from ..backends.serving.studio import runtime_root as studio_runtime_root
 from ..backends.smi import parse_snapshot
 from ..context import AppContext
 from ..errors import ExitCode, TTError
@@ -49,7 +50,7 @@ _STUDIO_IMAGE_PREFIX = "ghcr.io/tenstorrent/tt-studio/studio_images"
 _ENV_PREFIXES = ("TT_", "HF_")
 _ENV_ALWAYS = ("HF_TOKEN", "JWT_SECRET", "SERVICE_PORT")
 # Where the serving tools keep the credentials they were given (HF_TOKEN, JWT_SECRET,
-# DJANGO_SECRET_KEY …), relative to their checkout.
+# DJANGO_SECRET_KEY …), relative to the checkout or runtime root.
 _TOOL_DOTENVS = (".env", "app/.env")
 _STUDIO_TOOL = "tt-studio"
 
@@ -300,7 +301,8 @@ def known_secrets(appctx: AppContext, environ: Mapping[str, str] | None = None) 
     """Credentials on this machine, so they can be scrubbed wherever they turn up,
     even bare and unlabelled (a 64-char hex JWT_SECRET is indistinguishable from a
     hash by shape): secret-named env vars, the Hugging Face login, and the .env
-    files the serving tools write into their checkouts. Every lookup is fenced."""
+    files the serving tools write into their checkouts and runtime roots. Every lookup
+    is fenced."""
     environ = os.environ if environ is None else environ
     values = [value for name, value in environ.items() if is_secret_name(name)]
     try:
@@ -316,9 +318,10 @@ def known_secrets(appctx: AppContext, environ: Mapping[str, str] | None = None) 
             roots.append(root)
     except Exception:
         pass
+    roots.append(studio_runtime_root())
     try:
         found = appctx.registry._resolve_or_none(_STUDIO_TOOL)
-        if found is not None:
+        if found is not None:  # a dev override can point at a checkout with its own .env
             roots.append(Path(found[0]).parent)
     except Exception:
         pass
