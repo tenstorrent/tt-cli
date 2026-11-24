@@ -784,7 +784,7 @@ class InferenceServerBackend:
     def _in_use(model: ModelInfo, what: str) -> TTError:
         return TTError(
             what,
-            why="Another served model holds them.",
+            why="Another served model or a running tt-bio job holds them.",
             next_step=f"`tt model ps` to see what is running, `tt model stop <model>` "
             f"to free them, then re-run `tt serve {model.name}`.",
             exit_code=ExitCode.TOOL_FAILED,

@@ -93,3 +93,30 @@ golden_version = "2.12.0"
 python = "3.12"
 # Only users who serve a studio-only model need it.
 lazy = true
+
+[tools.tt-bio]
+# tt-bio: biomolecular structure prediction (Boltz-2, ESMFold2, OpenFold3, ...),
+# binder design and protein embeddings on Tenstorrent cards. Published to PyPI, so
+# a plain pinned version — unlike tt-model, which is still installed from git.
+# The [tenstorrent] extra is what pulls the ttnn wheel it computes with; without it
+# only the Boltz-2 CPU path works, which is not what a Tenstorrent box wants.
+kind = "uv-tool"
+package = "tt-bio[tenstorrent]"
+# bin is set explicitly because bin_name would otherwise be the package string,
+# extra and all, and the entry point is plain `tt-bio`.
+bin = "tt-bio"
+golden_version = "0.37.0"
+# tt-bio requires >=3.10,<3.13 and excludes 3.11 entirely; 3.12 is what upstream
+# tests on (Ubuntu 24.04). Pinned because the uv tool venv is ours to provision.
+python = "3.12"
+health = ["--version"]
+# Installed into tt-bio's own venv with `--with`, so `tt bio notebook` gets one
+# interpreter that can both import tt_bio and serve the notebook. Kept here rather
+# than in a second tool entry because a separate venv would re-download ttnn and
+# torch — gigabytes — to reach the same place. Both are small beside that.
+# jupyterlab: the notebook server itself. py3Dmol: renders a fold in the notebook,
+# which is the point of the thing — a structure you can turn, not a path on stdout.
+deps = ["jupyterlab==4.6.6", "py3Dmol==2.5.5"]
+# The install pulls ttnn and torch — gigabytes. Only users who fold need it, so it
+# lands on first use of `tt bio` (`tt update --include-lazy` forces it).
+lazy = true
