@@ -8,7 +8,7 @@ name: release
 # The tag drives everything and nothing here rewrites the repo — no bot commits, no
 # temp branches. A tag that points at a commit outside main, or that disagrees with
 # `__version__`, fails in the first job, before anything is built or published. The
-# one exception is a beta (`X.Y.ZbN`), which may also be tagged on a `beta/<feature>`
+# one exception is a beta (`X.Y.ZbN`), which may also be tagged on a `beta/<version>`
 # branch; see docs/beta-releases.md.
 #
 # Order of the publishing jobs is deliberate: the GitHub release (deletable) first,
@@ -73,7 +73,7 @@ jobs:
           print(f"version={raw}")
           print(f"prerelease={str(version.is_prerelease).lower()}")
           # A beta (1.3.0b1) is the one pre-release that is published to PyPI and may
-          # be tagged on a beta/<feature> branch. rc, alpha and dev versions are not.
+          # be tagged on a beta/<version> branch. rc, alpha and dev versions are not.
           beta = version.pre is not None and version.pre[0] == "b" and version.dev is None
           print(f"beta={str(beta).lower()}")
           PY
@@ -100,7 +100,7 @@ jobs:
           if [ "${BETA}" != "true" ]; then
             echo "::error::tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main"
             echo "Releases are cut from main only; only a beta (X.Y.ZbN) may be tagged"
-            echo "on a beta/<feature> branch. Delete the tag, merge the change through"
+            echo "on a beta/<version> branch. Delete the tag, merge the change through"
             echo "a PR, and tag the resulting commit on main."
             exit 1
           fi
@@ -110,13 +110,13 @@ jobs:
             --format='%(refname:strip=3)' 'refs/remotes/origin/beta/')
           if [ "${#branches[@]}" -eq 0 ]; then
             echo "::error::tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main or any beta/* branch"
-            echo "A beta is cut from a beta/<feature> branch. Delete the tag, merge the"
+            echo "A beta is cut from a beta/<version> branch. Delete the tag, merge the"
             echo "change through a PR into that branch, and tag the resulting commit."
             exit 1
           fi
           if [ "${#branches[@]}" -gt 1 ]; then
             echo "::error::tag ${GITHUB_REF_NAME} is on several beta branches: ${branches[*]}"
-            echo "Tag a commit that only one beta/<feature> branch contains."
+            echo "Tag a commit that only one beta/<version> branch contains."
             exit 1
           fi
           echo "beta-branch=${branches[0]}" >> "$GITHUB_OUTPUT"
@@ -231,7 +231,7 @@ jobs:
           path: dist/
 
       # Diff against the latest *stable* tag this commit contains, never another
-      # pre-release: betas from different beta/<feature> branches share one version
+      # pre-release: betas from different beta/<version> branches share one version
       # line, so the "previous tag" could be another feature's beta and the notes
       # would be wrong for both. Also names a beta's release after its branch.
       - name: Pick the changelog base and release name

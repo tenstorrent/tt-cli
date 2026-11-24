@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   # ── No beta versions on main ───────────────────────────────────────────────
-  # A beta/<feature> branch carries a beta __version__ (1.3.0b1). Graduating the
+  # A beta/<version> branch carries a beta __version__ (1.3.0b1). Graduating the
   # feature merges that branch into main, and the version has to be reset first, or
   # main would start building betas. Skipped for every other event, including the
   # release.yml call (whose event is the caller's tag push).
