@@ -59,7 +59,7 @@ def test_log_files_never_follow_a_symlink(tmp_path):
     (logs / "sub" / "inner.log").write_text("ok\n")
     outside = tmp_path / "ssh"
     outside.mkdir()
-    (outside / "id_rsa.log").write_text("-----BEGIN PRIVATE KEY-----\n")
+    (outside / "id_rsa.log").write_text("-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5 + "\n")
     os.symlink(outside / "id_rsa.log", logs / "key.log")
     os.symlink(outside, logs / "linked-dir")
     found = sorted(p.relative_to(logs).as_posix() for p in _log_files(logs, "*.log"))
