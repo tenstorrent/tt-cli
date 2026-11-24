@@ -71,11 +71,14 @@ def _environment_lines(appctx: AppContext) -> list[str]:
     try:
         for row in appctx.registry.status():
             # Deliberately not row.path: it is absolute and contains the username.
+            golden = f"golden {row.golden_version}"
+            if row.pinned_version:
+                golden += f", pinned {row.pinned_version}"
             if row.installed_version is None:
-                lines.append(f"- {row.name}: golden {row.golden_version}, not installed")
+                lines.append(f"- {row.name}: {golden}, not installed")
             else:
                 lines.append(
-                    f"- {row.name}: golden {row.golden_version}, "
+                    f"- {row.name}: {golden}, "
                     f"installed {row.installed_version} ({row.source})"
                 )
     except Exception:

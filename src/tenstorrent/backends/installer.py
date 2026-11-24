@@ -53,6 +53,7 @@ class PlanItem:
     # touched": external (an env/config override owns it) and optional (a lazy tool
     # that is not installed; `--include-lazy` installs it).
     action: str
+    pinned: bool = False  # target is the user's pin (`tt self pin`), not golden
 
 
 @dataclass(frozen=True)
@@ -193,9 +194,11 @@ class InstallerBackend:
             if normalized != manifest.spec(INSTALLER_TOOL).golden_version:
                 _check_installer_floor(normalized)
         items: list[PlanItem] = []
-        for name, spec in sorted(manifest.tools.items()):
+        for name in sorted(manifest.tools):
             if name == INSTALLER_TOOL:
                 continue  # it is part of the system stack below, not a row of its own
+            spec = self.registry.target_spec(name)
+            pinned = self.registry.pinned_version(name) is not None
             resolved = self.registry._resolve_or_none(name)
             if resolved is not None and resolved[1] in ("env", "override"):
                 items.append(
@@ -219,7 +222,9 @@ class InstallerBackend:
                 action, current = "upgrade", installed.version
             else:
                 action, current = "up-to-date", installed.version
-            items.append(PlanItem(name, spec.kind, current, spec.golden_version, action))
+            items.append(
+                PlanItem(name, spec.kind, current, spec.golden_version, action, pinned)
+            )
         system_target = ", ".join(f"{k} {v}" for k, v in sorted(manifest.system.items()))
         if manifest.firmware:
             system_target += f", firmware {manifest.firmware}"
@@ -459,7 +464,7 @@ class InstallerBackend:
                 if ui.show_detail():
                     ui.note(f"{item.name} {item.current} is up to date", marker="✓")
                 continue
-            spec = self.registry.spec(item.name)
+            spec = self.registry.target_spec(item.name)
             # The error is carried out of the block rather than handled inside it:
             # a `continue` in a `with` body exits the context manager and skips
             # everything after it, which silently swallowed this warning.

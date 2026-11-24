@@ -255,7 +255,8 @@ class ConfigStore:
     def _unknown_key_error(self, dotted_key: str) -> TTError:
         return TTError(
             f"Unknown config key: {dotted_key!r}.",
-            why="Only documented keys (and tools.override.<tool>) are accepted.",
+            why="Only documented keys (and tools.override.<tool>, tools.pin.<tool>) "
+            "are accepted.",
             next_step="Run `tt config list` to see all available keys.",
             exit_code=ExitCode.CONFIG,
         )
@@ -269,7 +270,7 @@ class ConfigStore:
                 try:
                     return schema.default_for(dotted_key)
                 except KeyError:
-                    return None  # known dynamic key (tools.override.*) that is unset
+                    return None  # known dynamic key (tools.override.*, tools.pin.*) that is unset
             node = node[part]
         return node.unwrap() if hasattr(node, "unwrap") else node
 
@@ -286,6 +287,23 @@ class ConfigStore:
             node = node[part]
         node[leaf] = value
         self._write_document(doc)
+
+    def unset(self, dotted_key: str) -> None:
+        """Remove a key from the file so it falls back to its default. No-op if absent."""
+        if not schema.is_known_key(dotted_key):
+            raise self._unknown_key_error(dotted_key)
+        if not self.paths.config_file.exists():
+            return
+        doc = self._read_document()
+        *table_parts, leaf = dotted_key.split(".")
+        node: Any = doc
+        for part in table_parts:
+            if part not in node:
+                return
+            node = node[part]
+        if leaf in node:
+            del node[leaf]
+            self._write_document(doc)
 
     def list_entries(self) -> dict[str, tuple[Any, str]]:
         """Effective config as {key: (value, source)}, sorted by key.

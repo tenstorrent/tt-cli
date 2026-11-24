@@ -54,6 +54,19 @@ per-tool venvs under `~/.local/share/tenstorrent/` so they can never conflict wi
 other or with your Python environment. With `--offline`, tool pins converge from local
 caches and the system stack is skipped (tt-installer inherently needs the network).
 
+### Pinning a tool to another version
+
+`tt self pin <tool> <version>` makes tt install and run that version instead of the golden
+one, e.g. `tt self pin tt-inference-server v0.25.0`. The version is a PyPI release or, for
+tools installed from git, a tag, branch or commit. tt checks that it exists upstream before
+saving it (`--offline` skips the check), and the pin is stored under `[tools.pin]` in the
+config. `tt self tools` shows pins next to the golden versions.
+
+While a pin differs from the golden version, `tt update` asks whether to move that tool back
+to golden. Without a terminal to ask on, or under `--json`, it keeps the pin.
+`tt self unpin <tool>` returns the tool to golden. tt-installer can't be pinned: use
+`tt update <version>` to run a specific tt-installer release.
+
 ## Keeping tt up to date
 
 Tool pins (tt-model-manager, tt-inference-server, the installer) ship inside the `tenstorrent`

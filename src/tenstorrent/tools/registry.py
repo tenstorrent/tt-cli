@@ -9,10 +9,14 @@ resolve() order (first hit wins):
   3. installed state              (what we installed via `tt update`)
   4. ~/.tenstorrent-venv/bin/<tool>  (tt-installer's managed venv; smi/flash only)
 Missing everywhere → TTError(TOOL_MISSING) pointing at `tt update`.
+
+Installs target the golden version unless config [tools.pin] names another one
+(`tt self pin`); target_spec() is that effective spec.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +31,7 @@ from .installers import (
     Installer,
     ScriptInstaller,
     UvToolInstaller,
+    remote_version_exists,
 )
 from .manifest import (
     INSTALLER_MANAGED_TOOLS,
@@ -37,6 +42,11 @@ from .manifest import (
 )
 from .runner import Runner
 from .state import ToolState
+
+
+# Kinds whose installers take any upstream version. A script's URL is fixed to the
+# golden release (tt-installer is chosen via `tt update <version>` instead).
+PINNABLE_KINDS = frozenset({"uv-tool", "git-venv"})
 
 
 def env_var_for(tool_name: str) -> str:
@@ -57,6 +67,7 @@ class ToolStatus:
     installed_version: str | None
     path: str | None
     source: str  # "env" | "override" | "installed" | "installer" | "missing"
+    pinned_version: str | None = None
 
 
 class ToolRegistry:
@@ -99,6 +110,75 @@ class ToolRegistry:
     def spec(self, name: str) -> ToolSpec:
         return self.manifest.spec(name)
 
+    # -- version pins ---------------------------------------------------------------
+    def pinned_version(self, name: str) -> str | None:
+        """The user's pinned version of a pinnable tool, or None to follow golden."""
+        if self.spec(name).kind not in PINNABLE_KINDS:
+            return None
+        value = self.config.get(f"tools.pin.{name}")
+        if value is None:
+            return None
+        return str(value).strip() or None
+
+    def target_spec(self, name: str) -> ToolSpec:
+        """The spec to install: the golden version, or the pinned one."""
+        spec = self.spec(name)
+        pinned = self.pinned_version(name)
+        return dataclasses.replace(spec, golden_version=pinned) if pinned else spec
+
+    def pin(self, name: str, version: str, *, offline: bool = False) -> bool:
+        """Pin a tool to `version`. Returns whether the version was confirmed to
+        exist upstream (False when offline or the lookup was inconclusive)."""
+        spec = self.spec(name)
+        if spec.kind not in PINNABLE_KINDS:
+            hint = "Run `tt update <version>` to use a specific tt-installer."
+            raise TTError(
+                f"{name} cannot be pinned.",
+                why=f"Its {spec.kind!r} release is fixed to the golden version.",
+                next_step=hint if spec.kind == "script" else None,
+                exit_code=ExitCode.USAGE,
+                reason="tool.not_pinnable",
+            )
+        version = version.strip()
+        if not version:
+            raise TTError(
+                "The version to pin is empty.",
+                exit_code=ExitCode.USAGE,
+                reason="tool.pin_empty",
+            )
+        verified = False
+        if not offline:
+            verified = self._require_published(dataclasses.replace(spec, golden_version=version))
+        self.config.set(f"tools.pin.{name}", version)
+        return verified
+
+    def unpin(self, name: str) -> None:
+        self.spec(name)  # unknown names fail with CONFIG
+        self.config.unset(f"tools.pin.{name}")
+
+    def _require_published(self, spec: ToolSpec) -> bool:
+        """Raise if `spec.golden_version` is known not to exist upstream; return
+        whether it is known to exist."""
+        exists = remote_version_exists(spec, self._runner)
+        if exists is False:
+            if spec.repo:
+                where = spec.repo
+                listing = f"`git ls-remote --tags {spec.repo}` lists them"
+            else:
+                where = f"PyPI ({spec.package})"
+                listing = f"see https://pypi.org/project/{spec.package}/#history"
+            raise TTError(
+                f"{spec.name} version {spec.golden_version!r} does not exist.",
+                why=f"No release or git ref by that name was found at {where}.",
+                next_step=f"Pick a published version ({listing}), then "
+                f"`tt self pin {spec.name} <version>`; or `tt self unpin {spec.name}` "
+                "to follow the golden version.",
+                exit_code=ExitCode.USAGE,
+                reason="tool.version_not_found",
+                details={"tool": spec.name, "version": spec.golden_version},
+            )
+        return bool(exists)
+
     # -- resolution -----------------------------------------------------------------
     def _resolve_or_none(self, name: str) -> tuple[Path, str] | None:
         env_path = os.environ.get(env_var_for(name))
@@ -135,16 +215,17 @@ class ToolRegistry:
         return found[0]
 
     def ensure(self, name: str, *, offline: bool = False) -> Path:
-        """Resolve, installing at the golden pin if missing or stale.
+        """Resolve, installing at the target version (golden, or the user's pin)
+        if missing or stale.
 
         env/override resolutions are the user's business and never touched, but a
-        state-installed tool whose recorded version no longer matches the golden
-        pin is reinstalled — otherwise a manifest pin bump would never take effect
+        state-installed tool whose recorded version no longer matches the target
+        is reinstalled — otherwise a manifest pin bump would never take effect
         for tools installed on demand (script, git-venv). An unknown golden pin
         (golden.json not fetched yet) never triggers a reinstall. The installer-venv
         fallback is a resolve-time convenience only: `tt update` still installs the
         pinned copy, which then wins at step 3."""
-        spec = self.spec(name)
+        spec = self.target_spec(name)
         found = self._resolve_or_none(name)
         if found is not None:
             path, source = found
@@ -171,6 +252,9 @@ class ToolRegistry:
                 exit_code=ExitCode.CONFIG,
                 reason="tool.golden_unknown",
             )
+        if not offline and spec.golden_version == self.pinned_version(spec.name):
+            # A pin can come from a hand-edited config, or name a since-deleted release.
+            self._require_published(spec)
         installer = self._installers.get(spec.kind)
         if installer is None:
             raise TTError(
@@ -197,6 +281,7 @@ class ToolRegistry:
                     installed_version=installed.version if installed else None,
                     path=str(found[0]) if found else None,
                     source=found[1] if found else "missing",
+                    pinned_version=self.pinned_version(name),
                 )
             )
         return rows

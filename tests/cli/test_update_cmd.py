@@ -687,3 +687,79 @@ def test_plan_summary_reads_as_a_gist():
     )
     assert _plan_summary(Plan(["up-to-date"])) == "1 up to date"
     assert _plan_summary(Plan([])) == "nothing to do"
+
+
+GOLDEN_SMI = json.loads(
+    (Path(__file__).parents[1] / "fakes" / "data" / "golden.json").read_text()
+)["smi"]
+
+
+@pytest.fixture
+def pinned_smi(runner, monkeypatch):
+    monkeypatch.setattr(
+        "tenstorrent.tools.registry.remote_version_exists", lambda spec, runner: True
+    )
+    assert runner.invoke(app, ["self", "pin", "tt-smi", "6.5.0"]).exit_code == 0
+    return "6.5.0"
+
+
+def _smi_installs(fake_uv):
+    calls = [json.loads(line) for line in fake_uv.read_text().splitlines()]
+    return [c[2] for c in calls if c[:2] == ["tool", "install"] and c[2].startswith("tt-smi")]
+
+
+def test_update_dry_run_targets_the_pin(runner, pinned_smi):
+    result = runner.invoke(app, ["update", "--dry-run", "--json"])
+    assert result.exit_code == 0
+    smi = next(i for i in _json(result)["items"] if i["name"] == "tt-smi")
+    assert smi["target"] == pinned_smi
+    assert smi["pinned"] is True
+    human = runner.invoke(app, ["update", "--dry-run"]).output
+    assert f"{pinned_smi} (pinned)" in human
+
+
+@pytest.mark.fakes_only
+def test_update_keeps_a_pin_when_declined(
+    runner, fake_uv, fake_installer, pinned_smi, monkeypatch
+):
+    monkeypatch.setattr("tenstorrent.commands.update._stdin_is_interactive", lambda: True)
+    result = runner.invoke(app, ["update"], input="n\n")
+    assert result.exit_code == 0, result.output
+    assert f"tt-smi is pinned to {pinned_smi}. Update it to the golden version" in result.output
+    assert _smi_installs(fake_uv) == [f"tt-smi=={pinned_smi}"]
+    assert runner.invoke(app, ["config", "get", "tools.pin.tt-smi"]).output.strip() == pinned_smi
+
+
+@pytest.mark.fakes_only
+def test_update_moves_a_pin_to_golden_when_accepted(
+    runner, fake_uv, fake_installer, pinned_smi, monkeypatch
+):
+    monkeypatch.setattr("tenstorrent.commands.update._stdin_is_interactive", lambda: True)
+    result = runner.invoke(app, ["update"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert _smi_installs(fake_uv) == [f"tt-smi=={GOLDEN_SMI}"]
+    tools = json.loads(runner.invoke(app, ["self", "tools", "--json"]).output)["tools"]
+    assert next(t for t in tools if t["name"] == "tt-smi")["pinned_version"] is None
+
+
+@pytest.mark.fakes_only
+def test_update_keeps_pins_without_a_terminal(runner, fake_uv, fake_installer, pinned_smi):
+    result = runner.invoke(app, ["update"])
+    assert result.exit_code == 0, result.output
+    assert "Update it to the golden version" not in result.output
+    assert f"Keeping tt-smi at its pinned version {pinned_smi}" in result.output
+    assert _smi_installs(fake_uv) == [f"tt-smi=={pinned_smi}"]
+
+
+@pytest.mark.fakes_only
+def test_update_does_not_ask_about_a_pin_equal_to_golden(
+    runner, fake_uv, fake_installer, monkeypatch
+):
+    monkeypatch.setattr(
+        "tenstorrent.tools.registry.remote_version_exists", lambda spec, runner: True
+    )
+    monkeypatch.setattr("tenstorrent.commands.update._stdin_is_interactive", lambda: True)
+    runner.invoke(app, ["self", "pin", "tt-smi", GOLDEN_SMI])
+    result = runner.invoke(app, ["update"])
+    assert result.exit_code == 0, result.output
+    assert "Update it to the golden version" not in result.output

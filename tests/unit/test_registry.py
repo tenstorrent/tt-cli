@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -183,3 +184,91 @@ def test_status_reports_source(registry, monkeypatch, tmp_path):
     monkeypatch.setenv("TT_TOOL_BIN_TT_SMI", str(fake))
     rows = {r.name: r for r in registry.status()}
     assert rows["tt-smi"].source == "env"
+
+
+@pytest.fixture
+def upstream(monkeypatch):
+    """What remote_version_exists answers; tests set .exists."""
+    upstream = SimpleNamespace(exists=True, checked=[])
+
+    def fake(spec, runner):
+        upstream.checked.append((spec.name, spec.golden_version))
+        return upstream.exists
+
+    monkeypatch.setattr(registry_module, "remote_version_exists", fake)
+    return upstream
+
+
+def test_pin_changes_the_install_target(registry, upstream):
+    assert registry.pin("tt-inference-server", " v0.25.0 ") is True
+    assert registry.pinned_version("tt-inference-server") == "v0.25.0"
+    assert registry.target_spec("tt-inference-server").golden_version == "v0.25.0"
+    assert registry.spec("tt-inference-server").golden_version != "v0.25.0"
+    registry.ensure("tt-inference-server")
+    assert registry.state.get("tt-inference-server").version == "v0.25.0"
+
+
+def test_ensure_does_not_undo_an_installed_pin(registry, upstream):
+    registry.pin("tt-inference-server", "v0.25.0")
+    registry.ensure("tt-inference-server")
+    registry.ensure("tt-inference-server")
+    assert len(registry._fake_installer.calls) == 1
+
+
+def test_unpin_returns_to_golden(registry, upstream):
+    registry.pin("tt-smi", "6.5.0")
+    registry.unpin("tt-smi")
+    assert registry.pinned_version("tt-smi") is None
+    assert registry.target_spec("tt-smi") == registry.spec("tt-smi")
+
+
+def test_pin_of_a_missing_version_is_a_clear_error(registry, upstream):
+    upstream.exists = False
+    with pytest.raises(TTError) as exc:
+        registry.pin("tt-inference-server", "v9.9.9")
+    assert exc.value.exit_code == ExitCode.USAGE
+    assert exc.value.reason == "tool.version_not_found"
+    assert "'v9.9.9' does not exist" in exc.value.what
+    assert "git ls-remote --tags" in exc.value.next_step
+    assert registry.pinned_version("tt-inference-server") is None
+
+
+def test_pin_offline_skips_the_check(registry, upstream):
+    assert registry.pin("tt-smi", "6.5.0", offline=True) is False
+    assert upstream.checked == []
+    assert registry.pinned_version("tt-smi") == "6.5.0"
+
+
+def test_pin_of_an_unverifiable_version_is_kept(registry, upstream):
+    upstream.exists = None
+    assert registry.pin("tt-model", "0123456789abcdef0123456789abcdef01234567") is False
+    assert registry.pinned_version("tt-model") == "0123456789abcdef0123456789abcdef01234567"
+
+
+def test_installer_script_cannot_be_pinned(registry, upstream):
+    with pytest.raises(TTError) as exc:
+        registry.pin("tt-installer", "3.5.0")
+    assert exc.value.reason == "tool.not_pinnable"
+    assert "tt update <version>" in exc.value.next_step
+
+
+def test_a_hand_written_pin_on_a_script_is_ignored(registry):
+    registry.config.set("tools.pin.tt-installer", "3.5.0")
+    assert registry.pinned_version("tt-installer") is None
+    assert registry.target_spec("tt-installer") == registry.spec("tt-installer")
+
+
+def test_install_rejects_a_hand_written_pin_that_does_not_exist(registry, upstream):
+    registry.config.set("tools.pin.tt-inference-server", "v9.9.9")
+    upstream.exists = False
+    with pytest.raises(TTError) as exc:
+        registry.ensure("tt-inference-server")
+    assert exc.value.reason == "tool.version_not_found"
+    assert registry._fake_installer.calls == []
+
+
+def test_status_reports_the_pin(registry, upstream):
+    registry.pin("tt-smi", "6.5.0")
+    rows = {r.name: r for r in registry.status()}
+    assert rows["tt-smi"].pinned_version == "6.5.0"
+    assert rows["tt-flash"].pinned_version is None

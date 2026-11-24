@@ -191,11 +191,15 @@ def _config_key(value: Any) -> str | None:
     key = str(value)
     if key in _config_keys():
         return key
-    # tools.override.<tool> is a dynamic namespace that flatten() drops (empty table).
-    # Record the namespace only: the suffix is a tool name, but collapsing avoids
-    # depending on the manifest here, and the interesting signal is "an override was set".
-    if key.startswith("tools.override."):
-        return "tools.override.*"
+    # tools.override.<tool> and tools.pin.<tool> are dynamic namespaces that flatten()
+    # drops (empty tables). Record the namespace only: the suffix is a tool name, but
+    # collapsing avoids depending on the manifest here, and the interesting signal is
+    # "an override (or pin) was set".
+    from ..config.schema import DYNAMIC_TABLES
+
+    for table in DYNAMIC_TABLES:
+        if key.startswith(f"{table}."):
+            return f"{table}.*"
     return None
 
 

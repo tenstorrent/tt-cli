@@ -63,6 +63,28 @@ def test_tools_override_is_a_dynamic_table(store):
     assert store.get("tools.override.tt-smi") == "/opt/bin/tt-smi"
 
 
+def test_tools_pin_is_a_dynamic_table(store):
+    assert store.get("tools.pin.tt-inference-server") is None
+    store.set("tools.pin.tt-inference-server", "v0.25.0")
+    assert store.get("tools.pin.tt-inference-server") == "v0.25.0"
+    assert store.unknown_keys() == []
+
+
+def test_unset_removes_the_key_and_keeps_the_rest(store):
+    store.set("tools.pin.tt-smi", "6.5.0")
+    store.set("device.backend", "native")
+    store.unset("tools.pin.tt-smi")
+    assert store.get("tools.pin.tt-smi") is None
+    assert store.get("device.backend") == "native"
+    store.unset("tools.pin.tt-smi")  # already absent: no-op
+
+
+def test_unset_rejects_unknown_keys(store):
+    with pytest.raises(TTError) as exc:
+        store.unset("telemetry.bogus")
+    assert exc.value.exit_code == ExitCode.CONFIG
+
+
 def test_list_flat_merges_file_over_defaults(store):
     flat = store.list_flat()
     assert flat["telemetry.enabled"] is False

@@ -8,9 +8,13 @@ import pytest
 
 from tenstorrent.config.paths import get_paths
 from tenstorrent.errors import ExitCode, TTError
-from tenstorrent.tools.installers import ScriptInstaller, UvToolInstaller
+from tenstorrent.tools.installers import (
+    ScriptInstaller,
+    UvToolInstaller,
+    remote_version_exists,
+)
 from tenstorrent.tools.manifest import ToolSpec
-from tenstorrent.tools.runner import Runner
+from tenstorrent.tools.runner import CaptureResult, Runner
 
 
 @pytest.fixture
@@ -140,3 +144,55 @@ def test_script_installer_uses_cached_copy(paths):
     installer.install(spec)  # second call: cache hit
     installer.install(spec, offline=True)  # offline works once cached
     assert len(calls) == 1
+
+
+class _LsRemoteRunner:
+    def __init__(self, returncode):
+        self.returncode = returncode
+        self.calls = []
+
+    def capture(self, argv, **kwargs):
+        self.calls.append(argv)
+        return CaptureResult(self.returncode, "", "")
+
+
+@pytest.mark.parametrize(("returncode", "expected"), [(0, True), (2, False), (128, None)])
+def test_remote_version_exists_for_a_git_ref(returncode, expected):
+    runner = _LsRemoteRunner(returncode)
+    spec = ToolSpec(
+        name="tt-inference-server", kind="git-venv", golden_version="v0.25.0",
+        repo="https://example.invalid/tt-inference-server",
+    )
+    assert remote_version_exists(spec, runner) is expected
+    assert runner.calls[0][:3] == ["git", "ls-remote", "--exit-code"]
+    assert "refs/tags/v0.25.0" in runner.calls[0]
+
+
+def test_remote_version_exists_cannot_check_a_commit():
+    runner = _LsRemoteRunner(0)
+    assert remote_version_exists(GIT_SPEC, runner) is None
+    assert runner.calls == []
+
+
+class _Response:
+    def __init__(self, status_code):
+        self.status_code = status_code
+        self.is_success = 200 <= status_code < 300
+
+
+@pytest.mark.parametrize(("status", "expected"), [(200, True), (404, False), (503, None)])
+def test_remote_version_exists_on_pypi(monkeypatch, status, expected):
+    import httpx
+
+    urls = []
+    monkeypatch.setattr(httpx, "get", lambda url, **_: urls.append(url) or _Response(status))
+    assert remote_version_exists(SMI_SPEC, Runner(sudo_command="")) is expected
+    assert urls == ["https://pypi.org/pypi/tt-smi/5.3.0/json"]
+
+
+def test_remote_version_exists_skips_pypi_with_a_custom_index(monkeypatch):
+    import httpx
+
+    monkeypatch.setenv("UV_INDEX_URL", "https://mirror.example.invalid/simple")
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: pytest.fail("PyPI was queried"))
+    assert remote_version_exists(SMI_SPEC, Runner(sudo_command="")) is None

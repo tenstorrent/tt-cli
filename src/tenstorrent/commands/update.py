@@ -145,16 +145,53 @@ def _confirm_reset(appctx, notice: str, *, yes: bool) -> None:
         raise typer.Exit(int(ExitCode.OK))
 
 
+def _diverged_pins(appctx, plan: UpdatePlan) -> list[tuple[str, str, str]]:
+    """(tool, pinned, golden) for each pinned tool whose pin differs from golden."""
+    pins = []
+    for item in plan.items:
+        if not item.pinned:
+            continue
+        golden = appctx.registry.spec(item.name).golden_version
+        if golden and item.target != golden:
+            pins.append((item.name, item.target, golden))
+    return pins
+
+
+def _offer_golden_for_pins(appctx, plan: UpdatePlan) -> bool:
+    """Ask whether each diverged pin should move to golden. Returns whether any did.
+    Without a terminal to ask on, pins are kept."""
+    pins = _diverged_pins(appctx, plan)
+    if not pins:
+        return False
+    if appctx.output.json_mode or not _stdin_is_interactive():
+        for name, pinned, golden in pins:
+            appctx.output.status(
+                f"Keeping {name} at its pinned version {pinned} (golden is {golden}); "
+                f"`tt self unpin {name}` returns it to golden.",
+                style="dim",
+            )
+        return False
+    unpinned = False
+    for name, pinned, golden in pins:
+        if typer.confirm(
+            f"{name} is pinned to {pinned}. Update it to the golden version {golden}?",
+            default=False,
+        ):
+            appctx.registry.unpin(name)
+            unpinned = True
+    return unpinned
+
+
 def _plan_table(payload: dict) -> Table:
     table = Table(title=f"Update plan (goldens: {payload['manifest_origin']})")
-    for column in ("component", "kind", "installed", "golden", "action"):
+    for column in ("component", "kind", "installed", "target", "action"):
         table.add_column(column)
     for item in payload["items"]:
         table.add_row(
             item["name"],
             item["kind"],
             item["current"] or "—",
-            item["target"],
+            item["target"] + (" (pinned)" if item.get("pinned") else ""),
             item["action"],
         )
     return table
@@ -260,6 +297,10 @@ def update(
         # Stale copies of these tools sitting in ~/.local/lib are actionable, so
         # this is never folded.
         backend.warn_unmanaged_app_clones()
+
+    with ui.prompting():
+        if _offer_golden_for_pins(appctx, plan):
+            plan = backend.plan(version=version, force=force, include_lazy=include_lazy)
 
     plan_payload = dataclasses.asdict(plan)
     if not appctx.output.json_mode:  # in JSON mode everything lands in one document

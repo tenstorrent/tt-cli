@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""`tt self` — the CLI itself: upgrade it, inspect its managed tools and telemetry."""
+"""`tt self` — the CLI itself: upgrade it, inspect and pin its managed tools, telemetry."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_error
 from ..context import get_app_context
 
 self_app = typer.Typer(
-    help="Manage the tt CLI itself: upgrade it, inspect its managed tools and telemetry.",
+    help="Manage the tt CLI itself: upgrade it, inspect and pin its managed tools, "
+    "telemetry.",
     no_args_is_help=True,
 )
 
@@ -36,13 +37,14 @@ def tools_status(
 
     def render(data: dict) -> Table:
         table = Table(title=f"Managed tools ({data['manifest_origin']})")
-        for column in ("tool", "kind", "golden", "installed", "source", "path"):
+        for column in ("tool", "kind", "golden", "pinned", "installed", "source", "path"):
             table.add_column(column)
         for row in data["tools"]:
             table.add_row(
                 row["name"],
                 row["kind"],
                 row["golden_version"],
+                row["pinned_version"] or "—",
                 row["installed_version"] or "—",
                 row["source"],
                 row["path"] or "—",
@@ -55,6 +57,69 @@ def tools_status(
             "tools": [dataclasses.asdict(r) for r in rows],
         },
         renderer=render,
+    )
+
+
+@self_app.command("pin", no_args_is_help=True)
+@handle_tt_errors
+def pin_tool(
+    ctx: typer.Context,
+    tool: str = typer.Argument(help="Managed tool, e.g. tt-inference-server"),
+    version: str = typer.Argument(help="Version, tag or git ref to use instead of golden"),
+    offline: bool = typer.Option(
+        False, "--offline", help="Skip checking that the version exists upstream."
+    ),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """Use a specific version of a managed tool instead of its golden version."""
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    registry = appctx.registry
+    verified = registry.pin(tool, version, offline=offline or appctx.offline)
+    pinned = registry.pinned_version(tool)
+    if not verified:
+        appctx.output.warn(
+            f"Could not confirm that {tool} {pinned} exists upstream; "
+            "installing it will fail if it does not."
+        )
+    appctx.output.emit(
+        {
+            "tool": tool,
+            "pinned_version": pinned,
+            "golden_version": registry.spec(tool).golden_version or None,
+            "verified": verified,
+        },
+        renderer=lambda d: f"Pinned {d['tool']} to {d['pinned_version']}. "
+        "`tt update` installs it (lazy tools: on next use); "
+        f"`tt self unpin {d['tool']}` returns it to golden.",
+    )
+
+
+@self_app.command("unpin", no_args_is_help=True)
+@handle_tt_errors
+def unpin_tool(
+    ctx: typer.Context,
+    tool: str = typer.Argument(help="Managed tool, e.g. tt-inference-server"),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """Return a pinned tool to its golden version."""
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    registry = appctx.registry
+    previous = registry.pinned_version(tool)
+    registry.unpin(tool)
+    appctx.output.emit(
+        {"tool": tool, "unpinned": previous},
+        renderer=lambda d: f"{d['tool']} follows its golden version again; "
+        "`tt update` installs it."
+        if d["unpinned"]
+        else f"{d['tool']} was not pinned.",
     )
 
 

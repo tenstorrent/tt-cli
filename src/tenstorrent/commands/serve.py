@@ -768,7 +768,7 @@ def _serve_with_tt_model_manager(
                 model, offline=offline, port=port, serve_flags=serve_flags,
                 extra_args=extra_args,
             )
-            pin = appctx.registry.spec("tt-model").golden_version or ""
+            pin = appctx.registry.target_spec("tt-model").golden_version or ""
             step.detail(pin[:7] if re.fullmatch(r"[0-9a-f]{40}", pin) else pin)
     code = backend.launch(launch)
     if code:

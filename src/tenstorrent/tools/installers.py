@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import stat
 from dataclasses import dataclass
@@ -142,6 +143,48 @@ def fetch_https(url: str) -> bytes:
             exit_code=ExitCode.OFFLINE,
         ) from exc
     return response.content
+
+
+_COMMIT_RE = re.compile(r"[0-9a-f]{7,40}")
+# uv honours these, so PyPI is not necessarily where a uv-tool comes from.
+_UV_INDEX_ENV = ("UV_INDEX", "UV_INDEX_URL", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL")
+
+
+def remote_version_exists(spec: ToolSpec, runner: Runner) -> bool | None:
+    """Whether `spec.golden_version` is published upstream (a git tag/branch of
+    `spec.repo`, or a PyPI release of `spec.package`). None when it cannot be told:
+    a bare commit, a custom package index, or the lookup itself failing."""
+    version = spec.golden_version
+    if spec.repo:
+        if _COMMIT_RE.fullmatch(version):
+            return None  # ls-remote lists refs, not commits
+        try:
+            result = runner.capture(
+                ["git", "ls-remote", "--exit-code", spec.repo,
+                 f"refs/tags/{version}", f"refs/heads/{version}"],
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                timeout=30,
+                check=False,
+                tool="git",
+            )
+        except TTError:
+            return None
+        return {0: True, 2: False}.get(result.returncode)  # 2: no matching refs
+    if spec.package and not any(os.environ.get(name) for name in _UV_INDEX_ENV):
+        import httpx
+
+        try:
+            response = httpx.get(
+                f"https://pypi.org/pypi/{spec.package}/{version}/json",
+                follow_redirects=True,
+                timeout=15,
+            )
+        except httpx.HTTPError:
+            return None
+        if response.status_code == 404:
+            return False
+        return True if response.is_success else None
+    return None
 
 
 class ScriptInstaller:

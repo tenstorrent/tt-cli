@@ -37,6 +37,7 @@ DEFAULTS: dict[str, Any] = {
     "tools": {
         "sudo_command": "sudo",
         "override": {},
+        "pin": {},
     },
     "device": {
         "backend": "smi",
@@ -114,6 +115,10 @@ sudo_command = "sudo"
 # Per-tool binary overrides, e.g.:  tt-smi = "/usr/local/bin/tt-smi"
 [tools.override]
 
+# Per-tool versions used instead of the golden ones, e.g.:  tt-inference-server = "v0.25.0"
+# Set with `tt self pin <tool> <version>`; `tt update` offers to move each one back to golden.
+[tools.pin]
+
 [device]
 # Device backend: "smi" delegates to tt-smi. A native backend will land later.
 backend = "smi"
@@ -153,8 +158,8 @@ def flatten(tree: dict[str, Any], prefix: str = "") -> dict[str, Any]:
 
 
 def known_keys() -> list[str]:
-    """Every documented dotted key, sorted. Excludes the dynamic tools.override.*
-    namespace, which has no fixed key set (see is_known_key)."""
+    """Every documented dotted key, sorted. Excludes the dynamic per-tool namespaces
+    (tools.override.*, tools.pin.*), which have no fixed key set (see is_known_key)."""
     return sorted(flatten(DEFAULTS))
 
 
@@ -170,11 +175,15 @@ def default_for(dotted_key: str) -> Any:
     return node
 
 
+# Tables keyed by tool name, so they have no fixed key set.
+DYNAMIC_TABLES = ("tools.override", "tools.pin")
+
+
 def is_known_key(dotted_key: str) -> bool:
-    """A key is known if it has a static default, or lives under the dynamic
-    tools.override table (per-tool binary paths have no fixed key set)."""
-    parts = dotted_key.split(".")
-    if parts[:2] == ["tools", "override"] and len(parts) == 3 and parts[2]:
+    """A key is known if it has a static default, or is a tool entry in one of the
+    DYNAMIC_TABLES."""
+    table, _, leaf = dotted_key.rpartition(".")
+    if table in DYNAMIC_TABLES and leaf:
         return True
     try:
         default_for(dotted_key)
