@@ -49,6 +49,14 @@ _DEVICE_ORDER = (
 )
 
 
+# Boards tt's catalog does not offer yet: Wormhole cards, LoudBox (t3k) and every
+# Galaxy. Their specs were never validated, so both outputs leave them out.
+EXCLUDED_DEVICES = frozenset({
+    "n150", "n150x4", "n300", "t3k",
+    "galaxy", "galaxy_t3k", "dual_galaxy", "quad_galaxy", "blackhole_galaxy",
+})
+
+
 def _engine_key(engine: str) -> tuple[int, str]:
     order = _ENGINE_ORDER.index(engine) if engine in _ENGINE_ORDER else len(_ENGINE_ORDER)
     return (order, engine)
@@ -164,6 +172,12 @@ def load_overrides(path: Path) -> Overrides:
             raise BuildError(
                 f"{path.name}: device_fallback for {entry['device']!r} points at itself."
             )
+        excluded = [entry[f] for f in ("device", "serve_as") if entry[f] in EXCLUDED_DEVICES]
+        if excluded:
+            raise BuildError(
+                f"{path.name}: device_fallback names {', '.join(map(repr, excluded))}, "
+                "which the catalog excludes (EXCLUDED_DEVICES)."
+            )
 
     serve = doc.get("serve_override") or []
     for entry in serve:
@@ -230,6 +244,8 @@ def build_models(spec: dict[str, Any]) -> list[dict[str, Any]]:
         devices: dict[str, dict[str, Any]] = {}
         leaves: list[tuple[str, dict[str, Any]]] = []  # (engine, leaf), for model-level fields
         for device_type in sorted(device_map, key=lambda d: _device_key(d.lower())):
+            if device_type.lower() in EXCLUDED_DEVICES:
+                continue
             engine_map = device_map[device_type]
             if not isinstance(engine_map, dict) or not engine_map:
                 continue

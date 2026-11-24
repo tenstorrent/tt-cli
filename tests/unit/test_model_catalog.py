@@ -71,7 +71,16 @@ def test_the_bundled_list_is_what_is_read_by_default(monkeypatch):
     monkeypatch.delenv("TT_MODEL_SUPPORT_PATH", raising=False)
     source = ModelSupportSource()
     assert source.origin == "bundled model_support.json"
-    assert len(source.entries()) > 40
+    assert len(source.entries()) > 25
+
+
+def test_the_bundled_list_offers_no_wormhole_loudbox_or_galaxy_boards(monkeypatch):
+    monkeypatch.delenv("TT_MODEL_SUPPORT_PATH", raising=False)
+    offered = {device for entry in ModelSupportSource().entries() for device in entry.hardware}
+    assert offered.isdisjoint(
+        {"n150", "n150x4", "n300", "t3k", "galaxy", "galaxy_t3k", "dual_galaxy",
+         "quad_galaxy", "blackhole_galaxy"}
+    )
 
 
 def test_missing_override_path_is_config_error(monkeypatch, tmp_path):

@@ -45,7 +45,7 @@ SPEC = {
     "model_specs": {
         "org/Demo-8B": {
             "P300X2": {"vLLM": {"tt_transformers": _leaf("Demo-8B", parser="llama3_json")}},
-            "T3K": {"vLLM": {"tt_transformers": _leaf("Demo-8B", parser="llama3_json")}},
+            "P150X8": {"vLLM": {"tt_transformers": _leaf("Demo-8B", parser="llama3_json")}},
         },
         "org/Media-1": {
             "P300X2": {"media": {"pipeline": _leaf("Media-1", status="EXPERIMENTAL")}},
@@ -116,8 +116,8 @@ def test_an_override_marks_only_the_device_it_names():
     devices = _devices(document, "Demo-8B")
     assert devices["p300x2"]["supported"] is False
     assert devices["p300x2"]["unsupported"]["reason"] == "broken"
-    assert devices["t3k"]["supported"] is True
-    assert "unsupported" not in devices["t3k"]
+    assert devices["p150x8"]["supported"] is True
+    assert "unsupported" not in devices["p150x8"]
 
 
 def test_an_override_without_a_device_marks_every_device():
@@ -153,10 +153,10 @@ def test_override_details_are_reflowed_to_one_line():
 # -- compatibility matrix corrections --------------------------------------------------
 def test_compat_overrides_list_the_pairs_a_mark_pulls():
     compat = build.build_compat_overrides(
-        SPEC, build.Overrides(marks=[_override(device="t3k")])
+        SPEC, build.Overrides(marks=[_override(device="p150x8")])
     )
     assert compat["release"] == "v0.18.0"
-    assert compat["removals"] == [{"model": "Demo-8B", "device": "t3k", "reason": "broken"}]
+    assert compat["removals"] == [{"model": "Demo-8B", "device": "p150x8", "reason": "broken"}]
     assert compat["additions"] == []
 
 
@@ -173,12 +173,12 @@ def test_a_rescued_board_is_both_removed_and_added():
     compat = build.build_compat_overrides(
         SPEC,
         build.Overrides(
-            marks=[_override(device="t3k")],
-            fallbacks=[_fallback(device="t3k", serve_as="p300x2")],
+            marks=[_override(device="p150x8")],
+            fallbacks=[_fallback(device="p150x8", serve_as="p300x2")],
         ),
     )
-    assert {"model": "Demo-8B", "device": "t3k", "reason": "broken"} in compat["removals"]
-    assert {"model": "Demo-8B", "device": "t3k", "copy_from": "p300x2"} in compat["additions"]
+    assert {"model": "Demo-8B", "device": "p150x8", "reason": "broken"} in compat["removals"]
+    assert {"model": "Demo-8B", "device": "p150x8", "copy_from": "p300x2"} in compat["additions"]
 
 
 def test_compat_overrides_leave_out_serve_overrides():
@@ -210,12 +210,12 @@ def test_a_fallback_fills_a_device_the_spec_omits():
 
 
 def test_device_fallback_does_not_shadow_a_working_native_spec():
-    """t3k has its own spec, so it must keep it — serve_as would send the wrong
+    """p150x8 has its own spec, so it must keep it — serve_as would send the wrong
     device name to a model that never needed the substitution."""
     document, _ = build.build_document(
-        SPEC, build.Overrides(fallbacks=[_fallback(device="t3k", serve_as="p300x2")])
+        SPEC, build.Overrides(fallbacks=[_fallback(device="p150x8", serve_as="p300x2")])
     )
-    assert "serve_as" not in _devices(document, "Demo-8B")["t3k"]
+    assert "serve_as" not in _devices(document, "Demo-8B")["p150x8"]
 
 
 def test_device_fallback_rescues_a_device_whose_own_spec_is_broken():
@@ -224,11 +224,11 @@ def test_device_fallback_rescues_a_device_whose_own_spec_is_broken():
     document, _ = build.build_document(
         SPEC,
         build.Overrides(
-            marks=[_override(device="t3k", details="Stale trace region.")],
-            fallbacks=[_fallback(device="t3k", serve_as="p300x2")],
+            marks=[_override(device="p150x8", details="Stale trace region.")],
+            fallbacks=[_fallback(device="p150x8", serve_as="p300x2")],
         ),
     )
-    rescued = _devices(document, "Demo-8B")["t3k"]
+    rescued = _devices(document, "Demo-8B")["p150x8"]
     assert rescued["supported"] is True
     assert rescued["serve_as"] == "p300x2"
     assert "Stale trace region." in rescued["note"]
@@ -347,9 +347,9 @@ def test_a_serve_override_supplies_a_parser_the_spec_left_out():
 
 
 def test_a_parser_override_warns_once_the_spec_ships_its_own():
-    entry = {"model": "Demo-8B", "device": "t3k", "tool_call_parser": "hermes", "details": "x"}
+    entry = {"model": "Demo-8B", "device": "p150x8", "tool_call_parser": "hermes", "details": "x"}
     document, warnings = build.build_document(SPEC, build.Overrides(serve=[entry]))
-    assert _devices(document, "Demo-8B")["t3k"]["tool_call_parser"] == "hermes"
+    assert _devices(document, "Demo-8B")["p150x8"]["tool_call_parser"] == "hermes"
     assert any("can be removed" in w for w in warnings)
 
 
@@ -477,3 +477,54 @@ def test_the_two_four_chip_blackhole_meshes_agree_where_a_fallback_applies():
         }
 
     assert available("p300x2") == available("p150x4")
+
+
+def test_excluded_boards_are_dropped_and_emptied_models_with_them():
+    spec = {
+        **SPEC,
+        "model_specs": {
+            **SPEC["model_specs"],
+            "org/Galaxy-Only": {
+                "GALAXY": {"vLLM": {"tt_transformers": _leaf("Galaxy-Only")}},
+                "N300": {"media": {"pipeline": _leaf("Galaxy-Only")}},
+            },
+            "org/Mixed": {
+                "T3K": {"media": {"pipeline": _leaf("Mixed")}},
+                "P150": {"vLLM": {"tt_transformers": _leaf("Mixed")}},
+            },
+        },
+    }
+    document, _ = build.build_document(spec, build.Overrides())
+    names = [m["name"] for m in document["models"]]
+    assert "Galaxy-Only" not in names
+    mixed = next(m for m in document["models"] if m["name"] == "Mixed")
+    assert list(mixed["devices"]) == ["p150"]
+    assert mixed["engines"] == ["vLLM"]  # t3k's media engine went with it
+
+
+def test_excluded_boards_are_left_out_of_the_compat_overrides():
+    spec = {
+        **SPEC,
+        "model_specs": {
+            "org/Demo-8B": {
+                "T3K": {"vLLM": {"tt_transformers": _leaf("Demo-8B")}},
+                "P150": {"vLLM": {"tt_transformers": _leaf("Demo-8B")}},
+            },
+        },
+    }
+    compat = build.build_compat_overrides(
+        spec, build.Overrides(marks=[_override(device="t3k"), _override(device="p150")])
+    )
+    assert compat["removals"] == [{"model": "Demo-8B", "device": "p150", "reason": "broken"}]
+
+
+@pytest.mark.parametrize("field", ["device", "serve_as"])
+def test_a_fallback_naming_an_excluded_board_is_rejected(tmp_path, field):
+    rule = {"device": "p150", "serve_as": "p300x2", "engines": ["vLLM"], "details": "x"}
+    rule[field] = "galaxy"
+    lines = ["schema_version = 1", "", "[[device_fallback]]"]
+    lines += [f"{key} = {json.dumps(value)}" for key, value in rule.items()]
+    path = tmp_path / "overrides.toml"
+    path.write_text("\n".join(lines) + "\n")
+    with pytest.raises(build.BuildError, match="excludes"):
+        build.load_overrides(path)
