@@ -21,8 +21,11 @@ runner = CliRunner()
 # Leaves that legitimately have no output of ours to shape:
 #   stubs raise UNSUPPORTED before printing anything, the TUI hand-offs
 #   replace this process with tt-smi's own full-screen UI, and the tt-model
-#   authoring passthroughs forward every argument (-v and --help included)
-#   to tt-model untouched.
+#   and tt-bio passthroughs forward every argument (-v and --help included)
+#   to the tool untouched. Declaring the output flags on a passthrough would
+#   *consume* them here instead of forwarding them, which is the opposite of
+#   what the leaf is for — `tt bio predict --json` has to reach tt-bio.
+#   `tt bio status`, which prints output of ours, is not exempt and declares them.
 NO_OUTPUT_OF_OURS = {
     "train",
     "compile",
@@ -32,6 +35,17 @@ NO_OUTPUT_OF_OURS = {
     "model package",
     "model package-thin",
     "model push",
+    "bio predict",
+    "bio design",
+    "bio embed",
+    "bio affinity",
+    "bio saprot",
+    "bio controller",
+    "bio weights",
+    "bio preflight",
+    "bio score",
+    "bio msa",
+    "bio run",
 }
 # Leaves that emit data but have nothing worth suppressing separately.
 NO_QUIET = {"self check-update", "self send-telemetry"}

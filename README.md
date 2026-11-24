@@ -160,6 +160,46 @@ tt agent develop -- --resume   # anything after -- goes to claude
 
 While developing plugins, point it at a local checkout: `tt config set agent.marketplace_source ~/src/skills` (or `TT_AGENT_MARKETPLACE=~/src/skills` for one run).
 
+## Biomolecular models with `tt bio`
+
+`tt bio` runs [tt-bio](https://github.com/moritztng/tt-bio) — structure prediction (Boltz-2,
+ESMFold2, OpenFold3, Protenix, RoseTTAFold3), binder design (BoltzGen, RFdiffusion3, PXDesign)
+and protein embeddings (ESMC, SaProt) — on the chips of this machine. tt-bio installs on first
+use at the version `tt` pins, so there is no environment to build.
+
+```bash
+tt bio status                                   # what is installed, and which chips are free
+tt bio preflight boltz2                         # can this machine run it right now?
+tt bio predict prot.yaml --model boltz2         # fold, on chips nothing else is using
+tt bio design binder.yaml --num_designs 10      # design binders against a target
+tt bio embed proteins.fasta --model esmc-600m   # protein embeddings
+tt bio run evaluate --help                      # any other tt-bio command, forwarded as-is
+```
+
+Options `tt` does not read are passed straight through, so every tt-bio flag works here the day
+upstream ships it.
+
+**Why go through `tt` at all:** tt-bio opens a card directly and guards it with its own lease,
+while a model served by `tt serve` holds its chips through a container. Neither mechanism can
+see the other, so an unguarded fold can open a chip out from under a running server. `tt bio`
+checks which chips are actually free and hands the run only those — both as `--devices` and as
+`TT_BIO_LEASE_CARDS`, the grant tt-bio enforces at its own device open. Ask for a busy chip
+explicitly and it says which one and who has it, before anything starts:
+
+```console
+$ tt bio predict prot.yaml --devices 1,2
+Chip(s) 2 are in use by a running model server or another tt-bio run.
+→ `tt model ps` to see what is running, `tt model stop <model>` to free them, or re-run
+  restricted to the free chips: --devices 0,1,3
+```
+
+It works the other way too: `tt serve` reads tt-bio's lease files and will not place a model on a
+chip a tt-bio run is folding on. A lease only counts while its holder is alive, so a crashed run
+leaves nothing behind that blocks a chip.
+
+If `tt` cannot reach a container runtime it grants nothing and tt-bio behaves exactly as it does
+standalone — a chip that could not be checked is never handed out.
+
 ## Configuration
 
 Configuration is TOML at `~/.config/tenstorrent/config.toml` (XDG-compliant). `tt config` opens it with
