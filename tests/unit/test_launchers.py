@@ -277,7 +277,7 @@ def test_opencode_plan_has_no_side_effects(tmp_path, monkeypatch):
     prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
     assert prep.config is not None
     assert prep.config.created is True
-    assert not prep.config.path.exists()  # planning writes nothing
+    assert not prep.config.path.exists()
     assert prep.config.block["options"]["baseURL"] == model.base_url
     # Editing a file tt does not own is asked about, and the question names it.
     assert prep.consent and str(prep.config.path) in prep.consent
@@ -442,31 +442,149 @@ def test_aider_configures_by_environment_and_writes_nothing(tmp_path, monkeypatc
     assert list(home.iterdir()) == []
 
 
-def test_qwencode_passes_everything_on_the_command_line_and_writes_nothing(
-    tmp_path, monkeypatch
-):
+_QWEN_ARGV = [
+    "qwen",
+    "--auth-type",
+    "openai",
+    "--openai-api-key",
+    "tt-local",
+    "--openai-base-url",
+    "http://127.0.0.1:8000/v1",
+    "--model",
+    "Qwen/Qwen3-32B",
+]
+
+
+def test_qwencode_writes_nothing_without_a_served_window(tmp_path, monkeypatch):
+    """The CLI flags reach the model on their own; with no window to size, the
+    user's settings are not worth touching."""
     home = tmp_path / "qwencode-home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     launcher = LAUNCHERS["qwencode"]
     model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
     prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
-    assert prep.config is None
+    assert prep.config is None and prep.consent is None
     assert prep.env == {}
-    assert prep.steps == [
-        [
-            "qwen",
-            "--auth-type",
-            "openai",
-            "--openai-api-key",
-            "tt-local",
-            "--openai-base-url",
-            "http://127.0.0.1:8000/v1",
-            "--model",
-            "Qwen/Qwen3-32B",
-        ]
-    ]
+    assert prep.steps == [_QWEN_ARGV]
+    launcher.apply(model, prep, LaunchEnv("/usr/bin/qwen", None, None))
     assert list(home.iterdir()) == []
+
+
+def test_qwencode_entry_matches_its_documented_shape(tmp_path, monkeypatch):
+    """Shape from Qwen Code's docs/configuration/model-providers.md: a bare
+    ModelConfig[] per auth type, limits under generationConfig."""
+    home = tmp_path / "qwencode-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    launcher = LAUNCHERS["qwencode"]
+    model = RunningModel(
+        served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1", max_context=131072
+    )
+    prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    assert prep.config is not None
+    assert prep.config.created is True
+    assert not prep.config.path.exists()
+    assert prep.config.path == home / ".qwen" / "settings.json"
+    assert prep.consent and str(prep.config.path) in prep.consent
+    assert prep.steps == [_QWEN_ARGV]
+    entry = prep.config.block
+    assert entry["id"] == "Qwen/Qwen3-32B"
+    assert entry["baseUrl"] == model.base_url
+    assert entry["generationConfig"] == {
+        "contextWindowSize": 131072,
+        "samplingParams": {"max_tokens": 32768},
+    }
+    assert "envKey" not in entry
+
+    launcher.apply(model, prep, LaunchEnv("/usr/bin/qwen", None, None))
+    doc = json.loads(prep.config.path.read_text())
+    assert doc == {"modelProviders": {"openai": [entry]}}
+    again = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    assert again.consent is None and again.config.created is False
+
+
+def test_qwencode_merges_by_id_and_base_url(tmp_path, monkeypatch):
+    """Qwen Code identifies a model by id and baseUrl, so a re-launch replaces its
+    own entry and leaves the user's other models and providers alone."""
+    home = tmp_path / "qwencode-home"
+    (home / ".qwen").mkdir(parents=True)
+    (home / ".qwen" / "settings.json").write_text(
+        json.dumps(
+            {
+                "ui": {"theme": "Dark"},
+                "modelProviders": {
+                    "openai": [
+                        {"id": "gpt-4o", "envKey": "OPENAI_API_KEY"},
+                        {
+                            "id": "Qwen/Qwen3-32B",
+                            "baseUrl": "http://127.0.0.1:8000/v1",
+                            "description": "added by tt launch",
+                            "generationConfig": {"contextWindowSize": 4096},
+                        },
+                        {"id": "Qwen/Qwen3-32B", "baseUrl": "http://elsewhere:8000/v1"},
+                    ],
+                    "anthropic": [{"id": "claude"}],
+                },
+            }
+        )
+    )
+    monkeypatch.setenv("HOME", str(home))
+    launcher = LAUNCHERS["qwencode"]
+    model = RunningModel(
+        served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1", max_context=131072
+    )
+    prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    assert prep.consent and prep.consent.startswith("Update ")
+    entries = prep.config.document["modelProviders"]["openai"]
+    assert [(e["id"], e.get("baseUrl")) for e in entries] == [
+        ("gpt-4o", None),
+        ("Qwen/Qwen3-32B", "http://elsewhere:8000/v1"),
+        ("Qwen/Qwen3-32B", "http://127.0.0.1:8000/v1"),
+    ]
+    assert entries[-1]["generationConfig"]["contextWindowSize"] == 131072
+    assert prep.config.document["modelProviders"]["anthropic"] == [{"id": "claude"}]
+    assert prep.config.document["ui"] == {"theme": "Dark"}
+
+
+def test_qwencode_refuses_a_provider_block_it_does_not_recognise(tmp_path, monkeypatch):
+    """The wrapped {protocol, models} form is one Qwen Code itself skips; tt must
+    not silently replace it with a list."""
+    home = tmp_path / "qwencode-home"
+    (home / ".qwen").mkdir(parents=True)
+    (home / ".qwen" / "settings.json").write_text(
+        json.dumps({"modelProviders": {"openai": {"protocol": "openai", "models": []}}})
+    )
+    monkeypatch.setenv("HOME", str(home))
+    model = RunningModel(
+        served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1", max_context=131072
+    )
+    with pytest.raises(TTError) as err:
+        LAUNCHERS["qwencode"].plan(model, LaunchOptions(), executable=None, runner=None)
+    assert err.value.exit_code == ExitCode.CONFIG
+    assert LAUNCHERS["qwencode"].disconnect_plan(None, None) is None
+
+
+def test_qwencode_disconnect_removes_only_its_own_entries(tmp_path, monkeypatch):
+    home = tmp_path / "qwencode-home"
+    monkeypatch.setenv("HOME", str(home))
+    launcher = LAUNCHERS["qwencode"]
+    assert launcher.disconnect_plan(None, None) is None
+    model = RunningModel(
+        served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1", max_context=131072
+    )
+    prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    doc = prep.config.document
+    doc["modelProviders"]["openai"].insert(0, {"id": "gpt-4o", "envKey": "OPENAI_API_KEY"})
+    doc["ui"] = {"theme": "Dark"}
+    launcher.apply(model, prep, LaunchEnv("/usr/bin/qwen", None, None))
+
+    assert "modelProviders.openai" in (launcher.disconnect_plan(None, None) or "")
+    launcher.disconnect(LaunchEnv("/usr/bin/qwen", None, None))
+    doc = json.loads(prep.config.path.read_text())
+    assert doc["modelProviders"]["openai"] == [{"id": "gpt-4o", "envKey": "OPENAI_API_KEY"}]
+    assert doc["ui"] == {"theme": "Dark"}
+    assert launcher.disconnect_plan(None, None) is None
 
 
 def test_anythingllm_pins_the_model_because_it_has_no_discovery():
