@@ -61,7 +61,7 @@ def test_mixed_board_types_are_none():
 
 # -- Galaxy chassis -------------------------------------------------------------------
 def _galaxy(count=32, board_type="tt-galaxy-wh L", board_id="0100035100000000"):
-    """example galaxy real shape: 32 asics, one board_type, and one board_id shared by
+    """bifroest's real shape: 32 asics, one board_type, and one board_id shared by
     every asic — the whole chassis reports a single board."""
     return [
         DeviceSnapshot(index=i, board_type=board_type, board_id=board_id)
@@ -90,6 +90,59 @@ def test_partial_or_oversized_chassis_is_unmapped(count):
 def test_galaxy_sharing_the_box_with_a_card_is_none():
     devs = _galaxy() + [DeviceSnapshot(index=32, board_type="n150 L", board_id="a")]
     assert infer_device_config(devs) is None
+
+
+# -- reading the runtime's inspect output ----------------------------------------------
+# podman ignores `inspect --format '{{json .}}'` and pretty-prints one multi-line JSON
+# array. Inner lines that are complete JSON values on their own — a trailing element of
+# an Env array, a bare integer — parse as scalars, so a line-by-line reader that trusts
+# json.loads hands its caller a str and every later `.get` is an AttributeError. This is
+# the real shape from podman 3.4.4 (`docker` on this box is its shim).
+
+_PODMAN_INSPECT = """[
+    {
+        "Id": "abc123def456",
+        "Name": "tt-inference-server-6af6ab4d",
+        "Config": {
+            "Env": [
+                "ARCH_NAME=wormhole_b0",
+                "TZ=America/Los_Angeles"
+            ]
+        },
+        "Mounts": [
+            {
+                "Name": "",
+                "Source": "/home/u/.cache/huggingface/hub/models--openai--gpt-oss-120b/snapshots/abc123456789"
+            }
+        ]
+    }
+]
+"""
+
+
+def test_podman_pretty_output_yields_only_records():
+    """No scalars in, no AttributeError out: `tt model stop` walks these records."""
+    from tenstorrent.backends.serving.inference_server import parse_inspect_records
+
+    records = parse_inspect_records(_PODMAN_INSPECT)
+    assert [r["Id"] for r in records] == ["abc123def456"]
+
+
+def test_podman_pretty_output_still_identifies_a_container():
+    from tenstorrent.backends.serving.inference_server import (
+        _identity_from_inspect,
+        parse_inspect_records,
+    )
+
+    (record,) = parse_inspect_records(_PODMAN_INSPECT)
+    assert _identity_from_inspect(record) == ("openai/gpt-oss-120b", None)
+
+
+def test_one_object_per_line_is_still_read():
+    from tenstorrent.backends.serving.inference_server import parse_inspect_records
+
+    stdout = '{"Id": "a1"}\nnot json\n{"Id": "b2"}\n'
+    assert [r["Id"] for r in parse_inspect_records(stdout)] == ["a1", "b2"]
 
 
 # -- identifying a running server container -------------------------------------------
