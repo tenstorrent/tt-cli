@@ -240,6 +240,10 @@ class ContainerLauncher:
             doc = json.loads(result.stdout)
         except json.JSONDecodeError:
             return "absent", None, None
+        if isinstance(doc, list):  # podman prints an array even for one container
+            doc = doc[0] if doc else None
+        if not isinstance(doc, dict):
+            return "absent", None, None
         configured_for = None
         for item in (doc.get("Config") or {}).get("Env") or []:
             if item.startswith(f"{self.base_url_env}="):

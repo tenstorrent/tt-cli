@@ -90,8 +90,8 @@ def test_an_already_running_container_does_not_check_the_port(monkeypatch):
 class _Existing:
     """An inspect record for a container created with -p 3080:<port>."""
 
-    def __init__(self, launcher, *, running: bool):
-        self.launcher, self.running = launcher, running
+    def __init__(self, launcher, *, running: bool, podman: bool = False):
+        self.launcher, self.running, self.podman = launcher, running, podman
 
     def capture(self, argv, **kwargs):
         doc = {
@@ -103,11 +103,14 @@ class _Existing:
                 }
             },
         }
-        return CaptureResult(returncode=0, stdout=json.dumps(doc), stderr="")
+        # podman ignores the format and pretty-prints a one-element array
+        stdout = json.dumps([doc], indent=4) if self.podman else json.dumps(doc)
+        return CaptureResult(returncode=0, stdout=stdout, stderr="")
 
 
+@pytest.mark.parametrize("podman", [False, True])
 @pytest.mark.parametrize("running", [True, False])
-def test_an_existing_container_reports_the_port_it_actually_publishes(running):
+def test_an_existing_container_reports_the_port_it_actually_publishes(running, podman):
     """--web-port cannot move a container's published port: it was fixed at create
     time. Reporting the requested one would print a URL that answers nothing."""
     launcher = LAUNCHERS["openwebui"]
@@ -115,7 +118,7 @@ def test_an_existing_container_reports_the_port_it_actually_publishes(running):
         RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1"),
         LaunchOptions(web_port=9999),
         executable="/usr/bin/docker",
-        runner=_Existing(launcher, running=running),
+        runner=_Existing(launcher, running=running, podman=podman),
     )
     assert prep.url == "http://localhost:3080"
 
