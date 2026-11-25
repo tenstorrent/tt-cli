@@ -16,6 +16,7 @@ import re
 import secrets
 import shutil
 import sys
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -238,6 +239,36 @@ class ServerContainer:
             return False
         volume, name = self.volume.lower(), model.name.lower()
         return volume.endswith(f"-{name}") or f"-{name}-v" in volume
+
+
+def parse_inspect_records(stdout: str) -> list[dict]:
+    """`docker inspect` records out of one capture, in whichever shape it printed.
+
+    Docker honours `--format '{{json .}}'` and emits one JSON object per line. Podman
+    ignores that format string for `inspect` and pretty-prints a single multi-line
+    array, so a line-by-line read can yield bare scalars (a weights repo quoted on a
+    line of its own, a bare integer) as well as objects. Only dicts are records: a
+    scalar reaching a caller is an AttributeError on `.get`, which is how `tt model
+    stop` used to die on podman. Falls back to reading the whole output as one array,
+    which is what a pretty-printed record set is.
+    """
+    records: list[dict] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            doc = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(doc, dict):
+            records.append(doc)
+    if not records and stdout.strip():
+        with suppress(ValueError):
+            doc = json.loads(stdout)
+            if isinstance(doc, list):
+                records = [d for d in doc if isinstance(d, dict)]
+    return records
 
 
 def _identity_from_inspect(entry: dict) -> tuple[str | None, str | None]:
@@ -1006,24 +1037,19 @@ class InferenceServerBackend:
         return containers
 
     def inspect_containers(self, ids: Sequence[str]) -> list[dict]:
-        """Raw `inspect` records for the given ids, in one call. A line the runtime
-        formats in a way we cannot parse is skipped rather than failing the lot."""
+        """Raw `inspect` records for the given ids, in one call.
+
+        Parsing is shared with `tt model ps` (see parse_inspect_records): podman
+        ignores the format string and pretty-prints an array, so a per-line read on
+        its own used to hand callers scalars and crash `tt model stop`.
+        """
         if not ids:
             return []
         runtime = self.container_runtime()
         inspected = self.runner.capture(
             [runtime, "inspect", "--format", "{{json .}}", *ids], tool=runtime
         )
-        records: list[dict] = []
-        for line in inspected.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except ValueError:
-                continue
-        return records
+        return parse_inspect_records(inspected.stdout)
 
     def stop_containers(self, containers: Sequence[ServerContainer]) -> None:
         """`docker stop` each one: SIGTERM plus grace, never kill — the server has to
