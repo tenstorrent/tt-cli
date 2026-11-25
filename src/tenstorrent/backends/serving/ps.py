@@ -33,7 +33,6 @@ backend "unknown".
 from __future__ import annotations
 
 import dataclasses
-import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
@@ -43,7 +42,12 @@ from urllib.parse import urlparse
 from ...launchers import discovery
 from ...models.served import ServedModel
 from ...tools.runner import Runner
-from .inference_server import CONTAINER_PREFIX, ServerContainer, _identity_from_inspect
+from .inference_server import (
+    CONTAINER_PREFIX,
+    ServerContainer,
+    _identity_from_inspect,
+    parse_inspect_records,
+)
 
 UTC = timezone.utc
 
@@ -120,24 +124,7 @@ def _inspect_all(runner: Runner, runtime: str, include_stopped: bool) -> list[di
     inspected = runner.capture(
         [runtime, "inspect", "--format", "{{json .}}", *ids], tool=runtime
     )
-    entries: list[dict] = []
-    for line in inspected.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            doc = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(doc, dict):
-            entries.append(doc)
-    if not entries and inspected.stdout.strip():
-        # podman pretty-prints `inspect` output as one multi-line JSON array.
-        with suppress(ValueError):
-            doc = json.loads(inspected.stdout)
-            if isinstance(doc, list):
-                entries = [d for d in doc if isinstance(d, dict)]
-    return entries
+    return parse_inspect_records(inspected.stdout)
 
 
 # -- classification -------------------------------------------------------------------
