@@ -528,3 +528,40 @@ def test_a_fallback_naming_an_excluded_board_is_rejected(tmp_path, field):
     path.write_text("\n".join(lines) + "\n")
     with pytest.raises(build.BuildError, match="excludes"):
         build.load_overrides(path)
+
+
+def _galaxy_spec(version):
+    leaf = {**_leaf("Galaxy-Model"), "version": version}
+    return {
+        **SPEC,
+        "model_specs": {"org/Galaxy-Model": {"GALAXY": {"vLLM": {"tt_transformers": leaf}}}},
+    }
+
+
+VALIDATED = [{"model": "Galaxy-Model", "device": "galaxy", "version": "0.5.0", "details": "x"}]
+
+
+def test_a_validated_pair_on_an_excluded_board_is_kept():
+    document, warnings = build.build_document(
+        _galaxy_spec("0.5.0"), build.Overrides(validated=VALIDATED)
+    )
+    assert list(_devices(document, "Galaxy-Model")) == ["galaxy"]
+    assert warnings == []
+
+
+def test_a_validated_pair_at_another_version_is_dropped_with_a_warning():
+    document, warnings = build.build_document(
+        _galaxy_spec("0.6.0"), build.Overrides(validated=VALIDATED)
+    )
+    assert document["models"] == []
+    assert any("validated at 0.5.0" in warning for warning in warnings)
+
+
+def test_a_validated_pair_on_an_offered_board_is_rejected(tmp_path):
+    path = tmp_path / "overrides.toml"
+    path.write_text(
+        'schema_version = 1\n\n[[validated_device]]\nmodel = "Demo-8B"\n'
+        'device = "p150"\nversion = "0.5.0"\ndetails = "x"\n'
+    )
+    with pytest.raises(build.BuildError, match="already offers"):
+        build.load_overrides(path)

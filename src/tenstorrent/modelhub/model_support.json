@@ -3,6 +3,35 @@
  "release_version": "0.26.0",
  "models": [
   {
+   "name": "bge-large-en-v1.5",
+   "hf_repo": "BAAI/bge-large-en-v1.5",
+   "model_type": "embedding",
+   "engines": [
+    "media"
+   ],
+   "tt_model_id": "bge-large-en-v1.5",
+   "param_count": null,
+   "min_disk_gb": 15,
+   "min_ram_gb": 6.0,
+   "devices": {
+    "galaxy": {
+     "engines": [
+      "media"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.2.0-2496be4518bca0a7a5b497a4cda3cfe7e2f59756",
+     "impl_id": "tt_vllm_plugin",
+     "version": "0.12.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
    "name": "bge-m3",
    "hf_repo": "BAAI/bge-m3",
    "model_type": "embedding",
@@ -32,6 +61,81 @@
    }
   },
   {
+   "name": "DeepSeek-R1-0528",
+   "hf_repo": "deepseek-ai/DeepSeek-R1-0528",
+   "model_type": "llm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "DeepSeek-R1-0528",
+   "param_count": null,
+   "min_disk_gb": null,
+   "min_ram_gb": null,
+   "devices": {
+    "galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 2048,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.12.0-805f43d-a45c614",
+     "impl_id": "deepseek_r1_galaxy",
+     "version": "0.12.0",
+     "tool_call_parser": "deepseek_v3",
+     "reasoning_parser": "deepseek_r1",
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "dual_galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 32768,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-multihost-ubuntu-22.04-amd64:0.12.0-805f43d-a45c614",
+     "impl_id": "deepseek_r1_galaxy",
+     "version": "0.12.0",
+     "tool_call_parser": "deepseek_v3",
+     "reasoning_parser": "deepseek_r1",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D",
+      "fabric_reliability_mode": "RELAXED_INIT",
+      "trace_mode": "none",
+      "env_passthrough": [
+       "DEEPSEEK_V3_CACHE",
+       "DEEPSEEK_V3_HF_MODEL"
+      ]
+     },
+     "mesh_graph_desc": null
+    },
+    "quad_galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 32768,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-multihost-ubuntu-22.04-amd64:0.12.0-805f43d-a45c614",
+     "impl_id": "deepseek_r1_galaxy",
+     "version": "0.12.0",
+     "tool_call_parser": "deepseek_v3",
+     "reasoning_parser": "deepseek_r1",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D",
+      "fabric_reliability_mode": "RELAXED_INIT",
+      "trace_mode": "none",
+      "env_passthrough": [
+       "DEEPSEEK_V3_CACHE",
+       "DEEPSEEK_V3_HF_MODEL"
+      ]
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
    "name": "DeepSeek-R1-Distill-Llama-70B",
    "hf_repo": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
    "model_type": "llm",
@@ -43,6 +147,23 @@
    "min_disk_gb": 160,
    "min_ram_gb": 175.0,
    "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.11.1-750ca54-38dee8c",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": "deepseek_v3",
+     "reasoning_parser": "deepseek_r1",
+     "override_tt_config": {
+      "trace_region_size": 30000000
+     },
+     "mesh_graph_desc": null
+    },
     "p150x4": {
      "engines": [
       "vLLM"
@@ -176,6 +297,66 @@
    "min_disk_gb": 15,
    "min_ram_gb": 6.0,
    "devices": {
+    "n150": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "whisper",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "n300": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "whisper",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "t3k": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "whisper",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "galaxy": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10",
+     "impl_id": "whisper",
+     "version": "0.17.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
     "p150": {
      "engines": [
       "media"
@@ -436,6 +617,26 @@
       "sample_on_device_mode": "decode_only"
      },
      "mesh_graph_desc": null
+    },
+    "blackhole_galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 262144,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.25.0-978f93b-a723030",
+     "impl_id": "tt_transformers",
+     "version": "0.25.0",
+     "tool_call_parser": "gemma4",
+     "reasoning_parser": "gemma4",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D",
+      "trace_region_size": 512000000,
+      "l1_small_size": 24576,
+      "sample_on_device_mode": "decode_only"
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -550,6 +751,26 @@
       "sample_on_device_mode": "decode_only"
      },
      "mesh_graph_desc": null
+    },
+    "blackhole_galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 262144,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.25.0-978f93b-a723030",
+     "impl_id": "tt_transformers",
+     "version": "0.25.0",
+     "tool_call_parser": "gemma4",
+     "reasoning_parser": "gemma4",
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D",
+      "trace_region_size": 960000000,
+      "l1_small_size": 24576,
+      "sample_on_device_mode": "decode_only"
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -565,6 +786,41 @@
    "min_disk_gb": 260,
    "min_ram_gb": 300.0,
    "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 16384,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.12.0-805f43d-a45c614",
+     "impl_id": "gpt_oss",
+     "version": "0.12.0",
+     "tool_call_parser": "openai",
+     "reasoning_parser": "openai_gptoss",
+     "override_tt_config": {
+      "trace_region_size": 134217728
+     },
+     "mesh_graph_desc": null
+    },
+    "galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.17.0-8c48a10-f52987a",
+     "impl_id": "gpt_oss",
+     "version": "0.17.0",
+     "tool_call_parser": "openai",
+     "reasoning_parser": "openai_gptoss",
+     "override_tt_config": {
+      "sample_on_device_mode": "all",
+      "trace_region_size": 134217728
+     },
+     "mesh_graph_desc": null
+    },
     "p300x2": {
      "engines": [
       "vLLM"
@@ -588,6 +844,24 @@
       "verified_on": "2026-08-14",
       "source": "tt-studio"
      }
+    },
+    "blackhole_galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.25.0-978f93b-a723030",
+     "impl_id": "gpt_oss",
+     "version": "0.25.0",
+     "tool_call_parser": "openai",
+     "reasoning_parser": "openai_gptoss",
+     "override_tt_config": {
+      "sample_on_device_mode": "all",
+      "trace_region_size": 134217728
+     },
+     "mesh_graph_desc": null
     }
    }
   },
@@ -775,6 +1049,23 @@
    "min_disk_gb": 160,
    "min_ram_gb": 175.0,
    "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.11.1-750ca54-38dee8c",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "trace_region_size": 30000000
+     },
+     "mesh_graph_desc": null
+    },
     "p150x4": {
      "engines": [
       "vLLM"
@@ -852,6 +1143,23 @@
    "min_disk_gb": 160,
    "min_ram_gb": 175.0,
    "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.11.1-750ca54-38dee8c",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "trace_region_size": 30000000
+     },
+     "mesh_graph_desc": null
+    },
     "p150x4": {
      "engines": [
       "vLLM"
@@ -929,6 +1237,41 @@
    "min_disk_gb": 36,
    "min_ram_gb": 20.0,
    "devices": {
+    "galaxy_t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.11.1-bac8b34-7c6685a",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D"
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
+    },
+    "galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.11.1-bac8b34-7c6685a",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "trace_region_size": 50000000,
+      "sample_on_device_mode": "all"
+     },
+     "mesh_graph_desc": null
+    },
     "p150x4": {
      "engines": [
       "vLLM"
@@ -1032,6 +1375,41 @@
    "min_disk_gb": 36,
    "min_ram_gb": 20.0,
    "devices": {
+    "galaxy_t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.11.1-bac8b34-7c6685a",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "fabric_config": "FABRIC_1D"
+     },
+     "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/t3k_mesh_graph_descriptor.textproto"
+    },
+    "galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.11.0-bac8b34-7c6685a",
+     "impl_id": "tt_transformers",
+     "version": "0.11.0",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "trace_region_size": 50000000,
+      "sample_on_device_mode": "all"
+     },
+     "mesh_graph_desc": null
+    },
     "p150": {
      "engines": [
       "vLLM",
@@ -1152,6 +1530,23 @@
    "min_disk_gb": 160,
    "min_ram_gb": 175.0,
    "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.11.1-750ca54-38dee8c",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": "llama3_json",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "trace_region_size": 30000000
+     },
+     "mesh_graph_desc": null
+    },
     "p150x4": {
      "engines": [
       "vLLM"
@@ -1204,6 +1599,50 @@
      "override_tt_config": {
       "trace_region_size": 402653184
      },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "mobilenetv2",
+   "hf_repo": "mobilenetv2",
+   "model_type": "cnn",
+   "engines": [
+    "forge"
+   ],
+   "tt_model_id": "mobilenetv2",
+   "param_count": null,
+   "min_disk_gb": 15,
+   "min_ram_gb": 6.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "forge"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.13.0-079a2c2",
+     "impl_id": "tt_transformers",
+     "version": "0.13.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "n300": {
+     "engines": [
+      "forge"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.13.0-079a2c2",
+     "impl_id": "tt_transformers",
+     "version": "0.13.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
      "mesh_graph_desc": null
     }
    }
@@ -1294,6 +1733,149 @@
    }
   },
   {
+   "name": "olmOCR-2-7B-1025",
+   "hf_repo": "allenai/olmOCR-2-7B-1025",
+   "model_type": "vlm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "olmOCR-2-7B-1025",
+   "param_count": 7,
+   "min_disk_gb": 34,
+   "min_ram_gb": 17.5,
+   "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "tt_transformers",
+     "version": "0.26.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "sample_on_device_mode": "decode_only",
+      "trace_region_size": 60000000
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "Qwen2.5-VL-32B-Instruct",
+   "hf_repo": "Qwen/Qwen2.5-VL-32B-Instruct",
+   "model_type": "vlm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Qwen2.5-VL-32B-Instruct",
+   "param_count": 32,
+   "min_disk_gb": 84,
+   "min_ram_gb": 80.0,
+   "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "EXPERIMENTAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "tt_transformers",
+     "version": "0.26.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "Qwen2.5-VL-72B-Instruct",
+   "hf_repo": "Qwen/Qwen2.5-VL-72B-Instruct",
+   "model_type": "vlm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Qwen2.5-VL-72B-Instruct",
+   "param_count": 72,
+   "min_disk_gb": 164,
+   "min_ram_gb": 180.0,
+   "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 98304,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "tt_transformers",
+     "version": "0.26.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "trace_region_size": 28467200
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "Qwen2.5-VL-7B-Instruct",
+   "hf_repo": "Qwen/Qwen2.5-VL-7B-Instruct",
+   "model_type": "vlm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Qwen2.5-VL-7B-Instruct",
+   "param_count": 7,
+   "min_disk_gb": 34,
+   "min_ram_gb": 17.5,
+   "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "tt_transformers",
+     "version": "0.26.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "sample_on_device_mode": "decode_only",
+      "trace_region_size": 60000000
+     },
+     "mesh_graph_desc": null
+    },
+    "galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "impl_id": "tt_transformers",
+     "version": "0.26.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": null,
+     "override_tt_config": {
+      "sample_on_device_mode": "decode_only",
+      "trace_region_size": 100000000,
+      "fabric_config": "FABRIC_1D_RING"
+     },
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
    "name": "Qwen3-32B",
    "hf_repo": "Qwen/Qwen3-32B",
    "model_type": "llm",
@@ -1305,6 +1887,27 @@
    "min_disk_gb": 84,
    "min_ram_gb": 80.0,
    "devices": {
+    "galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "COMPLETE",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.21.0-bc4c4df-be7d805",
+     "impl_id": "qwen3_32b_galaxy",
+     "version": "0.21.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": "qwen3",
+     "override_tt_config": {
+      "dispatch_core_axis": "col",
+      "sample_on_device_mode": "all",
+      "fabric_config": "FABRIC_1D_RING",
+      "worker_l1_size": 1344544,
+      "trace_region_size": 184915840
+     },
+     "mesh_graph_desc": null
+    },
     "p150x4": {
      "engines": [
       "vLLM"
@@ -1355,6 +1958,27 @@
      "reasoning_parser": "qwen3",
      "override_tt_config": {
       "trace_region_size": 402653184
+     },
+     "mesh_graph_desc": null
+    },
+    "blackhole_galaxy": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.25.0-978f93b-a723030",
+     "impl_id": "qwen3_32b_galaxy",
+     "version": "0.25.0",
+     "tool_call_parser": "hermes",
+     "reasoning_parser": "qwen3",
+     "override_tt_config": {
+      "dispatch_core_axis": "col",
+      "sample_on_device_mode": "all",
+      "fabric_config": "FABRIC_2D_TORUS_XY",
+      "worker_l1_size": 1344544,
+      "trace_region_size": 184915840
      },
      "mesh_graph_desc": null
     }
@@ -1415,6 +2039,35 @@
      "reasoning_parser": null,
      "override_tt_config": null,
      "mesh_graph_desc": "/home/container_app_user/app/server/venv-worker/lib/python3.12/site-packages/pjrt_plugin_tt/tt-metal/tt_metal/fabric/mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto"
+    }
+   }
+  },
+  {
+   "name": "Qwen3-VL-32B-Instruct",
+   "hf_repo": "Qwen/Qwen3-VL-32B-Instruct",
+   "model_type": "vlm",
+   "engines": [
+    "vLLM"
+   ],
+   "tt_model_id": "Qwen3-VL-32B-Instruct",
+   "param_count": 32,
+   "min_disk_gb": 84,
+   "min_ram_gb": 80.0,
+   "devices": {
+    "t3k": {
+     "engines": [
+      "vLLM"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 131072,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.14.0-80180b9-7678b70",
+     "impl_id": "tt_transformers",
+     "version": "0.14.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -1589,6 +2242,94 @@
    }
   },
   {
+   "name": "resnet-50",
+   "hf_repo": "resnet-50",
+   "model_type": "cnn",
+   "engines": [
+    "forge"
+   ],
+   "tt_model_id": "resnet-50",
+   "param_count": null,
+   "min_disk_gb": 15,
+   "min_ram_gb": 6.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "forge"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.13.0-079a2c2",
+     "impl_id": "tt_transformers",
+     "version": "0.13.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "n300": {
+     "engines": [
+      "forge"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.13.0-079a2c2",
+     "impl_id": "tt_transformers",
+     "version": "0.13.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "segformer",
+   "hf_repo": "segformer",
+   "model_type": "cnn",
+   "engines": [
+    "forge"
+   ],
+   "tt_model_id": "segformer",
+   "param_count": null,
+   "min_disk_gb": 15,
+   "min_ram_gb": 6.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "forge"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.13.0-079a2c2",
+     "impl_id": "tt_transformers",
+     "version": "0.13.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "n300": {
+     "engines": [
+      "forge"
+     ],
+     "status": "FUNCTIONAL",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.13.0-079a2c2",
+     "impl_id": "tt_transformers",
+     "version": "0.13.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
    "name": "speecht5_tts",
    "hf_repo": "microsoft/speecht5_tts",
    "model_type": "text_to_speech",
@@ -1646,6 +2387,242 @@
      "reasoning_parser": null,
      "override_tt_config": null,
      "mesh_graph_desc": "../../tt-metal/tt_metal/fabric/mesh_graph_descriptors/p300_x2_mesh_graph_descriptor.textproto"
+    }
+   }
+  },
+  {
+   "name": "stable-diffusion-xl-base-1.0",
+   "hf_repo": "stabilityai/stable-diffusion-xl-base-1.0",
+   "model_type": "image",
+   "engines": [
+    "media"
+   ],
+   "tt_model_id": "stable-diffusion-xl-base-1.0",
+   "param_count": null,
+   "min_disk_gb": 15,
+   "min_ram_gb": 6.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "n300": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "t3k": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "galaxy": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "stable-diffusion-xl-base-1.0-img-2-img",
+   "hf_repo": "stabilityai/stable-diffusion-xl-base-1.0-img-2-img",
+   "model_type": "image",
+   "engines": [
+    "media"
+   ],
+   "tt_model_id": "stable-diffusion-xl-base-1.0-img-2-img",
+   "param_count": null,
+   "min_disk_gb": 15,
+   "min_ram_gb": 6.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "n300": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "t3k": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "galaxy": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "tt_transformers",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "vit",
+   "hf_repo": "vit",
+   "model_type": "cnn",
+   "engines": [
+    "forge"
+   ],
+   "tt_model_id": "vit",
+   "param_count": null,
+   "min_disk_gb": 15,
+   "min_ram_gb": 6.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "forge"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.13.0-079a2c2",
+     "impl_id": "tt_transformers",
+     "version": "0.13.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "n300": {
+     "engines": [
+      "forge"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.13.0-079a2c2",
+     "impl_id": "tt_transformers",
+     "version": "0.13.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    }
+   }
+  },
+  {
+   "name": "vovnet",
+   "hf_repo": "vovnet",
+   "model_type": "cnn",
+   "engines": [
+    "forge"
+   ],
+   "tt_model_id": "vovnet",
+   "param_count": null,
+   "min_disk_gb": 15,
+   "min_ram_gb": 6.0,
+   "devices": {
+    "n150": {
+     "engines": [
+      "forge"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.13.0-079a2c2",
+     "impl_id": "tt_transformers",
+     "version": "0.13.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "n300": {
+     "engines": [
+      "forge"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server-forge:0.13.0-079a2c2",
+     "impl_id": "tt_transformers",
+     "version": "0.13.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
     }
    }
   },
@@ -1720,6 +2697,24 @@
      "serve_overrides": {
       "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10"
      }
+    },
+    "blackhole_galaxy": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.25.0-978f93b",
+     "impl_id": "tt_transformers",
+     "version": "0.25.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null,
+     "serve_overrides": {
+      "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10"
+     }
     }
    }
   },
@@ -1735,6 +2730,66 @@
    "min_disk_gb": 15,
    "min_ram_gb": 6.0,
    "devices": {
+    "n150": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "whisper",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "n300": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "whisper",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "t3k": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.11.1-bac8b34",
+     "impl_id": "whisper",
+     "version": "0.11.1",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
+    "galaxy": {
+     "engines": [
+      "media"
+     ],
+     "status": "COMPLETE",
+     "max_context": 65536,
+     "supported": true,
+     "docker_image": "ghcr.io/tenstorrent/tt-media-inference-server:0.17.0-8c48a10",
+     "impl_id": "whisper",
+     "version": "0.17.0",
+     "tool_call_parser": null,
+     "reasoning_parser": null,
+     "override_tt_config": null,
+     "mesh_graph_desc": null
+    },
     "p150": {
      "engines": [
       "media"

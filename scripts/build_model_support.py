@@ -49,8 +49,6 @@ _DEVICE_ORDER = (
 )
 
 
-# Boards tt's catalog does not offer yet: Wormhole cards, LoudBox (t3k) and every
-# Galaxy. Their specs were never validated, so both outputs leave them out.
 EXCLUDED_DEVICES = frozenset({
     "n150", "n150x4", "n300", "t3k",
     "galaxy", "galaxy_t3k", "dual_galaxy", "quad_galaxy", "blackhole_galaxy",
@@ -104,11 +102,12 @@ class BuildError(Exception):
 
 @dataclass(frozen=True)
 class Overrides:
-    """The three kinds of entry in model_support_overrides.toml."""
+    """The four kinds of entry in model_support_overrides.toml."""
 
     marks: list[dict[str, Any]] = dataclasses_field(default_factory=list)
     fallbacks: list[dict[str, Any]] = dataclasses_field(default_factory=list)
     serve: list[dict[str, Any]] = dataclasses_field(default_factory=list)
+    validated: list[dict[str, Any]] = dataclasses_field(default_factory=list)
 
 
 # -- inputs ---------------------------------------------------------------------------
@@ -188,7 +187,20 @@ def load_overrides(path: Path) -> Overrides:
                 f"{path.name}: serve_override for {entry['model']} sets nothing; "
                 f"give it one of {', '.join(SERVE_OVERRIDE_KEYS)}."
             )
-    return Overrides(marks=entries, fallbacks=fallbacks, serve=serve)
+
+    validated = doc.get("validated_device") or []
+    for entry in validated:
+        missing = [f for f in ("model", "device", "version", "details") if not entry.get(f)]
+        if missing:
+            raise BuildError(
+                f"{path.name}: validated_device {entry!r} is missing {', '.join(missing)}."
+            )
+        if entry["device"] not in EXCLUDED_DEVICES:
+            raise BuildError(
+                f"{path.name}: validated_device {entry['model']} / {entry['device']!r} "
+                "names a board the catalog already offers; only EXCLUDED_DEVICES need one."
+            )
+    return Overrides(marks=entries, fallbacks=fallbacks, serve=serve, validated=validated)
 
 
 def load_spec(path: Path) -> dict[str, Any]:
@@ -229,14 +241,18 @@ def fetch_spec(destination: Path) -> str:
 
 
 # -- build ----------------------------------------------------------------------------
-def build_models(spec: dict[str, Any]) -> list[dict[str, Any]]:
+def build_models(
+    spec: dict[str, Any], validated: list[dict[str, Any]] = ()
+) -> list[dict[str, Any]]:
     """Flatten the spec's model → device → engine → impl nesting into one record
     per model, with a device map holding everything needed to serve it.
 
     One leaf is chosen per (device, engine) exactly as the runtime catalog does,
     so the published file and `tt model list` can never disagree about which impl
-    a model resolves to.
+    a model resolves to. EXCLUDED_DEVICES are skipped unless `validated` lists the
+    (model, device) pair at the spec's version.
     """
+    allowed = {(e["model"], e["device"]): e["version"] for e in validated}
     models = []
     for repo, device_map in (spec.get("model_specs") or {}).items():
         if not isinstance(device_map, dict):
@@ -244,8 +260,6 @@ def build_models(spec: dict[str, Any]) -> list[dict[str, Any]]:
         devices: dict[str, dict[str, Any]] = {}
         leaves: list[tuple[str, dict[str, Any]]] = []  # (engine, leaf), for model-level fields
         for device_type in sorted(device_map, key=lambda d: _device_key(d.lower())):
-            if device_type.lower() in EXCLUDED_DEVICES:
-                continue
             engine_map = device_map[device_type]
             if not isinstance(engine_map, dict) or not engine_map:
                 continue
@@ -253,6 +267,10 @@ def build_models(spec: dict[str, Any]) -> list[dict[str, Any]]:
             impl_id, leaf = _preferred_impl(engine_map[engines[0]] or {})
             if not leaf.get("model_name"):
                 raise BuildError(f"{repo} → {device_type} → {engines[0]}: leaf has no model_name.")
+            if device_type.lower() in EXCLUDED_DEVICES and allowed.get(
+                (leaf["model_name"], device_type.lower())
+            ) != str(leaf.get("version")):
+                continue
             device_spec = leaf.get("device_model_spec") or {}
             metadata = leaf.get("metadata") or {}
             max_context = device_spec.get("max_context")
@@ -449,9 +467,23 @@ def apply_serve_overrides(
     return warnings
 
 
+def _dormant_validations(
+    models: list[dict[str, Any]], validated: list[dict[str, Any]]
+) -> list[str]:
+    """Warnings for validated pairs the spec no longer has at the validated version."""
+    offered = {(m["name"], d) for m in models for d in m["devices"]}
+    return [
+        f"{e['model']}: {e['device']} was validated at {e['version']}, which this spec "
+        "does not have; left out until it is revalidated."
+        for e in validated
+        if (e["model"], e["device"]) not in offered
+    ]
+
+
 def build_document(spec: dict[str, Any], overrides: Overrides) -> tuple[dict, list[str]]:
-    models = build_models(spec)
-    warnings = apply_overrides(models, overrides.marks)
+    models = build_models(spec, overrides.validated)
+    warnings = _dormant_validations(models, overrides.validated)
+    warnings += apply_overrides(models, overrides.marks)
     apply_device_fallbacks(models, overrides.fallbacks)  # summarized, not warned
     warnings += apply_serve_overrides(models, overrides.serve)
     document = {
@@ -472,7 +504,7 @@ def build_compat_overrides(spec: dict[str, Any], overrides: Overrides) -> dict[s
     compatibility bucket. Serve-time overrides are left out: they change how tt
     launches a model, not whether it runs.
     """
-    models = build_models(spec)
+    models = build_models(spec, overrides.validated)
     apply_overrides(models, overrides.marks)
     removals = [
         {"model": model["name"], "device": device, "reason": record["unsupported"]["reason"]}
