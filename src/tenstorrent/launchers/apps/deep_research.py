@@ -6,19 +6,19 @@
 Neither a binary tt configures nor a container tt runs: tt installs tt-deep-research
 at its pin on first launch, and `ttdr up` starts the app from its home folder
 ($TTDR_HOME, default ~/.tt-deep-research), which ttdr fills and keeps the data in.
-It needs an LLM, an embedder and a reranker; the recipe describing them is picked
-from the bundles tt-model reports running. With none of them running and nothing
-else on the board, the default recipe (`recipe.toml`: the three models on separate
-chips) starts and `ttdr up` serves them itself; a cohost bundle is only used when
-it is already running or asked for with --recipe. `ttdr up` serves any model of
-its recipe that does not answer, so when some bundle is running every endpoint is
-checked first: tt never lets it start a model on chips the running ones hold.
+Its recipes say which models it needs; `ttdr recipes --json` lists them with the
+tt-model bundles each serves and on which chips. tt starts the recipe whose bundles
+are running, else the one asked for (the default unless --recipe names another),
+which `ttdr up` then serves itself. It never lets `ttdr up` serve a model on chips or
+ports something else holds: it says what to stop, or which recipe fits what runs.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from ...errors import ExitCode, TTError
@@ -27,31 +27,19 @@ from ..container import port_is_free
 from ..discovery import probe
 
 DEFAULT_HOME = "~/.tt-deep-research"
+DEFAULT_RECIPE = "default"
 UI_PORT = 3000
-# Where every recipe below expects its models.
-ENDPOINTS = {"LLM": 8000, "embedder": 8005, "reranker": 8004}
-# Each recipe, with the bundles it expects tt-model to be serving. The default,
-# recipe.toml, serves the three models on separate chips (rerank.toml is the same
-# setup under its old name); the cohost recipes serve all three from one bundle.
-SEPARATE_BUNDLES = (
-    "raahemnabeel/ornith-1.5-35b-a3b",
-    "raahemnabeel/qwen3-vl-embedding-8b",
-    "raahemnabeel/qwen3-vl-reranker-8b",
-)
-RECIPES = {
-    "recipe.toml": SEPARATE_BUNDLES,
-    "recipes/rerank.toml": SEPARATE_BUNDLES,
-    "recipes/ornith-35b-cohost.toml": ("raahemnabeel/cohost-ornith-35b-qwen3vl",),
-    "recipes/ornith-122b.toml": ("raahemnabeel/cohost-ornith-122b-qwen3vl",),
-    "recipes/qwen38-27b.toml": ("raahemnabeel/cohost-qwen38-27b-qwen3vl",),
-}
-# Started when nothing is running: `ttdr up` serves its own models, one bundle per chip group.
-DEFAULT_RECIPE = "recipe.toml"
-DEFAULT_MODEL = "ornith-ai/Ornith-1.5-35B-A3B"
+LIST_HINT = "`tt launch deep-research --list-recipes` shows every recipe and whether it can start now."
 _COMPOSE = "com.docker.compose"
 _PROJECT = "ttdr"
 # What `ttdr down` stops; its data services (Qdrant, SearXNG, Redis) keep running.
 _APP_SERVICES = frozenset({"engine", "aiq", "ui", "deepagents", "ui-deepagents", "ocr"})
+
+
+@dataclass(frozen=True)
+class Choice:
+    recipe: dict  # one entry of `ttdr recipes --json`
+    serves_models: bool  # `ttdr up` serves its models: the board is free for them
 
 
 class DeepResearch:
@@ -65,9 +53,6 @@ class DeepResearch:
     model_requirement = "a bundle its recipes name"
     hands_over_terminal = False
     uses_recipes = True
-    # What starts when none of its recipes' bundles is running: `ttdr up` serves the models.
-    default_recipe = DEFAULT_RECIPE
-    default_model = DEFAULT_MODEL
 
     def target(self) -> str:
         return "tt-deep-research app"
@@ -76,75 +61,89 @@ class DeepResearch:
         """Where ttdr keeps the app's files and data."""
         return Path(os.environ.get("TTDR_HOME") or DEFAULT_HOME).expanduser()
 
-    def recipe_for(self, home: Path, wanted: str | None, bundles: list[str]) -> str | None:
-        """--recipe, else the recipe whose bundles are all running; None if none is."""
+    def recipes(self, executable: str, runner) -> list[dict]:
+        """Every recipe the installed ttdr ships (`ttdr recipes --json`)."""
+        result = runner.capture(
+            [executable, "recipes", "--json"], env=self._env(self.home()), tool=self.id
+        )
+        try:
+            return json.loads(result.stdout)
+        except ValueError as exc:
+            raise TTError(
+                "`ttdr recipes --json` did not print JSON.",
+                why=str(exc),
+                next_step="Re-run with --verbose and report this with `tt report issue`.",
+                exit_code=ExitCode.TOOL_FAILED,
+            ) from exc
+
+    def choose(self, recipes: list[dict], wanted: str | None, bundles: list[str]) -> Choice:
+        """--recipe, else the recipe whose bundles are running, else the default; served
+        by `ttdr up` only when nothing else holds its chips or ports."""
         if wanted:
-            if wanted not in RECIPES and not (home / wanted).is_file():
-                raise TTError(
-                    f"No recipe {wanted} in {home}.",
-                    why="--recipe is a path relative to the app's home folder.",
-                    next_step=f"Pick one of {', '.join(RECIPES)}, or drop --recipe.",
-                    exit_code=ExitCode.USAGE,
-                    details={"recipe": wanted},
-                )
-            return wanted
-        for recipe, needed in RECIPES.items():
-            if set(needed) <= set(bundles):
-                return recipe
-        return None
+            recipe = self._named(recipes, wanted)
+        else:
+            running = self._running_recipes(recipes, bundles)
+            if running:
+                return Choice(running[0], serves_models=False)
+            recipe = self._named(recipes, DEFAULT_RECIPE)
+        if self._ready(recipe, bundles):
+            return Choice(recipe, serves_models=False)
+        others, port = self._conflicts(recipe, bundles)
+        if others or port:
+            raise self._blocked(recipe, recipes, bundles, others, port)
+        return Choice(recipe, serves_models=True)
 
-    def not_served(self, bundles: list[str], blocker: str | None = None) -> TTError:
-        why = (
-            "It needs an LLM, an embedder and a reranker from a bundle one of its "
-            f"recipes names; tt-model is serving {', '.join(bundles) or 'nothing'}."
-        )
-        return TTError(
-            "tt is not serving the models deep-research needs.",
-            why=f"{why} {blocker}" if blocker else why,
-            next_step=f"With the board free, `tt launch {self.id}` starts the app and "
-            "`ttdr up` serves its models on separate chips. Or serve the bundles one of "
-            f"its recipes names ({', '.join(SEPARATE_BUNDLES)}), then re-run; for another "
-            "recipe, pass --recipe.",
-            exit_code=ExitCode.ERROR,
-            details={"tool": self.id, "serving": bundles},
-        )
+    def statuses(self, recipes: list[dict], bundles: list[str], runner) -> list[dict]:
+        """`--list-recipes`: each listed recipe, what it serves, and whether it can start now."""
+        started = self._started_with(self.home()) if self._running(runner) else None
+        rows = []
+        for recipe in recipes:
+            if not recipe["description"]:
+                continue
+            others, port = self._conflicts(recipe, bundles)
+            if started == Path(recipe["path"]):
+                status = "running"
+            elif self._ready(recipe, bundles):
+                status = "ready: its models are serving"
+            elif others:
+                status = f"needs `tt model stop {' '.join(others)}` first"
+            elif port:
+                status = f"blocked: {port}"
+            else:
+                status = "can start: serves its models (10-15 min)"
+            rows.append({
+                "recipe": recipe["name"],
+                "serves": _serves(recipe),
+                "status": status,
+                "about": recipe["description"],
+            })
+        return rows
 
-    def serve_blocker(self, bundles: list[str]) -> str | None:
-        """Why tt must not start the default recipe here: the board or one of its
-        ports is already someone else's."""
-        if bundles:
-            return "tt will not serve another bundle over those."
-        for role, port in ENDPOINTS.items():
-            models = probe(f"http://127.0.0.1:{port}/v1")
-            if models:
-                return (
-                    f"Port {port} (its {role}) already serves {models[0].served_id}, "
-                    "so tt will not serve over it."
-                )
-        return None
-
-    def model_bundles(self, bundles: list[str]) -> list[str]:
+    def model_bundles(self, bundles: list[str], executable: str | None, runner) -> list[str]:
         """Which of the running bundles are ones its recipes use."""
-        known = {bundle for needed in RECIPES.values() for bundle in needed}
+        if executable is None:
+            return []
+        known = {b for recipe in self.recipes(executable, runner) for b in recipe["bundles"]}
         return [bundle for bundle in bundles if bundle in known]
 
-    def served_llm(self) -> RunningModel:
-        """The LLM, once all three endpoints answer."""
-        found: dict[str, RunningModel] = {}
-        for role, port in ENDPOINTS.items():
-            models = probe(f"http://127.0.0.1:{port}/v1")
-            if not models:
+    def served_llm(self, recipe: dict) -> RunningModel:
+        """The LLM, once every model of the recipe answers."""
+        llm = None
+        for model in filter(_openai, recipe["models"]):
+            found = probe(model["url"])
+            if not found:
                 raise TTError(
-                    f"Nothing answers as deep-research's {role} on port {port}.",
-                    why="`ttdr up` would try to serve it itself, on chips the running "
-                    "models already hold.",
-                    next_step="If you just served it, it is probably still loading — "
-                    "watch `tt model logs <bundle> --follow` and retry.",
+                    f"{model['model']} is not answering at {model['url']} yet.",
+                    why="Its bundle is running but still loading; starting now would have "
+                    "`ttdr up` serve it a second time.",
+                    next_step=f"Watch `tt model logs {model['bundle']} --follow`, then re-run.",
                     exit_code=ExitCode.ERROR,
-                    details={"tool": self.id, "role": role, "port": port},
+                    details={"tool": self.id, "model": model["model"], "url": model["url"]},
                 )
-            found[role] = models[0]
-        return found["LLM"]
+            if "llm" in model["roles"]:
+                llm = found[0]
+        assert llm is not None
+        return llm
 
     def plan(
         self,
@@ -174,8 +173,8 @@ class DeepResearch:
         consent = f"Run `ttdr up --recipe {recipe}`, starting its app containers"
         if options.serves_models:
             consent = (
-                f"Run `ttdr up --recipe {recipe}`: it serves its LLM, embedder and reranker "
-                "(each on its own chips; 10-15 minutes from cold) and starts its app containers"
+                f"Run `ttdr up --recipe {recipe}`: it serves the recipe's models "
+                "(10-15 minutes from cold) and starts its app containers"
             )
         return Preparation(
             rows=rows,
@@ -205,9 +204,7 @@ class DeepResearch:
     def stop(self, env: LaunchEnv) -> None:
         # From the folder the running app was started in, whatever $TTDR_HOME says now.
         home = next(iter((self._running(env.runner) or {}).values()), None) or self.home()
-        env.runner.stream(
-            [env.executable, "down"], env={**os.environ, "TTDR_HOME": str(home)}, tool=self.id
-        )
+        env.runner.stream([env.executable, "down"], env=self._env(home), tool=self.id)
 
     def disconnect_plan(self, executable: str | None, runner) -> str | None:
         """Nothing persists outside the app's own home folder, so there is never
@@ -216,6 +213,80 @@ class DeepResearch:
 
     def disconnect(self, env: LaunchEnv) -> None:
         pass
+
+    def _env(self, home: Path | str) -> dict[str, str]:
+        return {**os.environ, "TTDR_HOME": str(home)}
+
+    def _named(self, recipes: list[dict], wanted: str) -> dict:
+        for recipe in recipes:
+            if wanted in (recipe["name"], recipe["path"]):
+                return recipe
+        listed = ", ".join(r["name"] for r in recipes if r["description"])
+        raise TTError(
+            f"deep-research has no recipe {wanted!r}.",
+            why=f"Its recipes: {listed}.",
+            next_step=LIST_HINT,
+            exit_code=ExitCode.USAGE,
+            details={"recipe": wanted},
+        )
+
+    def _running_recipes(self, recipes: list[dict], bundles: list[str]) -> list[dict]:
+        """Listed recipes whose bundles tt-model is serving now."""
+        return [
+            r for r in recipes
+            if r["description"] and r["bundles"] and set(r["bundles"]) <= set(bundles)
+        ]
+
+    def _ready(self, recipe: dict, bundles: list[str]) -> bool:
+        """Its bundles are running, or its models already answer (served some other way)."""
+        if set(recipe["bundles"]) <= set(bundles):
+            return True
+        return all(self._serving(m) == m["model"] for m in recipe["models"] if _openai(m))
+
+    def _serving(self, model: dict) -> str | None:
+        """The model a recipe model's URL answers with, if any."""
+        found = probe(model["url"]) if _openai(model) else None
+        return found[0].served_id if found else None
+
+    def _conflicts(self, recipe: dict, bundles: list[str]) -> tuple[list[str], str | None]:
+        """What keeps `ttdr up` from serving the recipe: other running bundles (they hold
+        chips), or another model on a port one of its models needs."""
+        others = [b for b in bundles if b not in recipe["bundles"]]
+        for model in recipe["models"]:
+            if model["cohosted_with"] or model["bundle"] in bundles:
+                continue
+            serving = self._serving(model)
+            if serving and serving != model["model"]:
+                return others, f"{model['url']} already serves {serving}"
+        return others, None
+
+    def _blocked(
+        self,
+        recipe: dict,
+        recipes: list[dict],
+        bundles: list[str],
+        others: list[str],
+        port: str | None,
+    ) -> TTError:
+        name = recipe["name"]
+        if others:
+            why = f"tt-model is serving {', '.join(others)}, on chips the {name} recipe needs."
+            steps = [f"Free the board with `tt model stop {' '.join(others)}`, then re-run."]
+        else:
+            why = f"{port}, not a tt-model bundle."
+            steps = ["Stop that server, then re-run."]
+        fits = self._running_recipes(recipes, bundles)
+        if fits:
+            steps.append(
+                f"Or use what is running: `tt launch deep-research --recipe {fits[0]['name']}`."
+            )
+        return TTError(
+            f"deep-research can't start its {name} recipe: something else holds the board.",
+            why=why,
+            next_step=" ".join([*steps, LIST_HINT]),
+            exit_code=ExitCode.ERROR,
+            details={"tool": self.id, "recipe": name, "serving": bundles},
+        )
 
     def _running(self, runner) -> dict[str, str] | None:
         """{app service: the folder Compose started it from}, or None without docker."""
@@ -250,3 +321,25 @@ class DeepResearch:
             if key.strip() == "TTDR_RECIPE":
                 return Path(value.strip())
         return None
+
+
+def _openai(model: dict) -> bool:
+    """An OpenAI-compatible endpoint, which tt can ask what it serves."""
+    return model["url"].rstrip("/").endswith("/v1")
+
+
+def _serves(recipe: dict) -> str:
+    """What a recipe serves, and on which chips: "one bundle on chips 0-3: A, B, C" or
+    "A (chips 0-1), B (chip 2), C (chip 3)"."""
+    models = recipe["models"]
+    host = next((m for m in models if m["name"] in {x["cohosted_with"] for x in models}), None)
+    names = [m["model"].split("/")[-1] for m in models]
+    if host:
+        return f"one bundle on {_chips(host['chips'])}: " + ", ".join(names)
+    return ", ".join(
+        f"{name} ({_chips(m['chips'])})" if m["chips"] else name for name, m in zip(names, models)
+    )
+
+
+def _chips(chips: str) -> str:
+    return f"chips {chips}" if "-" in chips or "," in chips else f"chip {chips}"

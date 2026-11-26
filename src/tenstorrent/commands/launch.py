@@ -315,22 +315,17 @@ def _connect_recipe(
     recipe: str = typer.Option(
         None,
         "--recipe",
-        help="Recipe to start, relative to the app's home folder (default: the one "
-        "matching the bundle tt is serving).",
+        help="Recipe to start, by name (default: the one whose models tt is serving, "
+        "else the default).",
+    ),
+    list_recipes: bool = typer.Option(
+        False, "--list-recipes", help="Show every recipe and whether it can start now."
     ),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Skip the confirmation prompt."
     ),
-    no_exec: bool = typer.Option(
-        False, "--no-exec", help="Check everything but do not start it."
-    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would be done, and change nothing."
-    ),
-    serve: bool = typer.Option(
-        True,
-        "--serve/--no-serve",
-        help="Start its default recipe, which serves its own models, when none of its bundles is running.",
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
@@ -341,32 +336,46 @@ def _connect_recipe(
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(ctx.info_name)
-    home = launcher.home()
-    bundles = [] if recipe else _running_bundles(appctx)
-    chosen = launcher.recipe_for(home, recipe, bundles)
-    serves_models = chosen is None
-    if serves_models:
-        blocker = launcher.serve_blocker(bundles) if serve else None
-        if not serve or blocker:
-            raise launcher.not_served(bundles, blocker)
-        chosen = launcher.recipe_for(home, launcher.default_recipe, [])
-    options = LaunchOptions(home=home, recipe=chosen, serves_models=serves_models)
-    # With nothing running, `ttdr up` serves the models itself; the app's own
-    # endpoints are not there to ask yet.
+    # Its recipes come from the app itself, so a real run installs it first.
+    executable = _installed_or_none(appctx, launcher) if dry_run else _resolve(appctx, launcher)
+    if executable is None:
+        appctx.output.status(
+            f"{launcher.managed_tool} is not installed yet; `tt launch {launcher.id}` "
+            "installs it, then picks a recipe."
+        )
+        appctx.output.emit({"tool": launcher.id, "installed": False}, renderer=lambda _: None)
+        return
+    recipes = launcher.recipes(executable, appctx.runner)
+    bundles = _running_bundles(appctx)
+    if list_recipes:
+        rows = launcher.statuses(recipes, bundles, appctx.runner)
+        appctx.output.emit(rows, renderer=_recipes_renderer)
+        return
+    choice = launcher.choose(recipes, recipe, bundles)
+    llm = next(m for m in choice.recipe["models"] if "llm" in m["roles"])
+    # When `ttdr up` serves the models, they are not there to ask yet.
     target = (
-        RunningModel(served_id=launcher.default_model, base_url="http://127.0.0.1:8000/v1")
-        if serves_models
-        else launcher.served_llm()
+        RunningModel(served_id=llm["model"], base_url=llm["url"])
+        if choice.serves_models
+        else launcher.served_llm(choice.recipe)
     )
-    # Installed only once every check has passed, and only when it will be started.
-    executable = (
-        _installed_or_none(appctx, launcher) if dry_run or no_exec else _resolve(appctx, launcher)
+    options = LaunchOptions(
+        home=launcher.home(), recipe=choice.recipe["path"], serves_models=choice.serves_models
     )
     _start(
         appctx, launcher, target, options, executable,
-        yes=yes, no_exec=no_exec, dry_run=dry_run, json_mode=json_mode,
-        rows={"serve": "ttdr up serves the models"} if serves_models else None,
+        yes=yes, no_exec=False, dry_run=dry_run, json_mode=json_mode,
+        rows={"serve": "ttdr up serves the models"} if choice.serves_models else None,
     )
+
+
+def _recipes_renderer(rows: list[dict]) -> Table:
+    table = Table(title="deep-research recipes", show_header=True, header_style="bold")
+    for column in ("recipe", "serves", "status", "about"):
+        table.add_column(column, overflow="fold")
+    for row in rows:
+        table.add_row(row["recipe"], row["serves"], row["status"], row["about"])
+    return table
 
 
 def _start(
@@ -528,7 +537,7 @@ def stop(
         appctx.output.status(f"Stopped {launcher.target()}; its data is kept.")
         payload["stopped"] = True
     if models:
-        bundles = model_bundles(_running_bundles(appctx))
+        bundles = model_bundles(_running_bundles(appctx), executable, appctx.runner)
         for bundle in bundles:
             _model_manager(appctx).stop(bundle)
         if not bundles:
