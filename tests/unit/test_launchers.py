@@ -682,7 +682,7 @@ def with_docker(monkeypatch):
 def _deep_research_plan(home, runner, recipe="recipes/cohost-ornith-35b.toml", serves=False):
     return deep_research.plan(
         RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1"),
-        LaunchOptions(home=home, recipe=recipe, serves_models=serves),
+        LaunchOptions(home=home, recipe=recipe, serves_models=serves, hf_home=Path("/hf-cache")),
         executable="/usr/bin/ttdr",
         runner=runner,
     )
@@ -812,7 +812,7 @@ def test_deep_research_plans_ttdr_up_and_asks_first(ttdr_home, with_docker, monk
         assert prep.steps == [
             ["/usr/bin/ttdr", "up", "--recipe", "recipes/cohost-ornith-35b.toml"]
         ]
-        assert prep.env == {"TTDR_HOME": str(ttdr_home)}
+        assert prep.env == {"TTDR_HOME": str(ttdr_home), "HF_HOME": "/hf-cache"}
         assert ("serves the recipe's models" in prep.consent) is serves
     assert prep.url == "http://localhost:3000"
     assert prep.rows["home"] == str(ttdr_home)

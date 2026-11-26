@@ -45,6 +45,7 @@ from ..launchers.base import (
 )
 from ..launchers.discovery import DEFAULT_PORT, base_url_for, discover
 from ..modelhub.catalog import ModelCatalog
+from ..modelhub.hub import hf_home_dir
 
 launch_app = typer.Typer(
     help="Connect a client to a model tt is already serving.", no_args_is_help=True
@@ -380,7 +381,10 @@ def _connect_recipe(
         else launcher.served_llm(choice.recipe)
     )
     options = LaunchOptions(
-        home=launcher.home(), recipe=choice.recipe["path"], serves_models=choice.serves_models
+        home=launcher.home(),
+        recipe=choice.recipe["path"],
+        serves_models=choice.serves_models,
+        hf_home=hf_home_dir(appctx.config),
     )
     _start(
         appctx, launcher, target, options, executable,

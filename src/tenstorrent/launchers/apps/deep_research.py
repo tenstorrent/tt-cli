@@ -179,6 +179,9 @@ class DeepResearch:
                 details={"web_port": UI_PORT},
             )
         exe = executable or self.binaries[0]
+        env = {"TTDR_HOME": str(home)}
+        if options.hf_home:  # the model cache `tt serve` mounts at /hf; ttdr stages templates there
+            env["HF_HOME"] = str(options.hf_home)
         consent = f"Run `ttdr up --recipe {recipe}`, starting its app containers"
         if options.serves_models:
             consent = (
@@ -190,7 +193,7 @@ class DeepResearch:
             steps=[[exe, "up", "--recipe", recipe]],
             consent=consent,
             url=url,
-            env={"TTDR_HOME": str(home)},
+            env=env,
         )
 
     def apply(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:

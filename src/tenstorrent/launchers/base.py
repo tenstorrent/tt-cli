@@ -60,6 +60,7 @@ class LaunchOptions:
     home: Path | None = None  # for an app that keeps its files in its own folder
     recipe: str | None = None  # that app's recipe, relative to its folder
     serves_models: bool = False  # no model is running: the app serves its own
+    hf_home: Path | None = None  # tt's model cache, where that app stages files for `tt serve`
 
 
 @dataclass(frozen=True)
