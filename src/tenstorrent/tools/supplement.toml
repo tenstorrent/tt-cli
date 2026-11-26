@@ -13,8 +13,8 @@ schema_version = 1
 # means tt would display and pin versions the installer won't install.
 # `tt update` refuses to run a golden install.sh whose tag differs from `tag`.
 # Bump the installer pin and this table together.
-tag = "v4.0.0"
-sha256 = "6aa32fd0f8f66200e07272aaf419033a1823cf75c1e08369e481e20bf1a1e4a9"
+tag = "v7.0.0"
+sha256 = "7676c6f0fb0cc9a4de156fd04202ea81d2b4312bb3c45fa4b8bd696a7c8354d5"
 url_template = "https://github.com/tenstorrent/tt-sw-manifest/releases/download/{tag}/golden.json"
 
 [tools.tt-installer]
@@ -27,21 +27,21 @@ kind = "script"
 # upstream defaults). tt-cli explicitly passes --update-firmware=on for a normal
 # update so current or newer firmware is never reflashed; --force opts back into
 # the upstream force behavior.
-golden_version = "3.6.3"
+golden_version = "3.6.4"
 # Interpreter the installer's managed venv (~/.tenstorrent-venv) is built with.
 # Passed as `--python-version=<this> --use-uv`; install.sh only honors the pin with
 # --use-uv, which lets uv provision the interpreter instead of trusting the distro
 # python. Only applied when running the golden installer — older releases predate
 # the flag and would die on an unrecognized option.
 python = "3.12"
-url = "https://github.com/tenstorrent/tt-installer/releases/download/v3.6.3/install.sh"
+url = "https://github.com/tenstorrent/tt-installer/releases/download/v3.6.4/install.sh"
 # {version} slot lets `tt update <semver>` fetch a specific install.sh release
 # (e.g. to downgrade the system stack). Only the golden version is sha256-pinned;
 # user-requested versions are fetched unpinned (with a warning).
 url_template = "https://github.com/tenstorrent/tt-installer/releases/download/v{version}/install.sh"
 # sha256 of the released v3.6.1 asset (pinned 2026-10-01; matches GitHub's
 # published asset digest for the release).
-sha256 = "be62ee193943e9febe85099d87259c0f5edb3d22157a9d8ac12d3ed488bcb3ea"
+sha256 = "42464347d4a4522f194ba33cec782b906cd9a0ab9f17280a90e98ec62bcf8912"
 needs_sudo = true # install.sh sudo's internally
 
 [tools.tt-inference-server]
@@ -50,7 +50,7 @@ kind = "git-venv"
 # name (kind = "uv-tool") with a one-line change once it ships to PyPI.
 # v0.18.0 is the first pin validated on Blackhole P300 hardware (earlier tags,
 # e.g. v0.6.0, predate the p300/p300x2 device types entirely).
-golden_version = "v0.26.0"
+golden_version = "v0.26.1"
 repo = "https://github.com/tenstorrent/tt-inference-server"
 entry = "run.py"
 python = "3.10"
@@ -75,7 +75,7 @@ package = "tt-model"
 repo = "https://github.com/tenstorrent/tt-model-manager"
 # Upstream publishes no tags yet, so the pin is a commit. Bumping it reinstalls
 # via registry.ensure() (recorded state != golden pin).
-golden_version = "0ca9e4001e81e14504a12a4f398ad1858b92d137"
+golden_version = "f4d0ad76bdbd5946d389d0cf4d8d2d66d10c76ce"
 python = "3.10"
 health = ["--version"]
 
