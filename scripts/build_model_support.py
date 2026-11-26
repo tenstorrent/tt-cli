@@ -54,6 +54,22 @@ EXCLUDED_DEVICES = frozenset({
     "galaxy", "galaxy_t3k", "dual_galaxy", "quad_galaxy", "blackhole_galaxy",
 })
 
+# run.py refuses vLLM images older than this (validate_setup.py
+# MIN_SUPPORTED_IMAGE_VERSION): the image's entrypoint contract changed in
+# v0.11.0, so tt serve, which delegates to run.py, cannot start them. Media and
+# forge images are not affected.
+MIN_VLLM_IMAGE_VERSION = (0, 11, 0)
+
+
+def _vllm_image_too_old(engine: str, version: Any) -> bool:
+    if engine != "vLLM" or version is None:
+        return False
+    try:
+        parsed = tuple(int(part) for part in str(version).split("."))
+    except ValueError:
+        return False  # like run.py: an unparseable version is left to the runtime
+    return parsed < MIN_VLLM_IMAGE_VERSION
+
 
 def _engine_key(engine: str) -> tuple[int, str]:
     order = _ENGINE_ORDER.index(engine) if engine in _ENGINE_ORDER else len(_ENGINE_ORDER)
@@ -270,6 +286,8 @@ def build_models(
             if device_type.lower() in EXCLUDED_DEVICES and allowed.get(
                 (leaf["model_name"], device_type.lower())
             ) != str(leaf.get("version")):
+                continue
+            if _vllm_image_too_old(engines[0], leaf.get("version")):
                 continue
             device_spec = leaf.get("device_model_spec") or {}
             metadata = leaf.get("metadata") or {}

@@ -85,7 +85,7 @@ def test_the_bundled_list_offers_excluded_boards_only_for_validated_models(monke
         if device in excluded
     }
     assert ("distil-large-v3", "galaxy") in offered
-    assert ("Qwen2.5-VL-7B-Instruct", "galaxy") in offered
+    assert ("whisper-large-v3", "galaxy") in offered
     # Only specs from tt-inference-server 0.11.0 onwards are offered on these boards.
     too_old = {
         pair: version

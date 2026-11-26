@@ -123,6 +123,150 @@ device hang mid kernel-compile) badly enough that the host needs a board \
 reset. Re-check once the media image ships a tt-metal/firmware combination \
 validated on firmware 19.7.0."""
 
+# ---------------------------------------------------------------------------
+# Deploy failures found by ttsim validation runs (tt-inference-server v0.26.1 run.py)
+# ---------------------------------------------------------------------------
+
+[[override]]
+model = "mobilenetv2"
+device = "n150"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "mobilenetv2"
+device = "n300"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "resnet-50"
+device = "n150"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "resnet-50"
+device = "n300"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "segformer"
+device = "n150"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "segformer"
+device = "n300"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "vit"
+device = "n150"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "vit"
+device = "n300"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "vovnet"
+device = "n150"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "vovnet"
+device = "n300"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
 # ===========================================================================
 # Validated pairs on excluded boards
 # ===========================================================================
@@ -136,215 +280,7 @@ validated on firmware 19.7.0."""
 # these boards, so every pair whose spec is at 0.11.0 or later is listed; the
 # older specs (0.2.0–0.10.0) stay out.
 
-# --- Wormhole cards (n150, n300) ---------------------------------------------
-
-[[validated_device]]
-model = "distil-large-v3"
-device = "n150"
-version = "0.11.1"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "distil-large-v3"
-device = "n300"
-version = "0.11.1"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "mobilenetv2"
-device = "n150"
-version = "0.13.0"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "mobilenetv2"
-device = "n300"
-version = "0.13.0"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "resnet-50"
-device = "n150"
-version = "0.13.0"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "resnet-50"
-device = "n300"
-version = "0.13.0"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "segformer"
-device = "n150"
-version = "0.13.0"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "segformer"
-device = "n300"
-version = "0.13.0"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "stable-diffusion-xl-base-1.0"
-device = "n150"
-version = "0.11.1"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "stable-diffusion-xl-base-1.0"
-device = "n300"
-version = "0.11.1"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "stable-diffusion-xl-base-1.0-img-2-img"
-device = "n150"
-version = "0.11.1"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "stable-diffusion-xl-base-1.0-img-2-img"
-device = "n300"
-version = "0.11.1"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "vit"
-device = "n150"
-version = "0.13.0"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "vit"
-device = "n300"
-version = "0.13.0"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "vovnet"
-device = "n150"
-version = "0.13.0"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "vovnet"
-device = "n300"
-version = "0.13.0"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "whisper-large-v3"
-device = "n150"
-version = "0.11.1"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "whisper-large-v3"
-device = "n300"
-version = "0.11.1"
-details = "Wormhole card spec from 0.11.0 or later; treated as compatible."
-
-# --- LoudBox (t3k) -----------------------------------------------------------
-
-[[validated_device]]
-model = "DeepSeek-R1-Distill-Llama-70B"
-device = "t3k"
-version = "0.11.1"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "distil-large-v3"
-device = "t3k"
-version = "0.11.1"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "gpt-oss-120b"
-device = "t3k"
-version = "0.12.0"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Llama-3.1-70B"
-device = "t3k"
-version = "0.11.1"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Llama-3.1-70B-Instruct"
-device = "t3k"
-version = "0.11.1"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Llama-3.3-70B-Instruct"
-device = "t3k"
-version = "0.11.1"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "olmOCR-2-7B-1025"
-device = "t3k"
-version = "0.26.0"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Qwen2.5-VL-32B-Instruct"
-device = "t3k"
-version = "0.26.0"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Qwen2.5-VL-72B-Instruct"
-device = "t3k"
-version = "0.26.0"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Qwen2.5-VL-7B-Instruct"
-device = "t3k"
-version = "0.26.0"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Qwen3-VL-32B-Instruct"
-device = "t3k"
-version = "0.14.0"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "stable-diffusion-xl-base-1.0"
-device = "t3k"
-version = "0.11.1"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "stable-diffusion-xl-base-1.0-img-2-img"
-device = "t3k"
-version = "0.11.1"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "whisper-large-v3"
-device = "t3k"
-version = "0.11.1"
-details = "LoudBox (T3K) spec from 0.11.0 or later; treated as compatible."
-
 # --- Wormhole Galaxy ---------------------------------------------------------
-
-[[validated_device]]
-model = "bge-large-en-v1.5"
-device = "galaxy"
-version = "0.12.0"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "DeepSeek-R1-0528"
-device = "galaxy"
-version = "0.12.0"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
 
 [[validated_device]]
 model = "DeepSeek-R1-0528"
@@ -362,99 +298,23 @@ details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
 model = "distil-large-v3"
 device = "galaxy"
 version = "0.17.0"
-details = "Works on a Wormhole Galaxy."
-
-[[validated_device]]
-model = "gpt-oss-120b"
-device = "galaxy"
-version = "0.17.0"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Llama-3.1-8B"
-device = "galaxy_t3k"
-version = "0.11.1"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Llama-3.1-8B"
-device = "galaxy"
-version = "0.11.1"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Llama-3.1-8B-Instruct"
-device = "galaxy_t3k"
-version = "0.11.1"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Llama-3.1-8B-Instruct"
-device = "galaxy"
-version = "0.11.0"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Qwen2.5-VL-7B-Instruct"
-device = "galaxy"
-version = "0.26.0"
-details = "Works on a Wormhole Galaxy."
-
-[[validated_device]]
-model = "Qwen3-32B"
-device = "galaxy"
-version = "0.21.0"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "stable-diffusion-xl-base-1.0"
-device = "galaxy"
-version = "0.11.1"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "stable-diffusion-xl-base-1.0-img-2-img"
-device = "galaxy"
-version = "0.11.1"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
+details = """
+Deploy bring-up verified under ttsim: tt-inference-server v0.26.1 run.py as tt \
+serve runs it, image 0.17.0-8c48a10, simulated 32-chip WH Galaxy (ttsim \
+v1.9.9, 6u cluster descriptor); all 32 devices found, model loaded and warmup \
+started with no errors. Full warmup and serving not exercised."""
 
 [[validated_device]]
 model = "whisper-large-v3"
 device = "galaxy"
 version = "0.17.0"
-details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
+details = """
+Deploy bring-up verified under ttsim: tt-inference-server v0.26.1 run.py as tt \
+serve runs it, image 0.17.0-8c48a10, simulated 32-chip WH Galaxy (ttsim \
+v1.9.9, 6u cluster descriptor); all 32 devices found, model loaded and warmup \
+started with no errors. Full warmup and serving not exercised."""
 
 # --- Blackhole Galaxy --------------------------------------------------------
-
-[[validated_device]]
-model = "gemma-4-12B-it"
-device = "blackhole_galaxy"
-version = "0.25.0"
-details = "Blackhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "gemma-4-31B-it"
-device = "blackhole_galaxy"
-version = "0.25.0"
-details = "Blackhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "gpt-oss-120b"
-device = "blackhole_galaxy"
-version = "0.25.0"
-details = "Blackhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Qwen3-32B"
-device = "blackhole_galaxy"
-version = "0.25.0"
-details = "Blackhole Galaxy spec from 0.11.0 or later; treated as compatible."
-
-[[validated_device]]
-model = "Wan2.2-T2V-A14B-Diffusers"
-device = "blackhole_galaxy"
-version = "0.25.0"
-details = "Blackhole Galaxy spec from 0.11.0 or later; treated as compatible."
 
 # ===========================================================================
 # Device fallbacks

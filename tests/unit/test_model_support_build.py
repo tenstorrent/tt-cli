@@ -376,6 +376,20 @@ def test_launch_settings_are_carried_from_the_spec():
     assert device["override_tt_config"] == {"trace_region_size": 57}
 
 
+def test_a_vllm_image_older_than_run_py_accepts_is_not_offered():
+    """run.py refuses vLLM images before 0.11.0 and tt serve goes through run.py,
+    so those boards are left out; media images of the same age still deploy."""
+    spec = json.loads(json.dumps(SPEC))
+    demo = spec["model_specs"]["org/Demo-8B"]
+    demo["P150X8"]["vLLM"]["tt_transformers"]["version"] = "0.10.1"
+    demo["P300X2"]["vLLM"]["tt_transformers"]["version"] = "0.11.0"
+    spec["model_specs"]["org/Media-1"]["P150X4"]["media"]["pipeline"]["version"] = "0.10.0"
+
+    document, _ = build.build_document(spec, build.Overrides())
+    assert set(_devices(document, "Demo-8B")) == {"p300x2"}
+    assert "p150x4" in _devices(document, "Media-1")
+
+
 def test_every_engine_gets_a_tt_model_id():
     """run.py accepts any MODEL_SPECS name, so media and forge entries are
     servable too — the published list must not imply otherwise."""
@@ -538,12 +552,12 @@ def _galaxy_spec(version):
     }
 
 
-VALIDATED = [{"model": "Galaxy-Model", "device": "galaxy", "version": "0.5.0", "details": "x"}]
+VALIDATED = [{"model": "Galaxy-Model", "device": "galaxy", "version": "0.15.0", "details": "x"}]
 
 
 def test_a_validated_pair_on_an_excluded_board_is_kept():
     document, warnings = build.build_document(
-        _galaxy_spec("0.5.0"), build.Overrides(validated=VALIDATED)
+        _galaxy_spec("0.15.0"), build.Overrides(validated=VALIDATED)
     )
     assert list(_devices(document, "Galaxy-Model")) == ["galaxy"]
     assert warnings == []
@@ -551,17 +565,17 @@ def test_a_validated_pair_on_an_excluded_board_is_kept():
 
 def test_a_validated_pair_at_another_version_is_dropped_with_a_warning():
     document, warnings = build.build_document(
-        _galaxy_spec("0.6.0"), build.Overrides(validated=VALIDATED)
+        _galaxy_spec("0.16.0"), build.Overrides(validated=VALIDATED)
     )
     assert document["models"] == []
-    assert any("validated at 0.5.0" in warning for warning in warnings)
+    assert any("validated at 0.15.0" in warning for warning in warnings)
 
 
 def test_a_validated_pair_on_an_offered_board_is_rejected(tmp_path):
     path = tmp_path / "overrides.toml"
     path.write_text(
         'schema_version = 1\n\n[[validated_device]]\nmodel = "Demo-8B"\n'
-        'device = "p150"\nversion = "0.5.0"\ndetails = "x"\n'
+        'device = "p150"\nversion = "0.15.0"\ndetails = "x"\n'
     )
     with pytest.raises(build.BuildError, match="already offers"):
         build.load_overrides(path)
