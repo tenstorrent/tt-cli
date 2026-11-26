@@ -27,7 +27,6 @@ from ..container import port_is_free
 from ..discovery import probe
 
 DEFAULT_HOME = "~/.tt-deep-research"
-DEFAULT_RECIPE = "default"
 UI_PORT = 3000
 LIST_HINT = "`tt launch deep-research --list-recipes` shows every recipe and whether it can start now."
 _COMPOSE = "com.docker.compose"
@@ -82,10 +81,19 @@ class DeepResearch:
         if wanted:
             recipe = self._named(recipes, wanted)
         else:
-            running = self._running_recipes(recipes, bundles)
+            running = self.running_recipes(recipes, bundles)
+            if len(running) > 1:
+                names = ", ".join(r["name"] for r in running)
+                raise TTError(
+                    "Several deep-research recipes fit the models tt-model is serving.",
+                    why=f"They all use what is running: {names}.",
+                    next_step="Pick one: `tt launch deep-research --recipe <name>`.",
+                    exit_code=ExitCode.USAGE,
+                    details={"tool": self.id, "recipes": [r["name"] for r in running]},
+                )
             if running:
                 return Choice(running[0], serves_models=False)
-            recipe = self._named(recipes, DEFAULT_RECIPE)
+            recipe = self._default(recipes)
         if self._ready(recipe, bundles):
             return Choice(recipe, serves_models=False)
         others, port = self._conflicts(recipe, bundles)
@@ -113,6 +121,7 @@ class DeepResearch:
                 status = "can start: serves its models (10-15 min)"
             rows.append({
                 "recipe": recipe["name"],
+                "default": recipe["default"],
                 "serves": _serves(recipe),
                 "status": status,
                 "about": recipe["description"],
@@ -217,7 +226,12 @@ class DeepResearch:
     def _env(self, home: Path | str) -> dict[str, str]:
         return {**os.environ, "TTDR_HOME": str(home)}
 
+    def _default(self, recipes: list[dict]) -> dict:
+        return next(recipe for recipe in recipes if recipe["default"])
+
     def _named(self, recipes: list[dict], wanted: str) -> dict:
+        if wanted == "default":
+            return self._default(recipes)
         for recipe in recipes:
             if wanted in (recipe["name"], recipe["path"]):
                 return recipe
@@ -230,12 +244,19 @@ class DeepResearch:
             details={"recipe": wanted},
         )
 
-    def _running_recipes(self, recipes: list[dict], bundles: list[str]) -> list[dict]:
-        """Listed recipes whose bundles tt-model is serving now."""
-        return [
+    def running_recipes(self, recipes: list[dict], bundles: list[str]) -> list[dict]:
+        """Listed recipes whose bundles tt-model is serving now. Where several share them,
+        the one the app last started with, else the default, settles it."""
+        fits = [
             r for r in recipes
             if r["description"] and r["bundles"] and set(r["bundles"]) <= set(bundles)
         ]
+        last = self._started_with(self.home())
+        for preferred in (lambda r: Path(r["path"]) == last, lambda r: r["default"]):
+            settled = [r for r in fits if preferred(r)]
+            if settled:
+                return settled[:1]
+        return fits
 
     def _ready(self, recipe: dict, bundles: list[str]) -> bool:
         """Its bundles are running, or its models already answer (served some other way)."""
@@ -275,7 +296,7 @@ class DeepResearch:
         else:
             why = f"{port}, not a tt-model bundle."
             steps = ["Stop that server, then re-run."]
-        fits = self._running_recipes(recipes, bundles)
+        fits = self.running_recipes(recipes, bundles)
         if fits:
             steps.append(
                 f"Or use what is running: `tt launch deep-research --recipe {fits[0]['name']}`."

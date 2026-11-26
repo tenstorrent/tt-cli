@@ -25,7 +25,7 @@ from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 
-from .._compat import confirm
+from .._compat import confirm, prompt
 from ..backends.serving.inference_server import InferenceServerBackend
 from ..backends.serving.model_manager import ModelManagerBackend
 from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
@@ -319,7 +319,9 @@ def _connect_recipe(
         "else the default).",
     ),
     list_recipes: bool = typer.Option(
-        False, "--list-recipes", help="Show every recipe and whether it can start now."
+        False,
+        "--list-recipes",
+        help="Show every recipe and whether it can start now; on a terminal, pick one to start.",
     ),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Skip the confirmation prompt."
@@ -347,10 +349,28 @@ def _connect_recipe(
         return
     recipes = launcher.recipes(executable, appctx.runner)
     bundles = _running_bundles(appctx)
+    interactive = (
+        not (yes or dry_run or appctx.output.json_mode or appctx.output.quiet) and _stdin_isatty()
+    )
     if list_recipes:
         rows = launcher.statuses(recipes, bundles, appctx.runner)
-        appctx.output.emit(rows, renderer=_recipes_renderer)
-        return
+        if not interactive:
+            appctx.output.emit(rows, renderer=_recipes_renderer)
+            return
+        recipe = _pick_recipe(appctx, rows, optional=True)
+        if recipe is None:
+            return
+        yes = True  # picking one is the yes
+    elif recipe is None and interactive:
+        rows = launcher.statuses(recipes, bundles, appctx.runner)
+        running = {r["name"] for r in launcher.running_recipes(recipes, bundles)}
+        if len(running) > 1:  # several fit what is serving: which one
+            recipe = _pick_recipe(appctx, [r for r in rows if r["recipe"] in running], optional=False)
+            yes = True
+        # Nothing running: a choice when one can start; otherwise choose() says what to stop.
+        elif not running and any(row["status"].startswith("can start") for row in rows):
+            recipe = _pick_recipe(appctx, rows, optional=False)
+            yes = True
     choice = launcher.choose(recipes, recipe, bundles)
     llm = next(m for m in choice.recipe["models"] if "llm" in m["roles"])
     # When `ttdr up` serves the models, they are not there to ask yet.
@@ -369,13 +389,37 @@ def _connect_recipe(
     )
 
 
-def _recipes_renderer(rows: list[dict]) -> Table:
+def _recipes_renderer(rows: list[dict], *, numbered: bool = False) -> Table:
     table = Table(title="deep-research recipes", show_header=True, header_style="bold")
-    for column in ("recipe", "serves", "status", "about"):
+    columns = ("recipe", "serves", "status", "about")
+    for column in ("#", *columns) if numbered else columns:
         table.add_column(column, overflow="fold")
-    for row in rows:
-        table.add_row(row["recipe"], row["serves"], row["status"], row["about"])
+    for i, row in enumerate(rows, start=1):
+        cells = [row[column] for column in columns]
+        table.add_row(*([str(i), *cells] if numbered else cells))
     return table
+
+
+def _pick_recipe(appctx, rows: list[dict], *, optional: bool) -> str | None:
+    """Ask which recipe to start. With `optional`, Enter starts none (None); otherwise
+    Enter takes the default recipe."""
+    appctx.output.status_console.print(_recipes_renderer(rows, numbered=True))
+    names = [row["recipe"] for row in rows]
+
+    def parse(value: str) -> str | None:
+        text = value.strip()
+        if optional and not text:
+            return None
+        if text.isdecimal() and 1 <= int(text) <= len(names):
+            return names[int(text) - 1]
+        raise typer.BadParameter(f"enter a number from 1 to {len(names)}")
+
+    default = "" if optional else str(
+        next((i for i, row in enumerate(rows, start=1) if row["default"]), 1)
+    )
+    question = "Start which recipe (Enter for none)" if optional else "Start which recipe"
+    # err=True keeps the prompt on stderr: stdout stays the command's own output.
+    return prompt(question, default=default, show_default=not optional, value_proc=parse, err=True)
 
 
 def _start(

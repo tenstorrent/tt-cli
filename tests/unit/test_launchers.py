@@ -645,7 +645,7 @@ COHOST = "raahemnabeel/cohost-ornith-35b-qwen3vl"
 deep_research = LAUNCHERS["deep-research"]
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def ttdr_home(tmp_path, monkeypatch):
     home = tmp_path / ".tt-deep-research"
     monkeypatch.setenv("TTDR_HOME", str(home))
@@ -679,7 +679,7 @@ def with_docker(monkeypatch):
     )
 
 
-def _deep_research_plan(home, runner, recipe="recipes/ornith-35b-cohost.toml", serves=False):
+def _deep_research_plan(home, runner, recipe="recipes/cohost-ornith-35b.toml", serves=False):
     return deep_research.plan(
         RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1"),
         LaunchOptions(home=home, recipe=recipe, serves_models=serves),
@@ -696,18 +696,37 @@ def test_deep_research_reads_its_recipes_from_ttdr(ttdr_home):
 
 @pytest.mark.parametrize(
     ("bundles", "recipe"),
-    [(SEPARATE, "default"), ([COHOST], "ornith-35b-cohost"), ([COHOST, "other/bundle"], "ornith-35b-cohost")],
+    [(SEPARATE, "ornith-35b"), ([COHOST, "other/bundle"], "cohost-ornith-35b")],
 )
-def test_deep_research_uses_the_recipe_whose_bundles_are_running(bundles, recipe):
+def test_deep_research_uses_the_recipe_whose_bundles_are_running(ttdr_home, bundles, recipe):
+    ttdr_home.mkdir()
+    (ttdr_home / ".env").write_text("TTDR_RECIPE=recipes/cohost-ornith-35b.toml\n")
     choice = deep_research.choose(RECIPES, None, bundles)
     assert (choice.recipe["name"], choice.serves_models) == (recipe, False)
 
 
+def test_deep_research_asks_which_when_several_recipes_fit_what_is_running(ttdr_home):
+    """Two listed recipes use the cohost bundle: the one the app last started with settles
+    it; without that, tt asks rather than guess."""
+    with pytest.raises(TTError) as err:
+        deep_research.choose(RECIPES, None, [COHOST])
+    assert err.value.exit_code == ExitCode.USAGE
+    assert "cohost-ornith-35b-sandboxed-python, cohost-ornith-35b" in err.value.why
+    ttdr_home.mkdir()
+    (ttdr_home / ".env").write_text("TTDR_RECIPE=recipes/cohost-ornith-35b-sandboxed-python.toml\n")
+    assert deep_research.choose(RECIPES, None, [COHOST]).recipe["name"] == (
+        "cohost-ornith-35b-sandboxed-python"
+    )
+
+
 def test_deep_research_serves_the_default_or_the_named_recipe_on_a_free_board(nothing_answers):
-    assert deep_research.choose(RECIPES, None, []).recipe["name"] == "default"
-    choice = deep_research.choose(RECIPES, "ornith-35b-cohost", [])
-    assert (choice.recipe["name"], choice.serves_models) == ("ornith-35b-cohost", True)
-    assert deep_research.choose(RECIPES, "recipes/rerank.toml", []).recipe["name"] == "rerank"
+    assert deep_research.choose(RECIPES, None, []).recipe["name"] == "ornith-35b"
+    assert deep_research.choose(RECIPES, "default", []).recipe["name"] == "ornith-35b"
+    choice = deep_research.choose(RECIPES, "cohost-ornith-35b", [])
+    assert (choice.recipe["name"], choice.serves_models) == ("cohost-ornith-35b", True)
+    assert deep_research.choose(RECIPES, "recipes/rerank-qwen3-vl.toml", []).recipe["name"] == (
+        "rerank-qwen3-vl"
+    )
 
 
 def test_deep_research_says_what_to_stop_when_other_models_hold_the_board(nothing_answers):
@@ -720,9 +739,9 @@ def test_deep_research_says_what_to_stop_when_other_models_hold_the_board(nothin
 
 def test_deep_research_offers_the_recipe_that_fits_what_is_running(nothing_answers):
     with pytest.raises(TTError) as err:
-        deep_research.choose(RECIPES, "ornith-35b-cohost", SEPARATE)
+        deep_research.choose(RECIPES, "cohost-ornith-35b", SEPARATE)
     assert f"`tt model stop {' '.join(SEPARATE)}`" in err.value.next_step
-    assert "`tt launch deep-research --recipe default`" in err.value.next_step
+    assert "`tt launch deep-research --recipe ornith-35b`" in err.value.next_step
 
 
 def test_deep_research_never_serves_over_another_server_on_its_ports(monkeypatch):
@@ -740,21 +759,23 @@ def test_deep_research_names_its_recipes_when_one_is_unknown():
     with pytest.raises(TTError) as err:
         deep_research.choose(RECIPES, "nope", [])
     assert err.value.exit_code == ExitCode.USAGE
-    assert "default, ornith-35b-cohost" in err.value.why
+    assert "ornith-35b, cohost-ornith-35b-sandboxed-python, cohost-ornith-35b" in err.value.why
 
 
 def test_deep_research_lists_each_recipe_and_whether_it_can_start(nothing_answers):
     rows = {r["recipe"]: r for r in deep_research.statuses(RECIPES, [COHOST], _Ttdr())}
-    assert list(rows) == ["default", "ornith-35b-cohost"]  # rerank has no description
-    assert rows["ornith-35b-cohost"]["status"].startswith("ready")
-    assert rows["default"]["status"] == f"needs `tt model stop {COHOST}` first"
-    assert rows["default"]["serves"] == (
+    # rerank-qwen3-vl has no description
+    assert list(rows) == ["ornith-35b", "cohost-ornith-35b-sandboxed-python", "cohost-ornith-35b"]
+    assert rows["cohost-ornith-35b"]["status"].startswith("ready")
+    assert rows["ornith-35b"]["status"] == f"needs `tt model stop {COHOST}` first"
+    assert rows["ornith-35b"]["default"] is True
+    assert rows["ornith-35b"]["serves"] == (
         "Ornith-1.5-35B-A3B (chips 0-1), Qwen3-VL-Embedding-8B (chip 2), "
         "Qwen3-VL-Reranker-8B (chip 3)"
     )
-    assert rows["ornith-35b-cohost"]["serves"].startswith("one bundle on chips 0-3: ")
+    assert rows["cohost-ornith-35b"]["serves"].startswith("one bundle on chips 0-3: ")
     rows = {r["recipe"]: r for r in deep_research.statuses(RECIPES, [], _Ttdr())}
-    assert rows["default"]["status"].startswith("can start")
+    assert rows["ornith-35b"]["status"].startswith("can start")
 
 
 def test_deep_research_model_bundles_are_only_its_own():
@@ -789,7 +810,7 @@ def test_deep_research_plans_ttdr_up_and_asks_first(ttdr_home, with_docker, monk
     for serves in (False, True):
         prep = _deep_research_plan(ttdr_home, _Ttdr(), serves=serves)
         assert prep.steps == [
-            ["/usr/bin/ttdr", "up", "--recipe", "recipes/ornith-35b-cohost.toml"]
+            ["/usr/bin/ttdr", "up", "--recipe", "recipes/cohost-ornith-35b.toml"]
         ]
         assert prep.env == {"TTDR_HOME": str(ttdr_home)}
         assert ("serves the recipe's models" in prep.consent) is serves
@@ -802,14 +823,14 @@ def test_deep_research_already_running_on_the_same_recipe_does_nothing(
 ):
     monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: False)
     ttdr_home.mkdir()
-    (ttdr_home / ".env").write_text("KEY=1\nTTDR_RECIPE=recipes/ornith-35b-cohost.toml\n")
+    (ttdr_home / ".env").write_text("KEY=1\nTTDR_RECIPE=recipes/cohost-ornith-35b.toml\n")
     running = _Ttdr(f"ui-deepagents\t{ttdr_home}\nqdrant\t{ttdr_home}\n")
     prep = _deep_research_plan(ttdr_home, running)
     assert prep.steps == [] and prep.consent is None
     assert prep.url == "http://localhost:3000"
     # Started with another recipe: `ttdr up` again, which recreates what changed.
-    prep = _deep_research_plan(ttdr_home, running, recipe="recipes/rerank.toml")
-    assert prep.steps[0][-1] == "recipes/rerank.toml"
+    prep = _deep_research_plan(ttdr_home, running, recipe="recipes/rerank-qwen3-vl.toml")
+    assert prep.steps[0][-1] == "recipes/rerank-qwen3-vl.toml"
 
 
 def test_deep_research_refuses_a_taken_ui_port(ttdr_home, with_docker, monkeypatch):
