@@ -50,6 +50,12 @@ package = "tt-model"
 repo = "https://github.com/tenstorrent/tt-model-manager"
 golden_version = "0000000000000000000000000000000000000000"
 
+[tools.tt-deep-research]
+kind = "uv-tool"
+package = "tt-deep-research"
+repo = "https://github.com/rnabeelTT/tt-deep-research"
+golden_version = "0000000000000000000000000000000000000000"
+
 [tools.tt-studio]
 kind = "uv-tool"
 package = "tt-studio"
@@ -86,7 +92,7 @@ class FakeGitHub:
         self.releases: dict[str, dict[str, bump_pins.Release]] = {}  # repo → tag → Release
         self.latest: dict[str, str] = {}
         self.blobs: dict[str, bytes] = {}
-        self.head = ("main", "0000000000000000000000000000000000000000", "2026-01-01")
+        self.heads: dict[str, tuple[str, str, str]] = {}  # repo → head; default below
         self.tag_list: list[str] = []
         self.pypi: dict[str, str] = {}
 
@@ -107,7 +113,7 @@ class FakeGitHub:
         return self.releases[repo][tag]
 
     def default_branch_head(self, repo):
-        return self.head
+        return self.heads.get(repo, ("main", "0000000000000000000000000000000000000000", "2026-01-01"))
 
     def latest_pypi_version(self, package):
         return self.pypi[package]
@@ -295,7 +301,9 @@ def test_studio_bump_follows_the_latest_pypi_version(gh):
 
 
 def test_model_manager_tracks_the_default_branch_head(gh):
-    gh.head = ("main", "be04da02d8ed9ef35c670aea9918d0c01c68b6e6", "2026-09-01")
+    gh.heads["tenstorrent/tt-model-manager"] = (
+        "main", "be04da02d8ed9ef35c670aea9918d0c01c68b6e6", "2026-09-01"
+    )
 
     plan = _plan(gh)
 
@@ -303,6 +311,22 @@ def test_model_manager_tracks_the_default_branch_head(gh):
     assert (change.component, change.new) == ("tt-model (tt-model-manager)", "be04da02d8ed")
     doc = tomlkit.parse(plan.files[bump_pins.SUPPLEMENT].decode())
     assert doc["tools"]["tt-model"]["golden_version"] == "be04da02d8ed9ef35c670aea9918d0c01c68b6e6"
+
+
+def test_deep_research_tracks_the_default_branch_head(gh):
+    gh.heads["rnabeelTT/tt-deep-research"] = (
+        "main", "6cab6892e3bcc6a1295f86d2b177beb979f5bdd3", "2026-11-26"
+    )
+
+    plan = _plan(gh)
+
+    (change,) = plan.changes
+    assert (change.component, change.new) == ("tt-deep-research", "6cab6892e3bc")
+    doc = tomlkit.parse(plan.files[bump_pins.SUPPLEMENT].decode())
+    assert doc["tools"]["tt-deep-research"]["golden_version"] == (
+        "6cab6892e3bcc6a1295f86d2b177beb979f5bdd3"
+    )
+    assert "RECIPES" in bump_pins.render_summary(plan)
 
 
 def test_model_manager_tags_are_pointed_out_once_upstream_publishes_them(gh):
