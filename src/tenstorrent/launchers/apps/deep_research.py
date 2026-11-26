@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""tt-deep-research adapter: its own Compose stack, started from a local checkout.
+"""tt-deep-research adapter: its own Compose stack, started by the `ttdr` tt installs.
 
-Neither a binary tt configures nor a container tt runs: `uv run ttdr up` starts
-the app from the user's checkout of https://github.com/rnabeelTT/tt-deep-research.
+Neither a binary tt configures nor a container tt runs: tt installs tt-deep-research
+at its pin on first launch, and `ttdr up` starts the app from its home folder
+($TTDR_HOME, default ~/.tt-deep-research), which ttdr fills and keeps the data in.
 It needs an LLM, an embedder and a reranker; the recipe describing them is picked
 from the bundles tt-model reports running. With none of them running and nothing
 else on the board, the default recipe (`recipe.toml`: the three models on separate
@@ -16,6 +17,7 @@ checked first: tt never lets it start a model on chips the running ones hold.
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -24,9 +26,7 @@ from ..base import LaunchEnv, LaunchOptions, Preparation, RunningModel
 from ..container import port_is_free
 from ..discovery import probe
 
-REPO_URL = "https://github.com/rnabeelTT/tt-deep-research"
-CONFIG_KEY = "launch.deep_research_path"
-DEFAULT_CHECKOUT = "~/tt-deep-research"
+DEFAULT_HOME = "~/.tt-deep-research"
 UI_PORT = 3000
 # Where every recipe below expects its models.
 ENDPOINTS = {"LLM": 8000, "embedder": 8005, "reranker": 8004}
@@ -56,15 +56,15 @@ _APP_SERVICES = frozenset({"engine", "aiq", "ui", "deepagents", "ui-deepagents",
 
 class DeepResearch:
     id = "deep-research"
-    binaries = ("uv",)
-    install_hint = (
-        "Install uv (https://docs.astral.sh/uv/getting-started/installation/), then re-run."
-    )
+    binaries = ("ttdr",)
+    # Installed and pinned by tt, through the tool registry, on first launch.
+    managed_tool = "tt-deep-research"
+    install_hint = "`tt launch deep-research` installs it."
     # Its recipe, not tt's catalog, says what the models can do.
     requires_tool_calling = False
     model_requirement = "a bundle its recipes name"
     hands_over_terminal = False
-    runs_from_checkout = True
+    uses_recipes = True
     # What starts when none of its recipes' bundles is running: `ttdr up` serves the models.
     default_recipe = DEFAULT_RECIPE
     default_model = DEFAULT_MODEL
@@ -72,34 +72,17 @@ class DeepResearch:
     def target(self) -> str:
         return "tt-deep-research app"
 
-    def checkout(self, config, path: Path | None = None) -> Path:
-        root = self._root(config, path)
-        if not (root / "recipe.toml").is_file():
-            raise TTError(
-                f"No tt-deep-research checkout at {root}.",
-                why=f"`tt launch {self.id}` runs the app from your own checkout; "
-                "it does not install one.",
-                next_step=f"git clone {REPO_URL} {root}, then re-run. Elsewhere: pass "
-                f"--path, or `tt config set {CONFIG_KEY} <dir>`.",
-                exit_code=ExitCode.TOOL_MISSING,
-                details={"tool": self.id, "path": str(root)},
-            )
-        return root
+    def home(self) -> Path:
+        """Where ttdr keeps the app's files and data."""
+        return Path(os.environ.get("TTDR_HOME") or DEFAULT_HOME).expanduser()
 
-    def missing(self, config) -> str | None:
-        """What `tt launch list` names when the checkout is absent."""
-        root = self._root(config)
-        return None if (root / "recipe.toml").is_file() else f"a checkout at {root}"
-
-    def recipe_for(
-        self, checkout: Path, wanted: str | None, bundles: list[str]
-    ) -> str | None:
+    def recipe_for(self, home: Path, wanted: str | None, bundles: list[str]) -> str | None:
         """--recipe, else the recipe whose bundles are all running; None if none is."""
         if wanted:
-            if not (checkout / wanted).is_file():
+            if wanted not in RECIPES and not (home / wanted).is_file():
                 raise TTError(
-                    f"No recipe {wanted} in {checkout}.",
-                    why="--recipe is a path relative to the checkout.",
+                    f"No recipe {wanted} in {home}.",
+                    why="--recipe is a path relative to the app's home folder.",
                     next_step=f"Pick one of {', '.join(RECIPES)}, or drop --recipe.",
                     exit_code=ExitCode.USAGE,
                     details={"recipe": wanted},
@@ -171,12 +154,12 @@ class DeepResearch:
         executable: str | None,
         runner,
     ) -> Preparation:
-        assert options.checkout is not None and options.recipe is not None
-        checkout, recipe = options.checkout, options.recipe
-        rows = {"checkout": str(checkout), "recipe": recipe}
+        assert options.home is not None and options.recipe is not None
+        home, recipe = options.home, options.recipe
+        rows = {"home": str(home), "recipe": recipe}
         url = f"http://localhost:{UI_PORT}"
         running = self.container_state(executable, runner) == "running"
-        if running and self._started_with(checkout) == Path(recipe):
+        if running and self._started_with(home) == Path(recipe):
             return Preparation(rows={**rows, "app": "already running"}, url=url)
         if not running and not port_is_free(UI_PORT):
             raise TTError(
@@ -188,24 +171,24 @@ class DeepResearch:
                 details={"web_port": UI_PORT},
             )
         exe = executable or self.binaries[0]
-        consent = f"Run `ttdr up --recipe {recipe}` in {checkout}, starting its app containers"
+        consent = f"Run `ttdr up --recipe {recipe}`, starting its app containers"
         if options.serves_models:
             consent = (
-                f"Run `ttdr up --recipe {recipe}` in {checkout}: it serves its LLM, "
-                "embedder and reranker (each on its own chips; 10-15 minutes from cold) "
-                "and starts its app containers"
+                f"Run `ttdr up --recipe {recipe}`: it serves its LLM, embedder and reranker "
+                "(each on its own chips; 10-15 minutes from cold) and starts its app containers"
             )
         return Preparation(
             rows=rows,
-            steps=[[exe, "run", "ttdr", "up", "--recipe", recipe]],
+            steps=[[exe, "up", "--recipe", recipe]],
             consent=consent,
             url=url,
+            env={"TTDR_HOME": str(home)},
         )
 
     def apply(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
         for step in prep.steps:
             # Streamed: a first run builds images and waits on every endpoint.
-            env.runner.stream(step, cwd=prep.rows["checkout"], tool=self.id)
+            env.runner.stream(step, env={**os.environ, **prep.env}, tool=self.id)
 
     def handoff(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
         # `ttdr up` exits non-zero unless every endpoint answered.
@@ -220,23 +203,22 @@ class DeepResearch:
         return "running" if services else "absent"
 
     def stop(self, env: LaunchEnv) -> None:
-        # From the checkout the running app was started in, whatever tt's config says.
-        checkout = next(iter((self._running(env.runner) or {}).values()), None)
-        env.runner.stream([env.executable, "run", "ttdr", "down"], cwd=checkout, tool=self.id)
+        # From the folder the running app was started in, whatever $TTDR_HOME says now.
+        home = next(iter((self._running(env.runner) or {}).values()), None) or self.home()
+        env.runner.stream(
+            [env.executable, "down"], env={**os.environ, "TTDR_HOME": str(home)}, tool=self.id
+        )
 
     def disconnect_plan(self, executable: str | None, runner) -> str | None:
-        """Nothing persists outside the app's own checkout, so there is never
+        """Nothing persists outside the app's own home folder, so there is never
         anything to undo."""
         return None
 
     def disconnect(self, env: LaunchEnv) -> None:
         pass
 
-    def _root(self, config, path: Path | None = None) -> Path:
-        return Path(path or config.get(CONFIG_KEY) or DEFAULT_CHECKOUT).expanduser()
-
     def _running(self, runner) -> dict[str, str] | None:
-        """{app service: the checkout Compose started it from}, or None without docker."""
+        """{app service: the folder Compose started it from}, or None without docker."""
         docker = shutil.which("docker")
         if docker is None:
             return None
@@ -258,9 +240,9 @@ class DeepResearch:
             row[0]: row[1] for row in rows if len(row) == 2 and row[0] in _APP_SERVICES
         }
 
-    def _started_with(self, checkout: Path) -> Path | None:
+    def _started_with(self, home: Path) -> Path | None:
         """The recipe the app was last started with: `ttdr up` records it in .env."""
-        env = checkout / ".env"
+        env = home / ".env"
         if not env.is_file():
             return None
         for line in env.read_text().splitlines():

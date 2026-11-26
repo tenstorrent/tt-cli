@@ -63,7 +63,7 @@ exit 4 (`TOOL_MISSING`); one that exists but fails produces exit 5 (`TOOL_FAILED
 
 | Tool | Needed by | Notes |
 |---|---|---|
-| **git** | `tt update` (always: tt-model is installed from a git ref); `tt serve` on first use of the inference-server path; `tt update --include-lazy` | Clones a pinned checkout of tt-inference-server (~180 MB) under the data dir |
+| **git** | `tt update` (always: tt-model is installed from a git ref); `tt serve` on first use of the inference-server path; `tt update --include-lazy`; `tt launch deep-research` on first launch (installed from a git ref) | Clones a pinned checkout of tt-inference-server (~180 MB) under the data dir |
 | **sudo** | `tt device reset`; the system phase of `tt update` | `tt` probes `sudo -n true` and prompts on a terminal. Without a TTY (or under `--json`) it exits 6 (`NEEDS_SUDO`) and prints the command to re-run. Running as root skips sudo. Set `tools.sudo_command` to `""` to disable it |
 | **docker or podman** | `tt serve` (inference-server path); `tt model ps` / `stop` / `logs`; `tt launch openwebui` / `anythingllm` | Either runtime works here |
 | **docker** only | `tt serve --studio` (docker compose; podman is not supported); `tt serve <namespace>/<name>` (tt-model bundles); `tt launch deep-research` (docker compose, run by the app) | |
@@ -192,7 +192,7 @@ clients additionally need a model that supports tool calling.
 | `aider` | `aider` on PATH | https://aider.chat/docs/install.html |
 | `qwencode` | `qwen` on PATH; Node.js 22+ | `npm install -g @qwen-code/qwen-code` |
 | `hermes` | `hermes` on PATH | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash` |
-| `deep-research` | `uv` on PATH; docker with Compose; a checkout at `~/tt-deep-research` (or `--path`, or `launch.deep_research_path`); its LLM, embedder and reranker answering on 8000, 8005 and 8004 (when the board is free, `ttdr up` serves them itself, one bundle per chip group); host port 3000 free | `git clone https://github.com/rnabeelTT/tt-deep-research` |
+| `deep-research` | git; docker with Compose; its LLM, embedder and reranker answering on 8000, 8005 and 8004 (when the board is free, `ttdr up` serves them itself, one bundle per chip group); host port 3000 free | tt installs it on first launch; its files and data live in `~/.tt-deep-research` (`$TTDR_HOME`) |
 
 ## Interactive prompts and automation
 

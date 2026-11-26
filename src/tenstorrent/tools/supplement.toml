@@ -93,3 +93,15 @@ golden_version = "2.12.0"
 python = "3.12"
 # Only users who serve a studio-only model need it.
 lazy = true
+
+[tools.tt-deep-research]
+# The app `tt launch deep-research` starts. Not on PyPI yet, so uv installs it from a
+# git commit, like tt-model; `ttdr` keeps its files and data in ~/.tt-deep-research.
+kind = "uv-tool"
+package = "tt-deep-research"
+repo = "https://github.com/rnabeelTT/tt-deep-research"
+golden_version = "6cab6892e3bcc6a1295f86d2b177beb979f5bdd3"
+bin = "ttdr"
+python = "3.12"
+# Only users who launch it need it.
+lazy = true

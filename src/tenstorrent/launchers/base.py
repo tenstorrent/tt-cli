@@ -57,8 +57,8 @@ class LaunchOptions:
     web_port: int = DEFAULT_WEB_PORT
     web_port_pinned: bool = False  # the user named the port, so it is never moved
     web: bool = False  # open the client's web UI instead of its terminal UI
-    checkout: Path | None = None  # for an app run from a local checkout
-    recipe: str | None = None  # that app's recipe, relative to its checkout
+    home: Path | None = None  # for an app that keeps its files in its own folder
+    recipe: str | None = None  # that app's recipe, relative to its folder
     serves_models: bool = False  # no model is running: the app serves its own
 
 

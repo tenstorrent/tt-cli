@@ -635,26 +635,13 @@ def test_hermes_web_moves_to_the_next_free_port_unless_pinned(monkeypatch):
 
 
 
-# -- deep-research: an app run from a local checkout ------------------------------
+# -- deep-research: an app tt installs, run from its own home folder --------------
 COHOST = "raahemnabeel/cohost-ornith-35b-qwen3vl"
 
 
 @pytest.fixture
-def ttdr_checkout(tmp_path):
-    root = tmp_path / "tt-deep-research"
-    (root / "recipes").mkdir(parents=True)
-    (root / "recipe.toml").write_text("")
-    for recipe in ("ornith-35b-cohost", "ornith-122b", "qwen38-27b", "rerank"):
-        (root / "recipes" / f"{recipe}.toml").write_text("")
-    return root
-
-
-class _Config:
-    def __init__(self, values=None):
-        self.values = values or {}
-
-    def get(self, key):
-        return self.values.get(key)
+def ttdr_home(tmp_path):
+    return tmp_path / ".tt-deep-research"
 
 
 class _ComposePs:
@@ -676,11 +663,11 @@ def with_docker(monkeypatch):
     )
 
 
-def _deep_research_plan(checkout, runner, recipe="recipes/ornith-35b-cohost.toml"):
+def _deep_research_plan(home, runner, recipe="recipes/ornith-35b-cohost.toml"):
     return LAUNCHERS["deep-research"].plan(
         RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1"),
-        LaunchOptions(checkout=checkout, recipe=recipe),
-        executable="/usr/bin/uv",
+        LaunchOptions(home=home, recipe=recipe),
+        executable="/usr/bin/ttdr",
         runner=runner,
     )
 
@@ -701,16 +688,16 @@ def _deep_research_plan(checkout, runner, recipe="recipes/ornith-35b-cohost.toml
         ),
     ],
 )
-def test_deep_research_picks_the_recipe_for_the_served_bundles(ttdr_checkout, bundles, recipe):
-    assert LAUNCHERS["deep-research"].recipe_for(ttdr_checkout, None, bundles) == recipe
+def test_deep_research_picks_the_recipe_for_the_served_bundles(ttdr_home, bundles, recipe):
+    assert LAUNCHERS["deep-research"].recipe_for(ttdr_home, None, bundles) == recipe
 
 
-def test_deep_research_without_its_bundles_says_what_to_serve(ttdr_checkout):
+def test_deep_research_without_its_bundles_says_what_to_serve(ttdr_home):
     """The LLM alone is not enough: `ttdr up` would serve the missing embedder and
     reranker itself."""
     launcher = LAUNCHERS["deep-research"]
     bundles = ["raahemnabeel/ornith-1.5-35b-a3b"]
-    assert launcher.recipe_for(ttdr_checkout, None, bundles) is None
+    assert launcher.recipe_for(ttdr_home, None, bundles) is None
     err = launcher.not_served(bundles)
     assert err.exit_code == ExitCode.ERROR
     assert "raahemnabeel/qwen3-vl-embedding-8b" in (err.next_step or "")
@@ -738,7 +725,7 @@ def test_deep_research_never_serves_over_a_running_bundle_or_a_taken_port(monkey
 
 
 def test_deep_research_consent_says_ttdr_serves_the_models_when_none_run(
-    ttdr_checkout, with_docker, monkeypatch
+    ttdr_home, with_docker, monkeypatch
 ):
     monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: True)
     launcher = LAUNCHERS["deep-research"]
@@ -746,11 +733,11 @@ def test_deep_research_consent_says_ttdr_serves_the_models_when_none_run(
     for serves in (False, True):
         prep = launcher.plan(
             model,
-            LaunchOptions(checkout=ttdr_checkout, recipe="recipe.toml", serves_models=serves),
-            executable="/usr/bin/uv",
+            LaunchOptions(home=ttdr_home, recipe="recipe.toml", serves_models=serves),
+            executable="/usr/bin/ttdr",
             runner=_ComposePs(""),
         )
-        assert prep.steps == [["/usr/bin/uv", "run", "ttdr", "up", "--recipe", "recipe.toml"]]
+        assert prep.steps == [["/usr/bin/ttdr", "up", "--recipe", "recipe.toml"]]
         assert ("serves its LLM" in prep.consent) is serves
 
 
@@ -758,30 +745,24 @@ def test_deep_research_model_bundles_are_only_its_own():
     assert LAUNCHERS["deep-research"].model_bundles([COHOST, "someone/else"]) == [COHOST]
 
 
-def test_deep_research_recipe_override_must_exist(ttdr_checkout):
+def test_deep_research_recipe_override_is_one_it_ships_or_one_in_its_home(ttdr_home):
     launcher = LAUNCHERS["deep-research"]
-    assert launcher.recipe_for(ttdr_checkout, "recipes/rerank.toml", []) == "recipes/rerank.toml"
+    assert launcher.recipe_for(ttdr_home, "recipes/rerank.toml", []) == "recipes/rerank.toml"
     with pytest.raises(TTError) as err:
-        launcher.recipe_for(ttdr_checkout, "recipes/nope.toml", [COHOST])
+        launcher.recipe_for(ttdr_home, "recipes/mine.toml", [COHOST])
     assert err.value.exit_code == ExitCode.USAGE
+    (ttdr_home / "recipes").mkdir(parents=True)
+    (ttdr_home / "recipes" / "mine.toml").write_text("")
+    assert launcher.recipe_for(ttdr_home, "recipes/mine.toml", []) == "recipes/mine.toml"
 
 
-def test_deep_research_finds_its_checkout_by_path_then_config_then_home(
-    tmp_path, ttdr_checkout, monkeypatch
-):
+def test_deep_research_home_is_ttdr_home_else_its_default(tmp_path, monkeypatch):
     launcher = LAUNCHERS["deep-research"]
     monkeypatch.setenv("HOME", str(tmp_path))
-    config = _Config({"launch.deep_research_path": str(ttdr_checkout)})
-    assert launcher.checkout(config) == ttdr_checkout
-    assert launcher.checkout(_Config()) == ttdr_checkout  # ~/tt-deep-research
-    with pytest.raises(TTError) as err:
-        launcher.checkout(config, tmp_path / "elsewhere")
-    assert err.value.exit_code == ExitCode.TOOL_MISSING
-    # Never cloned for the user: the hint says how.
-    assert "git clone https://github.com/rnabeelTT/tt-deep-research" in err.value.next_step
-    assert launcher.missing(_Config()) is None
-    elsewhere = _Config({"launch.deep_research_path": str(tmp_path / "elsewhere")})
-    assert "elsewhere" in launcher.missing(elsewhere)
+    monkeypatch.delenv("TTDR_HOME", raising=False)
+    assert launcher.home() == tmp_path / ".tt-deep-research"
+    monkeypatch.setenv("TTDR_HOME", str(tmp_path / "elsewhere"))
+    assert launcher.home() == tmp_path / "elsewhere"
 
 
 def test_deep_research_refuses_until_every_endpoint_answers(monkeypatch):
@@ -796,35 +777,34 @@ def test_deep_research_refuses_until_every_endpoint_answers(monkeypatch):
     assert "reranker" in err.value.what and "8004" in err.value.what
 
 
-def test_deep_research_plans_ttdr_up_and_asks_first(ttdr_checkout, with_docker, monkeypatch):
+def test_deep_research_plans_ttdr_up_and_asks_first(ttdr_home, with_docker, monkeypatch):
     monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: True)
-    prep = _deep_research_plan(ttdr_checkout, _ComposePs(""))
-    assert prep.steps == [
-        ["/usr/bin/uv", "run", "ttdr", "up", "--recipe", "recipes/ornith-35b-cohost.toml"]
-    ]
-    assert prep.consent and str(ttdr_checkout) in prep.consent
-    assert prep.url == "http://localhost:3000"
-    assert prep.rows["checkout"] == str(ttdr_checkout)
+    prep = _deep_research_plan(ttdr_home, _ComposePs(""))
+    assert prep.steps == [["/usr/bin/ttdr", "up", "--recipe", "recipes/ornith-35b-cohost.toml"]]
+    assert prep.env == {"TTDR_HOME": str(ttdr_home)}
+    assert prep.consent and prep.url == "http://localhost:3000"
+    assert prep.rows["home"] == str(ttdr_home)
 
 
 def test_deep_research_already_running_on_the_same_recipe_does_nothing(
-    ttdr_checkout, with_docker, monkeypatch
+    ttdr_home, with_docker, monkeypatch
 ):
     monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: False)
-    (ttdr_checkout / ".env").write_text("KEY=1\nTTDR_RECIPE=recipes/ornith-35b-cohost.toml\n")
-    running = _ComposePs(f"ui-deepagents\t{ttdr_checkout}\nqdrant\t{ttdr_checkout}\n")
-    prep = _deep_research_plan(ttdr_checkout, running)
+    ttdr_home.mkdir()
+    (ttdr_home / ".env").write_text("KEY=1\nTTDR_RECIPE=recipes/ornith-35b-cohost.toml\n")
+    running = _ComposePs(f"ui-deepagents\t{ttdr_home}\nqdrant\t{ttdr_home}\n")
+    prep = _deep_research_plan(ttdr_home, running)
     assert prep.steps == [] and prep.consent is None
     assert prep.url == "http://localhost:3000"
     # Started with another recipe: `ttdr up` again, which recreates what changed.
-    prep = _deep_research_plan(ttdr_checkout, running, recipe="recipes/rerank.toml")
+    prep = _deep_research_plan(ttdr_home, running, recipe="recipes/rerank.toml")
     assert prep.steps[0][-1] == "recipes/rerank.toml"
 
 
-def test_deep_research_refuses_a_taken_ui_port(ttdr_checkout, with_docker, monkeypatch):
+def test_deep_research_refuses_a_taken_ui_port(ttdr_home, with_docker, monkeypatch):
     monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: False)
     with pytest.raises(TTError) as err:
-        _deep_research_plan(ttdr_checkout, _ComposePs(""))
+        _deep_research_plan(ttdr_home, _ComposePs(""))
     assert err.value.exit_code == ExitCode.CONFIG
 
 

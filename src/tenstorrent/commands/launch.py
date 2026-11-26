@@ -6,7 +6,7 @@
 tt does not start the model's server: it discovers what `tt serve` (or tt-model)
 has running, checks the model can do what the client needs, and then either
 configures an installed client and hands over the terminal, or — with consent —
-starts a client that runs as a container (or, for deep-research, from a checkout).
+starts a client that runs as a container (or, for deep-research, as an app tt installs).
 
 One connect command per client, all sharing `_connect` and telling themselves
 apart by `ctx.info_name`, so `tt launch --help` enumerates the clients and adding
@@ -19,7 +19,6 @@ import dataclasses
 import json
 import shlex
 import sys
-from pathlib import Path
 
 import typer
 from rich.console import Group
@@ -75,12 +74,21 @@ def _launcher(tool: str) -> Launcher:
     return launcher
 
 
-def _installed_or_none(launcher: Launcher, config, output) -> str | None:
+def _resolve(appctx, launcher: Launcher, *, install: bool = True, retry_path: bool = True) -> str:
+    """The client's executable: a tool tt manages from the registry (installed at its
+    pin first, with `install`), any other from PATH."""
+    tool = getattr(launcher, "managed_tool", None)
+    if tool is None:
+        return resolve_executable(launcher, appctx.config, appctx.output, retry_path=retry_path)
+    return str(appctx.registry.ensure(tool) if install else appctx.registry.resolve(tool))
+
+
+def _installed_or_none(appctx, launcher: Launcher) -> str | None:
     """A soft check for a listing/preview: "not installed" is an expected, cheap
     answer here, so it skips the fresh-shell retry `resolve_executable` otherwise
-    pays for a miss that would actually block the user."""
+    pays for a miss that would actually block the user, and never installs."""
     try:
-        return resolve_executable(launcher, config, output, retry_path=False)
+        return _resolve(appctx, launcher, install=False, retry_path=False)
     except TTError:
         return None
 
@@ -289,9 +297,7 @@ def _connect(
     # when it can, so what it reports (an existing container, say) is the truth on
     # this machine rather than a guess.
     executable = (
-        _installed_or_none(launcher, appctx.config, appctx.output)
-        if dry_run
-        else resolve_executable(launcher, appctx.config, appctx.output)
+        _installed_or_none(appctx, launcher) if dry_run else _resolve(appctx, launcher)
     )
     options = LaunchOptions(
         web_port=web_port or DEFAULT_WEB_PORT,
@@ -304,19 +310,13 @@ def _connect(
     )
 
 
-def _connect_checkout(
+def _connect_recipe(
     ctx: typer.Context,
-    path: Path = typer.Option(
-        None,
-        "--path",
-        help="The app's checkout (default: the launch.deep_research_path setting, "
-        "else ~/tt-deep-research).",
-    ),
     recipe: str = typer.Option(
         None,
         "--recipe",
-        help="Recipe to start, relative to the checkout (default: the one matching "
-        "the bundle tt is serving).",
+        help="Recipe to start, relative to the app's home folder (default: the one "
+        "matching the bundle tt is serving).",
     ),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Skip the confirmation prompt."
@@ -337,31 +337,30 @@ def _connect_checkout(
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """An app run from a local checkout: it picks its own models, by recipe."""
+    """An app that picks its own models, by recipe."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(ctx.info_name)
-    checkout = launcher.checkout(appctx.config, path)
+    home = launcher.home()
     bundles = [] if recipe else _running_bundles(appctx)
-    chosen = launcher.recipe_for(checkout, recipe, bundles)
+    chosen = launcher.recipe_for(home, recipe, bundles)
     serves_models = chosen is None
     if serves_models:
         blocker = launcher.serve_blocker(bundles) if serve else None
         if not serve or blocker:
             raise launcher.not_served(bundles, blocker)
-        chosen = launcher.recipe_for(checkout, launcher.default_recipe, [])
-    executable = (
-        _installed_or_none(launcher, appctx.config, appctx.output)
-        if dry_run
-        else resolve_executable(launcher, appctx.config, appctx.output)
-    )
-    options = LaunchOptions(checkout=checkout, recipe=chosen, serves_models=serves_models)
+        chosen = launcher.recipe_for(home, launcher.default_recipe, [])
+    options = LaunchOptions(home=home, recipe=chosen, serves_models=serves_models)
     # With nothing running, `ttdr up` serves the models itself; the app's own
     # endpoints are not there to ask yet.
     target = (
         RunningModel(served_id=launcher.default_model, base_url="http://127.0.0.1:8000/v1")
         if serves_models
         else launcher.served_llm()
+    )
+    # Installed only once every check has passed, and only when it will be started.
+    executable = (
+        _installed_or_none(appctx, launcher) if dry_run or no_exec else _resolve(appctx, launcher)
     )
     _start(
         appctx, launcher, target, options, executable,
@@ -406,8 +405,8 @@ for _name, _launcher_obj in LAUNCHERS.items():
         help=f"Connect {_name} ({'terminal client' if _launcher_obj.hands_over_terminal else 'web service'}).",
     )(
         handle_tt_errors(
-            _connect_checkout
-            if getattr(_launcher_obj, "runs_from_checkout", False)
+            _connect_recipe
+            if getattr(_launcher_obj, "uses_recipes", False)
             else _connect
         )
     )
@@ -433,14 +432,10 @@ def _catalog(appctx) -> list[dict]:
     """What each client is and whether it could run right now."""
     rows = []
     for launcher in LAUNCHERS.values():
-        executable = _installed_or_none(launcher, appctx.config, appctx.output)
+        executable = _installed_or_none(appctx, launcher)
         # Only container clients have a state to report; asking is one `docker
         # inspect`, so it stays cheap enough for a listing.
         state = getattr(launcher, "container_state", None)
-        # Beyond its binary, e.g. the checkout an app runs from.
-        missing = getattr(launcher, "missing", None)
-        unmet = missing(appctx.config) if missing else None
-        needs = " or ".join(launcher.binaries)
         rows.append(
             {
                 "tool": launcher.id,
@@ -449,8 +444,9 @@ def _catalog(appctx) -> list[dict]:
                 # For a client that chooses its own models rather than any served one.
                 "model": getattr(launcher, "model_requirement", None),
                 "configures": launcher.target(),
-                "needs": f"{needs} and {unmet}" if unmet else needs,
-                "available": executable is not None and unmet is None,
+                "needs": " or ".join(launcher.binaries),
+                # A tool tt manages is installed on first use.
+                "available": executable is not None or hasattr(launcher, "managed_tool"),
                 "container_state": state(executable, appctx.runner) if state else None,
             }
         )
@@ -520,11 +516,14 @@ def stop(
             next_step="Drop --models; `tt model stop <model>` stops a served model.",
             exit_code=ExitCode.USAGE,
         )
-    executable = resolve_executable(launcher, appctx.config, appctx.output)
+    # Never installed just to find out it is not running.
+    managed = hasattr(launcher, "managed_tool")
+    executable = _installed_or_none(appctx, launcher) if managed else _resolve(appctx, launcher)
     payload: dict = {"tool": launcher.id, "stopped": False}
     if state(executable, appctx.runner) != "running":
         appctx.output.status(f"{launcher.target()} is not running.")
     else:
+        executable = executable or _resolve(appctx, launcher)
         launcher.stop(LaunchEnv(executable, appctx.runner, appctx.output))
         appctx.output.status(f"Stopped {launcher.target()}; its data is kept.")
         payload["stopped"] = True
@@ -558,7 +557,7 @@ def disconnect(
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(tool)
-    executable = _installed_or_none(launcher, appctx.config, appctx.output)
+    executable = _installed_or_none(appctx, launcher)
     plan = launcher.disconnect_plan(executable, appctx.runner)
     payload = {
         "tool": launcher.id,

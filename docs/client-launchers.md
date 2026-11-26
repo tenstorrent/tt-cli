@@ -10,7 +10,7 @@ tt launch list              # 2. see which clients are available here
 tt launch openwebui         # 3. connect one
 ```
 
-There are two kinds of client, and the difference is **who installs it**. tt-deep-research sits in between: you clone it, tt starts it.
+There are two kinds of client, and the difference is **who installs it**. tt-deep-research sits in between: tt installs and starts it.
 
 ## Web UIs: tt pulls and runs them for you
 
@@ -21,13 +21,13 @@ For these, tt pulls the image and starts the container itself, after asking you 
 | [Open WebUI](https://github.com/open-webui/open-webui) | `tt launch openwebui` | [Docker](https://docs.docker.com/engine/install/) or [Podman](https://podman.io/docs/installation). Nothing else: tt pulls `ghcr.io/open-webui/open-webui:main` | any chat model | container `tt-open-webui` at <http://localhost:3000> (or the next free port); chats are kept in the volume `tt-open-webui-data` |
 | [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm) | `tt launch anythingllm` | [Docker](https://docs.docker.com/engine/install/) or [Podman](https://podman.io/docs/installation). Nothing else: tt pulls `mintplexlabs/anythingllm:latest` | any chat model | container `tt-anythingllm` at <http://localhost:3000> (or the next free port); data is kept in the volume `tt-anythingllm-storage` |
 
-## Deep research: you clone it, tt starts it
+## Deep research: tt installs and starts it
 
-[tt-deep-research](https://github.com/rnabeelTT/tt-deep-research) is a deep-research app (an agent that searches the web and your documents and writes a cited report). tt doesn't install it: clone it, and `tt launch deep-research` runs `uv run ttdr up --recipe <recipe>` in that checkout, after asking you once.
+[tt-deep-research](https://github.com/rnabeelTT/tt-deep-research) is a deep-research app (an agent that searches the web and your documents and writes a cited report). `tt launch deep-research` installs it at tt's pinned version on first launch and runs `ttdr up --recipe <recipe>`, after asking you once. The app keeps its files and data in `~/.tt-deep-research` (`$TTDR_HOME`).
 
 | Client | Command | Prerequisites (install first) | Model must support | What tt runs |
 |---|---|---|---|---|
-| [tt-deep-research](https://github.com/rnabeelTT/tt-deep-research) | `tt launch deep-research` | `git clone https://github.com/rnabeelTT/tt-deep-research ~/tt-deep-research` (or anywhere, with `--path` or `tt config set launch.deep_research_path <dir>`); [uv](https://docs.astral.sh/uv/getting-started/installation/); Docker with Compose | its LLM, embedder and reranker. If none of its bundles is running and the board is free, `ttdr up` serves all three itself on separate chips (the default `recipe.toml`) | its app containers (Compose project `ttdr`) with the UI at <http://localhost:3000>; `tt launch stop deep-research` runs `ttdr down`, keeping its data and the models (`--models` stops the model bundle too) |
+| [tt-deep-research](https://github.com/rnabeelTT/tt-deep-research) | `tt launch deep-research` | git; Docker with Compose. Nothing else: tt installs the app | its LLM, embedder and reranker. If none of its bundles is running and the board is free, `ttdr up` serves all three itself on separate chips (the default `recipe.toml`) | its app containers (Compose project `ttdr`) with the UI at <http://localhost:3000>; `tt launch stop deep-research` runs `ttdr down`, keeping its data and the models (`--models` stops the model bundle too) |
 
 tt picks the recipe from the bundles tt-model is serving: the three separate bundles (`ornith-1.5-35b-a3b`, `qwen3-vl-embedding-8b`, `qwen3-vl-reranker-8b`) → `recipe.toml`, `cohost-ornith-35b-qwen3vl` → `recipes/ornith-35b-cohost.toml`, `cohost-ornith-122b-qwen3vl` → `recipes/ornith-122b.toml`, `cohost-qwen38-27b-qwen3vl` → `recipes/qwen38-27b.toml`. `--recipe` picks one yourself. If none of those bundles is running, tt asks first (a cold start takes 10-15 minutes) and starts the app with `recipe.toml`: the default is the three models on separate chips, and `ttdr up` serves them itself. A cohost bundle is only used when it is already running or you pass `--recipe`. It won't start the default when another tt-model bundle is running or something already answers on :8000, :8005 or :8004; `--no-serve` turns that off. With bundles running, tt first checks that the LLM (:8000), embedder (:8005) and reranker (:8004) all answer, so `ttdr up` never has to serve a model on chips the running ones hold.
 
@@ -78,8 +78,7 @@ tt launch disconnect opencode        # undo the config tt wrote for a client
 | `--no-exec` | Set the client up but don't start it |
 | `--yes`, `-y` | Skip the confirmation prompt |
 | `--force` | Connect even if the model can't do tool calling |
-| `--path DIR` | deep-research only: its checkout (default `launch.deep_research_path`, else `~/tt-deep-research`) |
-| `--recipe FILE` | deep-research only: the recipe to start, relative to the checkout (default: the one matching the served bundle) |
+| `--recipe FILE` | deep-research only: the recipe to start, relative to `~/.tt-deep-research` (default: the one matching the served bundle) |
 | `--no-serve` | deep-research only: fail instead of serving its default models when none are running |
 
 > [!TIP]
