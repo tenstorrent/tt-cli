@@ -862,15 +862,17 @@ def test_deep_research_offers_the_recipe_that_fits_what_is_running(nothing_answe
     assert "`tt launch deep-research --recipe ornith-35b`" in err.value.next_step
 
 
-def test_deep_research_never_serves_over_another_server_on_its_ports(monkeypatch):
+def test_deep_research_never_serves_over_another_server_on_a_cohost_port(monkeypatch):
     other = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
     monkeypatch.setattr(
         "tenstorrent.launchers.apps.deep_research.probe",
         lambda url, **_: [other] if ":8000/" in url else None,
     )
     with pytest.raises(TTError) as err:
-        deep_research.choose(RECIPES, None, [])
+        deep_research.choose(RECIPES, "cohost-ornith-35b", [])
     assert "Qwen/Qwen3-32B" in err.value.why
+    # A bundle of its own: ttdr up moves it to the next free port.
+    assert deep_research.choose(RECIPES, None, []).serves_models
 
 
 def test_deep_research_names_its_recipes_when_one_is_unknown():
@@ -925,7 +927,6 @@ def test_deep_research_waits_until_every_model_of_its_recipe_answers(monkeypatch
 
 
 def test_deep_research_plans_ttdr_up_and_asks_first(ttdr_home, with_docker, monkeypatch):
-    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: True)
     for serves in (False, True):
         prep = _deep_research_plan(ttdr_home, _Ttdr(), serves=serves)
         assert prep.steps == [
@@ -940,7 +941,6 @@ def test_deep_research_plans_ttdr_up_and_asks_first(ttdr_home, with_docker, monk
 def test_deep_research_already_running_on_the_same_recipe_does_nothing(
     ttdr_home, with_docker, monkeypatch
 ):
-    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: False)
     ttdr_home.mkdir()
     (ttdr_home / ".env").write_text("KEY=1\nTTDR_RECIPE=recipes/cohost-ornith-35b.toml\n")
     running = _Ttdr(f"ui-deepagents\t{ttdr_home}\nqdrant\t{ttdr_home}\n")
@@ -952,11 +952,10 @@ def test_deep_research_already_running_on_the_same_recipe_does_nothing(
     assert prep.steps[0][-1] == "recipes/rerank-qwen3-vl.toml"
 
 
-def test_deep_research_refuses_a_taken_ui_port(ttdr_home, with_docker, monkeypatch):
-    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: False)
-    with pytest.raises(TTError) as err:
-        _deep_research_plan(ttdr_home, _Ttdr())
-    assert err.value.exit_code == ExitCode.CONFIG
+def test_deep_research_url_is_where_ttdr_put_the_ui(ttdr_home, with_docker):
+    (ttdr_home / "data").mkdir(parents=True)
+    (ttdr_home / "data" / "ports.json").write_text('{"ui": 3002, "api": 8200}')
+    assert _deep_research_plan(ttdr_home, _Ttdr()).url == "http://localhost:3002"
 
 
 def test_deep_research_state_counts_only_app_services(with_docker):

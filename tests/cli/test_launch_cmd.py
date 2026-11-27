@@ -1006,7 +1006,6 @@ def deep_research(monkeypatch, tmp_path, fake_docker_containers, model_manager_b
     monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.probe", lambda url, **_: (
         [served[url]] if serve.answering and url in served else None
     ))
-    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.port_is_free", lambda p: True)
 
     def tt_model_calls() -> list[list[str]]:
         if not model_manager_bin.exists():
@@ -1219,7 +1218,8 @@ def test_deep_research_does_not_serve_over_another_model(runner, deep_research, 
     monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.probe", lambda url, **_: (
         [other] if ":8000/" in url else None
     ))
-    result = runner.invoke(app, ["launch", "deep-research"])
+    # A cohost bundle's ports are fixed; ttdr moves only a bundle of its own.
+    result = runner.invoke(app, ["launch", "deep-research", "--recipe", "cohost-ornith-35b"])
     assert result.exit_code == ExitCode.ERROR
     assert "Qwen/Qwen3-32B" in result.output.replace("\n", " ")
     assert deep_research.tt_model_calls() == [] and deep_research.calls() == []
