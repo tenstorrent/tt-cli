@@ -573,8 +573,8 @@ def test_aider_passes_the_endpoint_in_the_environment(
 
 
 @pytest.mark.fakes_only
-def test_qwencode_passes_the_endpoint_as_cli_arguments(
-    runner, served, fake_client_named, execed
+def test_qwencode_passes_the_endpoint_as_cli_arguments_and_writes_its_limits(
+    runner, served, fake_client_named, execed, isolated_dirs
 ):
     exe = fake_client_named("qwencode")
     base = served("Qwen/Qwen3-32B")
@@ -593,6 +593,24 @@ def test_qwencode_passes_the_endpoint_as_cli_arguments(
             "Qwen/Qwen3-32B",
         ]
     ]
+    doc = json.loads((isolated_dirs / "home" / ".qwen" / "settings.json").read_text())
+    (entry,) = doc["modelProviders"]["openai"]
+    assert entry["id"] == "Qwen/Qwen3-32B" and entry["baseUrl"] == base
+    assert entry["generationConfig"] == {
+        "contextWindowSize": 131072,
+        "samplingParams": {"max_tokens": 32768},
+    }
+
+
+@pytest.mark.fakes_only
+def test_disconnect_qwencode_removes_its_entry(runner, served, fake_client_named, isolated_dirs):
+    fake_client_named("qwencode")
+    base = served("Qwen/Qwen3-32B")
+    assert runner.invoke(app, ["launch", "qwencode", "--url", base]).exit_code == 0
+    result = runner.invoke(app, ["launch", "disconnect", "qwencode"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads((isolated_dirs / "home" / ".qwen" / "settings.json").read_text())
+    assert doc["modelProviders"]["openai"] == []
 
 
 @pytest.mark.fakes_only
@@ -665,7 +683,10 @@ def test_pi_refuses_a_model_without_tool_calling(runner, served, fake_client_nam
 def test_group_help_lists_every_client(runner):
     result = runner.invoke(app, ["launch", "--help"])
     assert result.exit_code == 0
-    for tool in ("opencode", "pi", "aider", "qwencode", "hermes", "openwebui", "anythingllm"):
+    for tool in (
+        "opencode", "pi", "aider", "qwencode", "hermes", "openwebui", "anythingllm",
+        "deep-research",
+    ):
         assert tool in result.output
     for subcommand in ("list", "stop", "disconnect"):
         assert subcommand in result.output
@@ -679,7 +700,10 @@ def test_list_shows_every_client_without_a_server(runner, monkeypatch):
     monkeypatch.setattr("tenstorrent.launchers.base._shell_path", lambda: None)
     result = runner.invoke(app, ["launch", "list"])
     assert result.exit_code == 0, result.output
-    for tool in ("opencode", "pi", "aider", "qwencode", "hermes", "openwebui", "anythingllm"):
+    for tool in (
+        "opencode", "pi", "aider", "qwencode", "hermes", "openwebui", "anythingllm",
+        "deep-research",
+    ):
         assert tool in result.output
     # Rich wraps the column, so match on a fragment rather than the whole phrase.
     assert "needs docker" in result.output.replace("\n", " ")
@@ -936,3 +960,471 @@ def test_no_server_blames_loading_first_because_serve_returns_early(runner, fake
     flat = result.output.replace("\n", " ")
     assert "still loading" in flat
     assert "docker logs" in flat
+
+
+# -- deep-research: an app tt installs, run from its own home folder --------------
+COHOST = "raahemnabeel/cohost-ornith-35b-qwen3vl"
+
+
+@pytest.fixture
+def deep_research(monkeypatch, tmp_path, fake_docker_containers, model_manager_bin):
+    """A fake `ttdr` that lists the recipes in fakes/data/ttdr_recipes.json and records
+    anything else it ran with its TTDR_HOME, the endpoints answering (`serve.answering`),
+    `serve.installs` (what tt asked the registry to install), `serve.installed()` (as if
+    installed before), and `serve(*bundles, app_running=False)` to set what docker reports."""
+    from tenstorrent.launchers.base import RunningModel
+
+    home = tmp_path / ".tt-deep-research"
+    log = tmp_path / "ttdr.jsonl"
+    exe = tmp_path / "ttdr"
+    exe.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "if sys.argv[1:] == ['recipes', '--json']:\n"
+        "    sys.exit(print(open(os.environ['FAKE_TTDR_RECIPES']).read()))\n"
+        "open(os.environ['FAKE_TTDR_LOG'], 'a').write(\n"
+        "    json.dumps({'argv': sys.argv[1:], 'home': os.environ.get('TTDR_HOME')}) + '\\n')\n"
+    )
+    exe.chmod(0o755)
+    monkeypatch.setenv("TTDR_HOME", str(home))
+    monkeypatch.setenv("FAKE_TTDR_LOG", str(log))
+    recipes_json = Path(__file__).parents[1] / "fakes" / "data" / "ttdr_recipes.json"
+    monkeypatch.setenv("FAKE_TTDR_RECIPES", str(recipes_json))
+    installs: list[str] = []
+
+    def ensure(self, name, **_):
+        installs.append(name)
+        return exe
+
+    # Not installed until tt installs it, which the registry records.
+    monkeypatch.delenv("TT_TOOL_BIN_TT_DEEP_RESEARCH", raising=False)
+    monkeypatch.setattr("tenstorrent.tools.registry.ToolRegistry.ensure", ensure)
+    # Each port answers with the model the default recipe expects there.
+    recipes = json.loads(recipes_json.read_text())
+    served = {m["url"]: RunningModel(served_id=m["model"], base_url=m["url"])
+              for m in recipes[0]["models"]}
+    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.probe", lambda url, **_: (
+        [served[url]] if serve.answering and url in served else None
+    ))
+
+    def tt_model_calls() -> list[list[str]]:
+        if not model_manager_bin.exists():
+            return []
+        return [json.loads(line)["argv"] for line in model_manager_bin.read_text().splitlines()]
+
+    def serve(*bundles: str, app_running: bool = False):
+        containers = [
+            {"Id": f"{i:012d}", "Labels": {
+                "org.tenstorrent.tt-model": bundle.split("/")[1],
+                "org.tenstorrent.tt-model.repo": bundle,
+            }}
+            for i, bundle in enumerate(bundles)
+        ]
+        if app_running:
+            installed()  # since it is running
+            containers += [
+                {"Id": f"c0ffee00000{i}", "Labels": {
+                    "com.docker.compose.project": "ttdr",
+                    "com.docker.compose.service": service,
+                    "com.docker.compose.project.working_dir": str(home),
+                }}
+                for i, service in enumerate(("engine", "ui-deepagents"))
+            ]
+        fake_docker_containers(containers)
+
+    def installed() -> None:
+        monkeypatch.setenv("TT_TOOL_BIN_TT_DEEP_RESEARCH", str(exe))
+
+    def started_with(recipe_path: str) -> None:
+        """What `ttdr up` last recorded in the home's .env."""
+        home.mkdir(exist_ok=True)
+        (home / ".env").write_text(f"TTDR_RECIPE={recipe_path}\n")
+
+    def calls() -> list[dict]:
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    serve.home, serve.calls, serve.tt_model_calls = home, calls, tt_model_calls
+    serve.installs, serve.installed, serve.started_with = installs, installed, started_with
+    serve.answering = True
+    return serve
+
+
+@pytest.mark.fakes_only
+def test_deep_research_installs_ttdr_and_runs_up_with_the_recipe_for_the_served_bundle(
+    runner, deep_research
+):
+    deep_research(COHOST)
+    deep_research.started_with("recipes/cohost-ornith-35b.toml")
+    result = runner.invoke(app, ["launch", "deep-research"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.installs == ["tt-deep-research"]
+    assert deep_research.calls() == [{
+        "argv": ["up", "--recipe", "recipes/cohost-ornith-35b.toml"],
+        "home": str(deep_research.home),
+    }]
+    assert "connected" not in result.output  # ttdr up reported; tt adds no table
+
+
+@pytest.mark.fakes_only
+def test_deep_research_default_is_separate_chips_and_ttdr_serves_them(runner, deep_research):
+    """Nothing running: the default recipe starts, with no tt-model serve and no cohost."""
+    deep_research()
+    deep_research.answering = False
+    result = runner.invoke(app, ["launch", "deep-research", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.tt_model_calls() == []
+    assert deep_research.calls() == [{
+        "argv": ["up", "--recipe", "recipe.toml"],
+        "home": str(deep_research.home),
+    }]
+    assert "cohost" not in result.output
+    assert "connected" not in result.output  # ttdr up reported; tt adds no table
+
+
+@pytest.mark.fakes_only
+def test_deep_research_asks_once_and_warns_a_cold_start_is_slow(
+    runner, deep_research, monkeypatch
+):
+    deep_research()
+    deep_research.answering = False
+    asked: list[str] = []
+    monkeypatch.setattr("tenstorrent.commands.launch.confirm", lambda q: asked.append(q) or True)
+    result = runner.invoke(app, ["launch", "deep-research", "--recipe", "default"])
+    assert result.exit_code == 0, result.output
+    assert len(asked) == 1
+    assert "ttdr up --recipe recipe.toml" in asked[0] and "10-15 minutes" in asked[0]
+    assert "cohost" not in asked[0]
+
+
+@pytest.mark.fakes_only
+def test_deep_research_declining_starts_nothing_when_none_is_running(
+    runner, deep_research, monkeypatch
+):
+    deep_research()
+    deep_research.answering = False
+    monkeypatch.setattr("tenstorrent.commands.launch.confirm", lambda _: False)
+    result = runner.invoke(app, ["launch", "deep-research", "--recipe", "default"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.tt_model_calls() == [] and deep_research.calls() == []
+
+
+def _answer(monkeypatch, text: str) -> list[dict]:
+    """Answer the recipe picker with `text`; returns how it was asked."""
+    asked: list[dict] = []
+
+    def prompt(question, **kwargs):
+        asked.append({"question": question, "default": kwargs["default"]})
+        return kwargs["value_proc"](text or kwargs["default"])
+
+    monkeypatch.setattr("tenstorrent.commands.launch.prompt", prompt)
+    monkeypatch.setattr("tenstorrent.commands.launch.confirm", lambda _: pytest.fail("asked twice"))
+    return asked
+
+
+@pytest.mark.fakes_only
+def test_deep_research_offers_its_recipes_on_a_free_board(runner, deep_research, monkeypatch):
+    deep_research()
+    deep_research.answering = False
+    asked = _answer(monkeypatch, "3")  # 2 is the sandboxed variant
+    result = runner.invoke(app, ["launch", "deep-research"])
+    assert result.exit_code == 0, result.output
+    assert asked == [{"question": "Start which recipe", "default": "1"}]  # 1 is default
+    assert deep_research.calls()[0]["argv"] == [
+        "up", "--recipe", "recipes/cohost-ornith-35b.toml"
+    ]
+
+
+@pytest.mark.fakes_only
+def test_deep_research_asks_which_when_several_recipes_fit_what_is_running(
+    runner, deep_research, monkeypatch
+):
+    deep_research(COHOST)
+    asked = _answer(monkeypatch, "2")
+    result = runner.invoke(app, ["launch", "deep-research"])
+    assert result.exit_code == 0, result.output
+    assert len(asked) == 1
+    assert deep_research.calls()[0]["argv"] == ["up", "--recipe", "recipes/cohost-ornith-35b.toml"]
+
+
+@pytest.mark.fakes_only
+def test_deep_research_without_a_terminal_names_the_recipes_that_fit(runner, deep_research):
+    deep_research(COHOST)
+    result = runner.invoke(app, ["launch", "deep-research", "--yes"])
+    assert result.exit_code == ExitCode.USAGE
+    assert "cohost-ornith-35b-sandboxed-python" in result.output.replace("\n", "")
+    assert deep_research.calls() == []
+
+
+@pytest.mark.fakes_only
+def test_deep_research_list_recipes_starts_the_one_picked(runner, deep_research, monkeypatch):
+    deep_research()
+    deep_research.answering = False
+    _answer(monkeypatch, "1")
+    result = runner.invoke(app, ["launch", "deep-research", "--list-recipes"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"] == ["up", "--recipe", "recipe.toml"]
+
+
+@pytest.mark.fakes_only
+def test_deep_research_list_recipes_starts_nothing_on_enter(runner, deep_research, monkeypatch):
+    deep_research()
+    deep_research.answering = False
+    _answer(monkeypatch, "")
+    result = runner.invoke(app, ["launch", "deep-research", "--list-recipes"])
+    assert result.exit_code == 0, result.output
+    assert "deep-research recipes" in result.output  # the table it picked from
+    assert deep_research.calls() == []
+
+
+@pytest.mark.fakes_only
+def test_deep_research_says_what_to_stop_when_other_models_hold_the_board(runner, deep_research):
+    deep_research("someone/else")
+    deep_research.answering = False
+    result = runner.invoke(app, ["launch", "deep-research"])
+    assert result.exit_code == ExitCode.ERROR
+    output = result.output.replace("\n", " ")
+    assert "tt model stop someone/else" in output and "--list-recipes" in output
+    assert deep_research.tt_model_calls() == [] and deep_research.calls() == []
+
+
+@pytest.mark.fakes_only
+def test_deep_research_starts_a_named_recipe_on_a_free_board(runner, deep_research):
+    deep_research()
+    deep_research.answering = False
+    result = runner.invoke(app, ["launch", "deep-research", "--recipe", "cohost-ornith-35b", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"] == [
+        "up", "--recipe", "recipes/cohost-ornith-35b.toml"
+    ]
+
+
+@pytest.mark.fakes_only
+def test_deep_research_lists_its_recipes(runner, deep_research):
+    deep_research(COHOST)
+    deep_research.answering = False
+    result = runner.invoke(app, ["launch", "deep-research", "--list-recipes", "--json"])
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.stdout)
+    assert [r["recipe"] for r in rows] == [
+        "ornith-35b", "cohost-ornith-35b-sandboxed-python", "cohost-ornith-35b"
+    ]
+    assert set(rows[0]) == {"recipe", "default", "serves", "about"}
+    assert deep_research.calls() == []
+
+
+@pytest.mark.fakes_only
+def test_deep_research_does_not_serve_over_another_model(runner, deep_research, monkeypatch):
+    from tenstorrent.launchers.base import RunningModel
+
+    deep_research()  # nothing of its own running, but another model answers on 8000
+    other = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://localhost:8000/v1")
+    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.probe", lambda url, **_: (
+        [other] if ":8000/" in url else None
+    ))
+    # A cohost bundle's ports are fixed; ttdr moves only a bundle of its own.
+    result = runner.invoke(app, ["launch", "deep-research", "--recipe", "cohost-ornith-35b"])
+    assert result.exit_code == ExitCode.ERROR
+    assert "Qwen/Qwen3-32B" in result.output.replace("\n", " ")
+    assert deep_research.tt_model_calls() == [] and deep_research.calls() == []
+
+
+@pytest.mark.fakes_only
+def test_deep_research_dry_run_shows_the_default_recipe(runner, deep_research):
+    deep_research()
+    deep_research.installed()
+    deep_research.answering = False
+    result = runner.invoke(app, ["launch", "deep-research", "--dry-run", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["recipe"] == "recipe.toml"
+    assert payload["steps"][0][1:] == ["up", "--recipe", "recipe.toml"]
+    assert "cohost" not in result.stdout
+    assert deep_research.installs == [] and deep_research.calls() == []
+
+
+@pytest.mark.fakes_only
+def test_deep_research_dry_run_before_it_is_installed_installs_nothing(runner, deep_research):
+    deep_research()
+    result = runner.invoke(app, ["launch", "deep-research", "--dry-run", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"tool": "deep-research", "installed": False}
+    assert deep_research.installs == []
+
+
+@pytest.mark.fakes_only
+def test_deep_research_recipe_override_skips_matching(runner, deep_research):
+    deep_research()  # nothing matched by bundle, but the endpoints answer
+    result = runner.invoke(app, ["launch", "deep-research", "--recipe", "rerank-qwen3-vl"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"][-1] == "recipes/rerank-qwen3-vl.toml"
+
+
+@pytest.mark.fakes_only
+def test_deep_research_dry_run_starts_nothing(runner, deep_research, monkeypatch):
+    deep_research(COHOST)
+    deep_research.started_with("recipes/cohost-ornith-35b.toml")
+    deep_research.installed()
+    monkeypatch.setattr("tenstorrent.commands.launch.confirm", lambda _: pytest.fail("asked"))
+    result = runner.invoke(app, ["launch", "deep-research", "--dry-run", "--json"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls() == []
+    payload = json.loads(result.stdout)
+    assert payload["steps"][0][1:] == ["up", "--recipe", "recipes/cohost-ornith-35b.toml"]
+    assert payload["applied"] is False
+    assert payload["url"] == "http://localhost:3000"
+
+
+@pytest.mark.fakes_only
+def test_deep_research_declining_starts_nothing(runner, deep_research, monkeypatch):
+    deep_research(COHOST)
+    deep_research.started_with("recipes/cohost-ornith-35b.toml")
+    monkeypatch.setattr("tenstorrent.commands.launch.confirm", lambda _: False)
+    result = runner.invoke(app, ["launch", "deep-research"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls() == []
+
+
+@pytest.mark.fakes_only
+def test_deep_research_already_running_is_not_restarted(runner, deep_research):
+    deep_research(COHOST, app_running=True)
+    deep_research.home.mkdir()
+    (deep_research.home / ".env").write_text("TTDR_RECIPE=recipes/cohost-ornith-35b.toml\n")
+    result = runner.invoke(app, ["launch", "deep-research"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls() == []
+    assert "http://localhost:3000" in result.output
+
+
+@pytest.mark.fakes_only
+def test_deep_research_aiq_runs_up_with_it(runner, deep_research):
+    deep_research(COHOST)
+    deep_research.started_with("recipes/cohost-ornith-35b.toml")
+    result = runner.invoke(app, ["launch", "deep-research", "--aiq", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"] == [
+        "up", "--recipe", "recipes/cohost-ornith-35b.toml", "--aiq"
+    ]
+
+
+@pytest.mark.fakes_only
+def test_deep_research_aiq_adds_it_to_an_app_running_without(runner, deep_research):
+    deep_research(COHOST, app_running=True)  # ui-deepagents only
+    deep_research.started_with("recipes/cohost-ornith-35b.toml")
+    result = runner.invoke(app, ["launch", "deep-research", "--aiq", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"][-1] == "--aiq"
+
+
+@pytest.mark.fakes_only
+def test_deep_research_starts_over_a_checkouts_leftover_ui(
+    runner, deep_research, fake_docker_containers
+):
+    """A UI left running from a git checkout, with no engine, is not the app running."""
+    deep_research(COHOST)
+    deep_research.installed()
+    deep_research.started_with("recipes/cohost-ornith-35b.toml")
+    fake_docker_containers([
+        {"Id": "000000000000", "Labels": {
+            "org.tenstorrent.tt-model": COHOST.split("/")[1],
+            "org.tenstorrent.tt-model.repo": COHOST,
+        }},
+        {"Id": "c0ffee000000", "Labels": {
+            "com.docker.compose.project": "ttdr",
+            "com.docker.compose.service": "ui-deepagents",
+            "com.docker.compose.project.working_dir": "/home/someone/tt-deep-research",
+        }},
+    ])
+    result = runner.invoke(app, ["launch", "deep-research", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"][0] == "up"
+    assert "already running" not in result.output
+
+
+@pytest.mark.fakes_only
+def test_stop_deep_research_runs_ttdr_down_where_it_was_started(runner, deep_research, monkeypatch):
+    deep_research(COHOST, app_running=True)
+    monkeypatch.setenv("TTDR_HOME", "/somewhere/else")
+    result = runner.invoke(app, ["launch", "stop", "deep-research"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls() == [{"argv": ["down"], "home": str(deep_research.home)}]
+
+
+@pytest.mark.fakes_only
+def test_stop_deep_research_keep_models_tells_ttdr(runner, deep_research):
+    deep_research(COHOST, app_running=True)
+    result = runner.invoke(app, ["launch", "stop", "deep-research", "--keep-models"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"] == ["down", "--keep-models"]
+    assert deep_research.tt_model_calls() == []  # ttdr stops its models, not tt
+
+
+@pytest.mark.fakes_only
+def test_stop_deep_research_stops_models_that_outlived_the_app(runner, deep_research):
+    deep_research(COHOST)
+    deep_research.installed()
+    result = runner.invoke(app, ["launch", "stop", "deep-research"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"] == ["down"]
+
+
+@pytest.mark.fakes_only
+def test_stop_keep_models_is_a_usage_error_for_other_clients(runner, fake_client_named):
+    fake_client_named("hermes")
+    result = runner.invoke(app, ["launch", "stop", "hermes", "--keep-models"])
+    assert result.exit_code == ExitCode.USAGE
+
+
+@pytest.mark.fakes_only
+def test_stop_deep_research_when_it_is_not_running_installs_nothing(runner, deep_research):
+    deep_research(COHOST)
+    result = runner.invoke(app, ["launch", "stop", "deep-research"])
+    assert result.exit_code == 0, result.output
+    assert "not running" in result.output
+    assert deep_research.installs == [] and deep_research.calls() == []
+
+
+@pytest.mark.fakes_only
+def test_disconnect_deep_research_has_nothing_to_undo(runner, deep_research):
+    result = runner.invoke(app, ["launch", "disconnect", "deep-research"])
+    assert result.exit_code == 0, result.output
+    assert "Nothing to undo" in result.output
+
+
+@pytest.mark.fakes_only
+def test_list_offers_deep_research_before_it_is_installed(runner, deep_research):
+    deep_research()
+    listed = json.loads(runner.invoke(app, ["launch", "list", "--json"]).stdout)
+    row = next(r for r in listed if r["tool"] == "deep-research")
+    assert row["available"] is True
+    assert row["container_state"] == "absent"
+    assert deep_research.installs == []
+
+
+
+@pytest.mark.fakes_only
+def test_a_client_defaults_to_deep_researchs_llm_among_its_models(
+    runner, deep_research, fake_client_named, monkeypatch
+):
+    """The recipe also serves an embedder and a reranker; a chat client wants its LLM."""
+    from tenstorrent.launchers.base import RunningModel
+
+    deep_research(COHOST)
+    deep_research.installed()
+    fake_client_named("hermes")
+    served = [
+        RunningModel(served_id=m, base_url=f"http://127.0.0.1:{port}/v1")
+        for m, port in [("Qwen/Qwen3-VL-Embedding-8B", 8002), ("ornith-ai/Ornith-1.5-35B-A3B", 8000),
+                        ("Qwen/Qwen3-VL-Reranker-8B", 8004)]
+    ]
+    monkeypatch.setattr("tenstorrent.commands.launch._discover_local", lambda appctx: served)
+    passed: dict = {}
+
+    def fake_execvpe(file, argv, env):
+        passed["argv"] = list(argv)
+        raise SystemExit(0)
+
+    monkeypatch.setattr("tenstorrent.tools.runner.os.execvpe", fake_execvpe)
+    result = runner.invoke(app, ["launch", "hermes"])
+    assert result.exit_code == 0, result.output
+    assert passed["argv"][-1] == "ornith-ai/Ornith-1.5-35B-A3B"
+    assert "choose with --model" not in result.output

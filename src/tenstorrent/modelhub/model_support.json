@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "release_version": "0.26.0",
+ "release_version": "0.26.1",
  "models": [
   {
    "name": "AFM-4.5B",
@@ -1155,12 +1155,12 @@
      "engines": [
       "vLLM"
      ],
-     "status": "EXPERIMENTAL",
+     "status": "COMPLETE",
      "max_context": 524288,
      "supported": true,
-     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.1-09acccb-6098002",
      "impl_id": "k2_horizon_7b_qb2",
-     "version": "0.26.0",
+     "version": "0.26.1",
      "tool_call_parser": "k2_horizon",
      "reasoning_parser": "k2_horizon",
      "override_tt_config": {
@@ -1177,12 +1177,12 @@
      "engines": [
       "vLLM"
      ],
-     "status": "EXPERIMENTAL",
+     "status": "COMPLETE",
      "max_context": 524288,
      "supported": true,
-     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.1-09acccb-6098002",
      "impl_id": "k2_horizon_7b_qb2",
-     "version": "0.26.0",
+     "version": "0.26.1",
      "tool_call_parser": "k2_horizon",
      "reasoning_parser": "k2_horizon",
      "override_tt_config": {
@@ -2459,12 +2459,12 @@
      "engines": [
       "vLLM"
      ],
-     "status": "EXPERIMENTAL",
+     "status": "COMPLETE",
      "max_context": 131072,
      "supported": true,
-     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.1-09acccb-6098002",
      "impl_id": "muse_glimmer_30b_qb2",
-     "version": "0.26.0",
+     "version": "0.26.1",
      "tool_call_parser": "muse_glimmer",
      "reasoning_parser": "muse_glimmer",
      "override_tt_config": {
@@ -2480,12 +2480,12 @@
      "engines": [
       "vLLM"
      ],
-     "status": "EXPERIMENTAL",
+     "status": "COMPLETE",
      "max_context": 131072,
      "supported": true,
-     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.0-09acccb-6098002",
+     "docker_image": "ghcr.io/tenstorrent/tt-inference-server/vllm-tt-metal-src-release-ubuntu-22.04-amd64:0.26.1-09acccb-6098002",
      "impl_id": "muse_glimmer_30b_qb2",
-     "version": "0.26.0",
+     "version": "0.26.1",
      "tool_call_parser": "muse_glimmer",
      "reasoning_parser": "muse_glimmer",
      "override_tt_config": {

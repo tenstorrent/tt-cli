@@ -192,6 +192,12 @@ class ModelManagerBackend:
             )
         )
 
+    def serve_detached(self, repo_id: str, serve_flags: list[str]) -> int:
+        """Start a bundle with tt-model's own --detach, without tt's boot view: for
+        a caller that waits on the bundle's readiness itself (`tt launch`)."""
+        plan = self.prepare(repo_id, serve_flags=serve_flags)
+        return self.runner.stream(plan.argv, env=self._env(), tool=TOOL)
+
     @staticmethod
     def _engine(repo_id: str) -> str:
         """Which stack the bundle boots, for picking the container template.
@@ -319,6 +325,22 @@ class ModelManagerBackend:
             for port in re.findall(r":(\d+)->", line)
         }
         return sorted(ports)
+
+    def running_repos(self) -> list[str]:
+        """Bundles (Hub repo ids) tt-model's own containers are serving right now,
+        read off their labels. Best effort: no docker → nothing."""
+        docker = shutil.which("docker")
+        if docker is None:
+            return []
+        listed = self.runner.capture(
+            [
+                docker, "ps",
+                "--filter", f"label={_LABEL}",
+                "--format", f'{{{{.Label "{_LABEL}.repo"}}}}',
+            ],
+            tool="docker",
+        )
+        return sorted({line.strip() for line in listed.stdout.splitlines() if line.strip()})
 
     def running_profiles(self, repo_id: str) -> list[str]:
         """Profiles of `repo_id`'s containers that are running right now.

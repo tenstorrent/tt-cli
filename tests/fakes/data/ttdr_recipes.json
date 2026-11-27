@@ -1,0 +1,190 @@
+[
+  {
+    "name": "ornith-35b",
+    "default": true,
+    "path": "recipe.toml",
+    "description": "Ornith 1.5 35B-A3B, the embedder and the reranker on their own chips",
+    "bundles": [
+      "raahemnabeel/ornith-1.5-35b-a3b",
+      "raahemnabeel/qwen3-vl-embedding-8b",
+      "raahemnabeel/qwen3-vl-reranker-8b"
+    ],
+    "models": [
+      {
+        "name": "ornith",
+        "roles": [
+          "llm",
+          "decide"
+        ],
+        "model": "ornith-ai/Ornith-1.5-35B-A3B",
+        "url": "http://localhost:8000/v1",
+        "bundle": "raahemnabeel/ornith-1.5-35b-a3b",
+        "chips": "0-1",
+        "cohosted_with": null
+      },
+      {
+        "name": "qwen3vl_embed",
+        "roles": [
+          "embed"
+        ],
+        "model": "Qwen/Qwen3-VL-Embedding-8B",
+        "url": "http://localhost:8005/v1",
+        "bundle": "raahemnabeel/qwen3-vl-embedding-8b",
+        "chips": "2",
+        "cohosted_with": null
+      },
+      {
+        "name": "reranker",
+        "roles": [
+          "rerank"
+        ],
+        "model": "Qwen/Qwen3-VL-Reranker-8B",
+        "url": "http://localhost:8004/v1",
+        "bundle": "raahemnabeel/qwen3-vl-reranker-8b",
+        "chips": "3",
+        "cohosted_with": null
+      }
+    ],
+    "ui": true
+  },
+  {
+    "name": "cohost-ornith-35b-sandboxed-python",
+    "default": false,
+    "path": "recipes/cohost-ornith-35b-sandboxed-python.toml",
+    "description": "cohost-ornith-35b with sandboxed Python for agents",
+    "bundles": [
+      "raahemnabeel/cohost-ornith-35b-qwen3vl"
+    ],
+    "models": [
+      {
+        "name": "ornith",
+        "roles": [
+          "llm",
+          "decide"
+        ],
+        "model": "ornith-ai/Ornith-1.5-35B-A3B",
+        "url": "http://localhost:8000/v1",
+        "bundle": "raahemnabeel/cohost-ornith-35b-qwen3vl",
+        "chips": "0-3",
+        "cohosted_with": null
+      },
+      {
+        "name": "qwen3vl_embed",
+        "roles": [
+          "embed"
+        ],
+        "model": "Qwen/Qwen3-VL-Embedding-8B",
+        "url": "http://localhost:8005/v1",
+        "bundle": "raahemnabeel/qwen3-vl-embedding-8b",
+        "chips": "0-3",
+        "cohosted_with": "ornith"
+      },
+      {
+        "name": "reranker",
+        "roles": [
+          "rerank"
+        ],
+        "model": "Qwen/Qwen3-VL-Reranker-8B",
+        "url": "http://localhost:8004/v1",
+        "bundle": "raahemnabeel/qwen3-vl-reranker-8b",
+        "chips": "0-3",
+        "cohosted_with": "ornith"
+      }
+    ],
+    "ui": true
+  },
+  {
+    "name": "cohost-ornith-35b",
+    "default": false,
+    "path": "recipes/cohost-ornith-35b.toml",
+    "description": "The default's models as one cohost bundle, the fastest",
+    "bundles": [
+      "raahemnabeel/cohost-ornith-35b-qwen3vl"
+    ],
+    "models": [
+      {
+        "name": "ornith",
+        "roles": [
+          "llm",
+          "decide"
+        ],
+        "model": "ornith-ai/Ornith-1.5-35B-A3B",
+        "url": "http://localhost:8000/v1",
+        "bundle": "raahemnabeel/cohost-ornith-35b-qwen3vl",
+        "chips": "0-3",
+        "cohosted_with": null
+      },
+      {
+        "name": "qwen3vl_embed",
+        "roles": [
+          "embed"
+        ],
+        "model": "Qwen/Qwen3-VL-Embedding-8B",
+        "url": "http://localhost:8005/v1",
+        "bundle": "raahemnabeel/qwen3-vl-embedding-8b",
+        "chips": "0-3",
+        "cohosted_with": "ornith"
+      },
+      {
+        "name": "reranker",
+        "roles": [
+          "rerank"
+        ],
+        "model": "Qwen/Qwen3-VL-Reranker-8B",
+        "url": "http://localhost:8004/v1",
+        "bundle": "raahemnabeel/qwen3-vl-reranker-8b",
+        "chips": "0-3",
+        "cohosted_with": "ornith"
+      }
+    ],
+    "ui": true
+  },
+  {
+    "name": "rerank-qwen3-vl",
+    "default": false,
+    "path": "recipes/rerank-qwen3-vl.toml",
+    "description": null,
+    "bundles": [
+      "raahemnabeel/ornith-1.5-35b-a3b",
+      "raahemnabeel/qwen3-vl-embedding-8b",
+      "raahemnabeel/qwen3-vl-reranker-8b"
+    ],
+    "models": [
+      {
+        "name": "ornith",
+        "roles": [
+          "llm",
+          "decide"
+        ],
+        "model": "ornith-ai/Ornith-1.5-35B-A3B",
+        "url": "http://localhost:8000/v1",
+        "bundle": "raahemnabeel/ornith-1.5-35b-a3b",
+        "chips": "0-1",
+        "cohosted_with": null
+      },
+      {
+        "name": "qwen3vl_embed",
+        "roles": [
+          "embed"
+        ],
+        "model": "Qwen/Qwen3-VL-Embedding-8B",
+        "url": "http://localhost:8005/v1",
+        "bundle": "raahemnabeel/qwen3-vl-embedding-8b",
+        "chips": "2",
+        "cohosted_with": null
+      },
+      {
+        "name": "reranker",
+        "roles": [
+          "rerank"
+        ],
+        "model": "Qwen/Qwen3-VL-Reranker-8B",
+        "url": "http://localhost:8004/v1",
+        "bundle": "raahemnabeel/qwen3-vl-reranker-8b",
+        "chips": "3",
+        "cohosted_with": null
+      }
+    ],
+    "ui": true
+  }
+]

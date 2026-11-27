@@ -21,6 +21,7 @@ What it does, per upstream:
 * **tt-inference-server** — latest release; the bundled release_model_spec.json is
   replaced verbatim from that tag, after checking it parses under our catalog code.
 * **tt-model-manager** — head of the default branch (upstream publishes no tags).
+* **tt-deep-research** — head of the default branch, the same way.
 * **tt-studio** — latest version on PyPI, the package `uv tool install` pins.
 
 Comments in supplement.toml are preserved but not rewritten — the ones describing the
@@ -63,6 +64,7 @@ INSTALLER_REPO = "tenstorrent/tt-installer"
 MANIFEST_REPO = "tenstorrent/tt-sw-manifest"
 INFERENCE_REPO = "tenstorrent/tt-inference-server"
 MODEL_MANAGER_REPO = "tenstorrent/tt-model-manager"
+DEEP_RESEARCH_REPO = "rnabeelTT/tt-deep-research"
 STUDIO_PACKAGE = "tt-studio"
 
 # Flags `tt update` passes to install.sh (backends/installer.py). A release that drops
@@ -302,20 +304,29 @@ def bump_studio(plan: Plan, gh: GitHub) -> None:
     plan.changes.append(Change("tt-studio", old, version))
 
 
-def bump_model_manager(plan: Plan, gh: GitHub) -> None:
-    tool = plan.supplement["tools"]["tt-model"]
+def _bump_to_branch_head(plan: Plan, gh: GitHub, tool_name: str, repo: str, component: str) -> None:
+    """A tool pinned to a commit: move it to the head of its repo's default branch."""
+    tool = plan.supplement["tools"][tool_name]
     old = str(tool["golden_version"])
-    branch, sha, date = gh.default_branch_head(MODEL_MANAGER_REPO)
-    tags = gh.tags(MODEL_MANAGER_REPO)
+    branch, sha, date = gh.default_branch_head(repo)
+    tags = gh.tags(repo)
     if tags:
         plan.notes.append(
-            f"tt-model-manager now publishes tags ({', '.join(tags[:3])}); the pin is still a "
+            f"{repo.split('/')[1]} now publishes tags ({', '.join(tags[:3])}); the pin is still a "
             f"`{branch}` commit — consider switching supplement.toml to a tagged release."
         )
     if sha == old:
         return
     tool["golden_version"] = sha
-    plan.changes.append(Change("tt-model (tt-model-manager)", old[:12], sha[:12], [f"`{branch}` head as of {date}."]))
+    plan.changes.append(Change(component, old[:12], sha[:12], [f"`{branch}` head as of {date}."]))
+
+
+def bump_model_manager(plan: Plan, gh: GitHub) -> None:
+    _bump_to_branch_head(plan, gh, "tt-model", MODEL_MANAGER_REPO, "tt-model (tt-model-manager)")
+
+
+def bump_deep_research(plan: Plan, gh: GitHub) -> None:
+    _bump_to_branch_head(plan, gh, "tt-deep-research", DEEP_RESEARCH_REPO, "tt-deep-research")
 
 
 def build_plan(supplement_text: str, tests_workflow: str, gh: GitHub) -> Plan:
@@ -326,6 +337,7 @@ def build_plan(supplement_text: str, tests_workflow: str, gh: GitHub) -> Plan:
     bump_inference_server(plan, gh)
     bump_studio(plan, gh)
     bump_model_manager(plan, gh)
+    bump_deep_research(plan, gh)
     if plan.changed:
         plan.files[SUPPLEMENT] = tomlkit.dumps(plan.supplement).encode("utf-8")
     return plan
@@ -354,6 +366,11 @@ _REVIEW_ITEMS = {
     "tt-model (tt-model-manager)": [
         "Re-check the `org.tenstorrent.tt-model` label family and `tt-model-<name>-<profile>` "
         "container naming `tt model ps` reads (upstream src/tt_kernel/container.py).",
+    ],
+    "tt-deep-research": [
+        "Re-check the `ttdr up --recipe <recipe>` / `ttdr down` / $TTDR_HOME contract and "
+        "RECIPES, the recipe → bundle table in launchers/apps/deep_research.py, against the "
+        "new commit's recipe.toml and recipes/.",
     ],
     "tt-studio": [
         "Re-check the `tt-studio` command's `run <model>`, `--stop-model <model>` and `--stop` "

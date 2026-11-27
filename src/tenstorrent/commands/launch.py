@@ -6,7 +6,7 @@
 tt does not start the model's server: it discovers what `tt serve` (or tt-model)
 has running, checks the model can do what the client needs, and then either
 configures an installed client and hands over the terminal, or — with consent —
-starts a client that runs as a container.
+starts a client that runs as a container (or, for deep-research, as an app tt installs).
 
 One connect command per client, all sharing `_connect` and telling themselves
 apart by `ctx.info_name`, so `tt launch --help` enumerates the clients and adding
@@ -25,7 +25,7 @@ from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 
-from .._compat import confirm
+from .._compat import confirm, prompt
 from ..backends.serving.inference_server import InferenceServerBackend
 from ..backends.serving.model_manager import ModelManagerBackend
 from ..cli import JsonFlag, NoColorFlag, QuietFlag, VerboseFlag, handle_tt_errors
@@ -45,6 +45,7 @@ from ..launchers.base import (
 )
 from ..launchers.discovery import DEFAULT_PORT, base_url_for, discover
 from ..modelhub.catalog import ModelCatalog
+from ..modelhub.hub import hf_home_dir
 
 launch_app = typer.Typer(
     help="Connect a client to a model tt is already serving.", no_args_is_help=True
@@ -74,12 +75,21 @@ def _launcher(tool: str) -> Launcher:
     return launcher
 
 
-def _installed_or_none(launcher: Launcher, config, output) -> str | None:
+def _resolve(appctx, launcher: Launcher, *, install: bool = True, retry_path: bool = True) -> str:
+    """The client's executable: a tool tt manages from the registry (installed at its
+    pin first, with `install`), any other from PATH."""
+    tool = getattr(launcher, "managed_tool", None)
+    if tool is None:
+        return resolve_executable(launcher, appctx.config, appctx.output, retry_path=retry_path)
+    return str(appctx.registry.ensure(tool) if install else appctx.registry.resolve(tool))
+
+
+def _installed_or_none(appctx, launcher: Launcher) -> str | None:
     """A soft check for a listing/preview: "not installed" is an expected, cheap
     answer here, so it skips the fresh-shell retry `resolve_executable` otherwise
-    pays for a miss that would actually block the user."""
+    pays for a miss that would actually block the user, and never installs."""
     try:
-        return resolve_executable(launcher, config, output, retry_path=False)
+        return _resolve(appctx, launcher, install=False, retry_path=False)
     except TTError:
         return None
 
@@ -96,14 +106,23 @@ def _local_candidate_ports(appctx) -> list[int]:
         ports += [c.port for c in inference.running_containers() if c.port]
     except TTError:
         pass  # no docker/podman, or it failed — model_manager or the plain default may still work
-    model_manager = ModelManagerBackend(
-        appctx.registry, appctx.runner, appctx.config, appctx.output
-    )
     try:
-        ports += model_manager.running_ports()
+        ports += _model_manager(appctx).running_ports()
     except TTError:
         pass
     return ports
+
+
+def _model_manager(appctx) -> ModelManagerBackend:
+    return ModelManagerBackend(appctx.registry, appctx.runner, appctx.config, appctx.output)
+
+
+def _running_bundles(appctx) -> list[str]:
+    """tt-model bundles being served, for an app that matches its recipe to them."""
+    try:
+        return _model_manager(appctx).running_repos()
+    except TTError:
+        return []
 
 
 def _discover_local(appctx) -> list[RunningModel]:
@@ -123,6 +142,21 @@ def _discover_local(appctx) -> list[RunningModel]:
     if not served:
         raise last_error
     return served
+
+
+def _app_llm(appctx, served: list[RunningModel]) -> str | None:
+    """With several models up and no --model: deep-research's LLM, when its recipe's models
+    are the ones serving (the others embed and rerank, and tt's catalog may know none)."""
+    app = LAUNCHERS["deep-research"]
+    bundles = _running_bundles(appctx)
+    executable = _installed_or_none(appctx, app) if bundles else None
+    if executable is None:
+        return None
+    llm = app.serving_llm(executable, bundles, appctx.runner)
+    if llm not in {s.served_id for s in served}:
+        return None
+    appctx.output.status(f"Using {llm}, the LLM of the deep-research recipe that is serving.")
+    return llm
 
 
 def _select(appctx, served: list[RunningModel], wanted: str | None) -> RunningModel:
@@ -271,6 +305,8 @@ def _connect(
         )
     if url is None and port is None:
         served = _discover_local(appctx)
+        if model is None and len(served) > 1:
+            model = _app_llm(appctx, served)
     else:
         served = discover(base_url_for(url, port))
     target = _select(appctx, served, model)
@@ -279,16 +315,156 @@ def _connect(
     # when it can, so what it reports (an existing container, say) is the truth on
     # this machine rather than a guess.
     executable = (
-        _installed_or_none(launcher, appctx.config, appctx.output)
-        if dry_run
-        else resolve_executable(launcher, appctx.config, appctx.output)
+        _installed_or_none(appctx, launcher) if dry_run else _resolve(appctx, launcher)
     )
     options = LaunchOptions(
         web_port=web_port or DEFAULT_WEB_PORT,
         web_port_pinned=web_port is not None,
         web=web,
     )
+    _start(
+        appctx, launcher, target, options, executable,
+        yes=yes, no_exec=no_exec, dry_run=dry_run, json_mode=json_mode,
+    )
+
+
+def _connect_recipe(
+    ctx: typer.Context,
+    recipe: str = typer.Option(
+        None,
+        "--recipe",
+        help="Recipe to start, by name (default: the one whose models tt is serving, "
+        "else the default).",
+    ),
+    list_recipes: bool = typer.Option(
+        False,
+        "--list-recipes",
+        help="Show every recipe; on a terminal, pick one to start.",
+    ),
+    aiq: bool = typer.Option(
+        False,
+        "--aiq",
+        help="Also run AI-Q's own harness beside Deep Agents (its UI on :3001).",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be done, and change nothing."
+    ),
+    json_mode: JsonFlag = False,
+    quiet: QuietFlag = False,
+    verbose: VerboseFlag = False,
+    no_color: NoColorFlag = False,
+) -> None:
+    """An app that picks its own models, by recipe."""
+    appctx = get_app_context(ctx)
+    appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
+    launcher = _launcher(ctx.info_name)
+    # Its recipes come from the app itself, so a real run installs it first.
+    executable = _installed_or_none(appctx, launcher) if dry_run else _resolve(appctx, launcher)
+    if executable is None:
+        appctx.output.status(
+            f"{launcher.managed_tool} is not installed yet; `tt launch {launcher.id}` "
+            "installs it, then picks a recipe."
+        )
+        appctx.output.emit({"tool": launcher.id, "installed": False}, renderer=lambda _: None)
+        return
+    recipes = launcher.recipes(executable, appctx.runner)
+    bundles = _running_bundles(appctx)
+    interactive = (
+        not (yes or dry_run or appctx.output.json_mode or appctx.output.quiet) and _stdin_isatty()
+    )
+    if list_recipes:
+        rows = launcher.listed(recipes)
+        if not interactive:
+            appctx.output.emit(rows, renderer=_recipes_renderer)
+            return
+        recipe = _pick_recipe(appctx, rows, optional=True)
+        if recipe is None:
+            return
+        yes = True  # picking one is the yes
+    elif recipe is None and interactive:
+        rows = launcher.listed(recipes)
+        running = {r["name"] for r in launcher.running_recipes(recipes, bundles)}
+        if len(running) > 1:  # several fit what is serving: which one
+            recipe = _pick_recipe(appctx, [r for r in rows if r["recipe"] in running], optional=False)
+            yes = True
+        # Nothing running: a choice when one can start; otherwise choose() says what to stop.
+        elif not running and launcher.can_start(recipes, bundles):
+            recipe = _pick_recipe(appctx, rows, optional=False)
+            yes = True
+    choice = launcher.choose(recipes, recipe, bundles)
+    llm = next(m for m in choice.recipe["models"] if "llm" in m["roles"])
+    # When `ttdr up` serves the models, they are not there to ask yet.
+    target = (
+        RunningModel(served_id=llm["model"], base_url=llm["url"])
+        if choice.serves_models
+        else launcher.served_llm(choice.recipe)
+    )
+    options = LaunchOptions(
+        home=launcher.home(),
+        recipe=choice.recipe["path"],
+        serves_models=choice.serves_models,
+        hf_home=hf_home_dir(appctx.config),
+        aiq=aiq,
+    )
+    _start(
+        appctx, launcher, target, options, executable,
+        yes=yes, no_exec=False, dry_run=dry_run, json_mode=json_mode,
+        rows={"serve": "ttdr up serves the models"} if choice.serves_models else None,
+    )
+
+
+def _recipes_renderer(rows: list[dict], *, numbered: bool = False) -> Table:
+    table = Table(title="deep-research recipes", show_header=True, header_style="bold")
+    columns = ("recipe", "serves", "about")
+    for column in ("#", *columns) if numbered else columns:
+        table.add_column(column, overflow="fold")
+    for i, row in enumerate(rows, start=1):
+        cells = [row[column] for column in columns]
+        table.add_row(*([str(i), *cells] if numbered else cells))
+    return table
+
+
+def _pick_recipe(appctx, rows: list[dict], *, optional: bool) -> str | None:
+    """Ask which recipe to start. With `optional`, Enter starts none (None); otherwise
+    Enter takes the default recipe."""
+    appctx.output.status_console.print(_recipes_renderer(rows, numbered=True))
+    names = [row["recipe"] for row in rows]
+
+    def parse(value: str) -> str | None:
+        text = value.strip()
+        if optional and not text:
+            return None
+        if text.isdecimal() and 1 <= int(text) <= len(names):
+            return names[int(text) - 1]
+        raise typer.BadParameter(f"enter a number from 1 to {len(names)}")
+
+    default = "" if optional else str(
+        next((i for i, row in enumerate(rows, start=1) if row["default"]), 1)
+    )
+    question = "Start which recipe (Enter for none)" if optional else "Start which recipe"
+    # err=True keeps the prompt on stderr: stdout stays the command's own output.
+    return prompt(question, default=default, show_default=not optional, value_proc=parse, err=True)
+
+
+def _start(
+    appctx,
+    launcher: Launcher,
+    target: RunningModel,
+    options: LaunchOptions,
+    executable: str | None,
+    *,
+    yes: bool,
+    no_exec: bool,
+    dry_run: bool,
+    json_mode: bool,
+    rows: dict | None = None,
+) -> None:
     prep = launcher.plan(target, options, executable=executable, runner=appctx.runner)
+    if rows:
+        prep = dataclasses.replace(prep, rows={**rows, **prep.rows})
     # A terminal client is still configured under --no-exec — that is what the flag
     # is for. For a service, starting it is the only action, so it waits for start.
     start = not dry_run and not no_exec and not (json_mode and launcher.hands_over_terminal)
@@ -298,7 +474,11 @@ def _connect(
         if prep.consent:
             _ask(appctx, prep.consent, yes=yes)
         launcher.apply(target, prep, env)
-    appctx.output.emit(_payload(launcher, target, prep, acted=act), renderer=_renderer)
+    # An app that reported its own progress has already said where it is; the table would
+    # only repeat it. --json still gets the payload.
+    quiet = act and getattr(launcher, "reports_itself", False)
+    renderer = (lambda _: None) if quiet else _renderer
+    appctx.output.emit(_payload(launcher, target, prep, acted=act), renderer=renderer)
     if start:
         launcher.handoff(target, prep, env)
 
@@ -307,7 +487,13 @@ for _name, _launcher_obj in LAUNCHERS.items():
     launch_app.command(
         _name,
         help=f"Connect {_name} ({'terminal client' if _launcher_obj.hands_over_terminal else 'web service'}).",
-    )(handle_tt_errors(_connect))
+    )(
+        handle_tt_errors(
+            _connect_recipe
+            if getattr(_launcher_obj, "uses_recipes", False)
+            else _connect
+        )
+    )
 
 
 # -- list -------------------------------------------------------------------------
@@ -330,7 +516,7 @@ def _catalog(appctx) -> list[dict]:
     """What each client is and whether it could run right now."""
     rows = []
     for launcher in LAUNCHERS.values():
-        executable = _installed_or_none(launcher, appctx.config, appctx.output)
+        executable = _installed_or_none(appctx, launcher)
         # Only container clients have a state to report; asking is one `docker
         # inspect`, so it stays cheap enough for a listing.
         state = getattr(launcher, "container_state", None)
@@ -339,9 +525,12 @@ def _catalog(appctx) -> list[dict]:
                 "tool": launcher.id,
                 "kind": "terminal" if launcher.hands_over_terminal else "web service",
                 "requires_tool_calling": launcher.requires_tool_calling,
+                # For a client that chooses its own models rather than any served one.
+                "model": getattr(launcher, "model_requirement", None),
                 "configures": launcher.target(),
                 "needs": " or ".join(launcher.binaries),
-                "available": executable is not None,
+                # A tool tt manages is installed on first use.
+                "available": executable is not None or hasattr(launcher, "managed_tool"),
                 "container_state": state(executable, appctx.runner) if state else None,
             }
         )
@@ -364,7 +553,8 @@ def _catalog_renderer(rows: list[dict]) -> Table:
         table.add_row(
             row["tool"],
             row["kind"],
-            "tool calling" if row["requires_tool_calling"] else "any chat model",
+            row["model"]
+            or ("tool calling" if row["requires_tool_calling"] else "any chat model"),
             status,
             row["configures"],
         )
@@ -377,12 +567,17 @@ def _catalog_renderer(rows: list[dict]) -> Table:
 def stop(
     ctx: typer.Context,
     tool: str = typer.Argument(help="Client to stop.", autocompletion=complete_tool),
+    keep_models: bool = typer.Option(
+        False,
+        "--keep-models",
+        help="Leave the models it serves running (deep-research).",
+    ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
     verbose: VerboseFlag = False,
     no_color: NoColorFlag = False,
 ) -> None:
-    """Stop a client's web service (a container, or Hermes' dashboard), keeping its data."""
+    """Stop a client's web service (a container, Hermes' dashboard, or an app), keeping its data."""
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(tool)
@@ -397,14 +592,34 @@ def stop(
             f"{launcher.id}` to undo its configuration.",
             exit_code=ExitCode.USAGE,
         )
-    executable = resolve_executable(launcher, appctx.config, appctx.output)
-    if state(executable, appctx.runner) != "running":
+    # An app that serves its own models (deep-research) stops them too, unless kept.
+    model_bundles = getattr(launcher, "model_bundles", None)
+    if keep_models and model_bundles is None:
+        raise TTError(
+            f"{launcher.id} has no models of its own to keep.",
+            why="--keep-models is for an app that serves its own models.",
+            next_step="Drop --keep-models.",
+            exit_code=ExitCode.USAGE,
+        )
+    # Never installed just to find out it is not running.
+    managed = hasattr(launcher, "managed_tool")
+    executable = _installed_or_none(appctx, launcher) if managed else _resolve(appctx, launcher)
+    payload: dict = {"tool": launcher.id, "stopped": False}
+    running = state(executable, appctx.runner) == "running"
+    if model_bundles and not keep_models and not running:  # its models may outlive the app
+        running = bool(model_bundles(_running_bundles(appctx), executable, appctx.runner))
+    if not running:
         appctx.output.status(f"{launcher.target()} is not running.")
-        appctx.output.emit({"tool": launcher.id, "stopped": False}, renderer=lambda _: None)
-        return
-    launcher.stop(LaunchEnv(executable, appctx.runner, appctx.output))
-    appctx.output.status(f"Stopped {launcher.target()}; its data is kept.")
-    appctx.output.emit({"tool": launcher.id, "stopped": True}, renderer=lambda _: None)
+    else:
+        env = LaunchEnv(executable or _resolve(appctx, launcher), appctx.runner, appctx.output)
+        if model_bundles:
+            launcher.stop(env, keep_models=keep_models)
+        else:
+            launcher.stop(env)
+        if not getattr(launcher, "reports_itself", False):  # else it said so already
+            appctx.output.status(f"Stopped {launcher.target()}; its data is kept.")
+        payload["stopped"] = True
+    appctx.output.emit(payload, renderer=lambda _: None)
 
 
 @launch_app.command("disconnect", no_args_is_help=True)
@@ -427,7 +642,7 @@ def disconnect(
     appctx = get_app_context(ctx)
     appctx.output.apply_flags(json_mode=json_mode, quiet=quiet, verbose=verbose, no_color=no_color)
     launcher = _launcher(tool)
-    executable = _installed_or_none(launcher, appctx.config, appctx.output)
+    executable = _installed_or_none(appctx, launcher)
     plan = launcher.disconnect_plan(executable, appctx.runner)
     payload = {
         "tool": launcher.id,
@@ -486,7 +701,9 @@ def _renderer(payload: dict) -> Group:
     table.add_row("model", model)
     table.add_row("endpoint", payload["base_url"])
     table.add_row("tool-call parser", payload["tool_call_parser"] or "—")
-    for key in ("container", "image", "endpoint_in_container"):
+    for key in (
+        "container", "image", "endpoint_in_container", "serve", "checkout", "recipe", "app"
+    ):
         if payload.get(key):
             table.add_row(key.replace("_", " "), payload[key])
     if payload["config_path"]:

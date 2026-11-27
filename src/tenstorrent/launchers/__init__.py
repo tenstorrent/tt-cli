@@ -3,10 +3,11 @@
 
 """Adapters that point an OpenAI-compatible client at a served model.
 
-Two shapes, both described by launchers/base.py: a client already installed on
+Three shapes, all described by launchers/base.py: a client already installed on
 the machine, which tt configures and hands the terminal to (opencode, pi,
 aider, qwencode, etc.), and one tt runs as a container, which needs consent (openwebui,
-anythingllm — see launchers/container.py). One module per client in apps/;
+anythingllm — see launchers/container.py). deep-research is a third: an app tt
+starts from the user's own checkout. One module per client in apps/;
 this registry is the only place that has to change to add one.
 """
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 from .apps.aider import Aider
 from .apps.anythingllm import AnythingLLM
+from .apps.deep_research import DeepResearch
 from .apps.hermes import Hermes
 from .apps.opencode import OpenCode
 from .apps.openwebui import OpenWebUI
@@ -31,6 +33,7 @@ LAUNCHERS: dict[str, Launcher] = {
         Hermes(),
         OpenWebUI(),
         AnythingLLM(),
+        DeepResearch(),
     )
 }
 

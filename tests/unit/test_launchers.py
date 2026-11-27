@@ -4,6 +4,7 @@
 import json
 import os
 import socket
+from pathlib import Path
 
 import pytest
 
@@ -277,7 +278,7 @@ def test_opencode_plan_has_no_side_effects(tmp_path, monkeypatch):
     prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
     assert prep.config is not None
     assert prep.config.created is True
-    assert not prep.config.path.exists()  # planning writes nothing
+    assert not prep.config.path.exists()
     assert prep.config.block["options"]["baseURL"] == model.base_url
     # Editing a file tt does not own is asked about, and the question names it.
     assert prep.consent and str(prep.config.path) in prep.consent
@@ -442,31 +443,149 @@ def test_aider_configures_by_environment_and_writes_nothing(tmp_path, monkeypatc
     assert list(home.iterdir()) == []
 
 
-def test_qwencode_passes_everything_on_the_command_line_and_writes_nothing(
-    tmp_path, monkeypatch
-):
+_QWEN_ARGV = [
+    "qwen",
+    "--auth-type",
+    "openai",
+    "--openai-api-key",
+    "tt-local",
+    "--openai-base-url",
+    "http://127.0.0.1:8000/v1",
+    "--model",
+    "Qwen/Qwen3-32B",
+]
+
+
+def test_qwencode_writes_nothing_without_a_served_window(tmp_path, monkeypatch):
+    """The CLI flags reach the model on their own; with no window to size, the
+    user's settings are not worth touching."""
     home = tmp_path / "qwencode-home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     launcher = LAUNCHERS["qwencode"]
     model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
     prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
-    assert prep.config is None
+    assert prep.config is None and prep.consent is None
     assert prep.env == {}
-    assert prep.steps == [
-        [
-            "qwen",
-            "--auth-type",
-            "openai",
-            "--openai-api-key",
-            "tt-local",
-            "--openai-base-url",
-            "http://127.0.0.1:8000/v1",
-            "--model",
-            "Qwen/Qwen3-32B",
-        ]
-    ]
+    assert prep.steps == [_QWEN_ARGV]
+    launcher.apply(model, prep, LaunchEnv("/usr/bin/qwen", None, None))
     assert list(home.iterdir()) == []
+
+
+def test_qwencode_entry_matches_its_documented_shape(tmp_path, monkeypatch):
+    """Shape from Qwen Code's docs/configuration/model-providers.md: a bare
+    ModelConfig[] per auth type, limits under generationConfig."""
+    home = tmp_path / "qwencode-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    launcher = LAUNCHERS["qwencode"]
+    model = RunningModel(
+        served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1", max_context=131072
+    )
+    prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    assert prep.config is not None
+    assert prep.config.created is True
+    assert not prep.config.path.exists()
+    assert prep.config.path == home / ".qwen" / "settings.json"
+    assert prep.consent and str(prep.config.path) in prep.consent
+    assert prep.steps == [_QWEN_ARGV]
+    entry = prep.config.block
+    assert entry["id"] == "Qwen/Qwen3-32B"
+    assert entry["baseUrl"] == model.base_url
+    assert entry["generationConfig"] == {
+        "contextWindowSize": 131072,
+        "samplingParams": {"max_tokens": 32768},
+    }
+    assert "envKey" not in entry
+
+    launcher.apply(model, prep, LaunchEnv("/usr/bin/qwen", None, None))
+    doc = json.loads(prep.config.path.read_text())
+    assert doc == {"modelProviders": {"openai": [entry]}}
+    again = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    assert again.consent is None and again.config.created is False
+
+
+def test_qwencode_merges_by_id_and_base_url(tmp_path, monkeypatch):
+    """Qwen Code identifies a model by id and baseUrl, so a re-launch replaces its
+    own entry and leaves the user's other models and providers alone."""
+    home = tmp_path / "qwencode-home"
+    (home / ".qwen").mkdir(parents=True)
+    (home / ".qwen" / "settings.json").write_text(
+        json.dumps(
+            {
+                "ui": {"theme": "Dark"},
+                "modelProviders": {
+                    "openai": [
+                        {"id": "gpt-4o", "envKey": "OPENAI_API_KEY"},
+                        {
+                            "id": "Qwen/Qwen3-32B",
+                            "baseUrl": "http://127.0.0.1:8000/v1",
+                            "description": "added by tt launch",
+                            "generationConfig": {"contextWindowSize": 4096},
+                        },
+                        {"id": "Qwen/Qwen3-32B", "baseUrl": "http://elsewhere:8000/v1"},
+                    ],
+                    "anthropic": [{"id": "claude"}],
+                },
+            }
+        )
+    )
+    monkeypatch.setenv("HOME", str(home))
+    launcher = LAUNCHERS["qwencode"]
+    model = RunningModel(
+        served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1", max_context=131072
+    )
+    prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    assert prep.consent and prep.consent.startswith("Update ")
+    entries = prep.config.document["modelProviders"]["openai"]
+    assert [(e["id"], e.get("baseUrl")) for e in entries] == [
+        ("gpt-4o", None),
+        ("Qwen/Qwen3-32B", "http://elsewhere:8000/v1"),
+        ("Qwen/Qwen3-32B", "http://127.0.0.1:8000/v1"),
+    ]
+    assert entries[-1]["generationConfig"]["contextWindowSize"] == 131072
+    assert prep.config.document["modelProviders"]["anthropic"] == [{"id": "claude"}]
+    assert prep.config.document["ui"] == {"theme": "Dark"}
+
+
+def test_qwencode_refuses_a_provider_block_it_does_not_recognise(tmp_path, monkeypatch):
+    """The wrapped {protocol, models} form is one Qwen Code itself skips; tt must
+    not silently replace it with a list."""
+    home = tmp_path / "qwencode-home"
+    (home / ".qwen").mkdir(parents=True)
+    (home / ".qwen" / "settings.json").write_text(
+        json.dumps({"modelProviders": {"openai": {"protocol": "openai", "models": []}}})
+    )
+    monkeypatch.setenv("HOME", str(home))
+    model = RunningModel(
+        served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1", max_context=131072
+    )
+    with pytest.raises(TTError) as err:
+        LAUNCHERS["qwencode"].plan(model, LaunchOptions(), executable=None, runner=None)
+    assert err.value.exit_code == ExitCode.CONFIG
+    assert LAUNCHERS["qwencode"].disconnect_plan(None, None) is None
+
+
+def test_qwencode_disconnect_removes_only_its_own_entries(tmp_path, monkeypatch):
+    home = tmp_path / "qwencode-home"
+    monkeypatch.setenv("HOME", str(home))
+    launcher = LAUNCHERS["qwencode"]
+    assert launcher.disconnect_plan(None, None) is None
+    model = RunningModel(
+        served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1", max_context=131072
+    )
+    prep = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    doc = prep.config.document
+    doc["modelProviders"]["openai"].insert(0, {"id": "gpt-4o", "envKey": "OPENAI_API_KEY"})
+    doc["ui"] = {"theme": "Dark"}
+    launcher.apply(model, prep, LaunchEnv("/usr/bin/qwen", None, None))
+
+    assert "modelProviders.openai" in (launcher.disconnect_plan(None, None) or "")
+    launcher.disconnect(LaunchEnv("/usr/bin/qwen", None, None))
+    doc = json.loads(prep.config.path.read_text())
+    assert doc["modelProviders"]["openai"] == [{"id": "gpt-4o", "envKey": "OPENAI_API_KEY"}]
+    assert doc["ui"] == {"theme": "Dark"}
+    assert launcher.disconnect_plan(None, None) is None
 
 
 def test_anythingllm_pins_the_model_because_it_has_no_discovery():
@@ -633,3 +752,222 @@ def test_hermes_web_moves_to_the_next_free_port_unless_pinned(monkeypatch):
     pinned = plan(LaunchOptions(web=True, web_port=3000, web_port_pinned=True))
     assert pinned.url == "http://localhost:3000"
 
+
+
+# -- deep-research: an app tt installs, run from its own home folder --------------
+RECIPES = json.loads(
+    (Path(__file__).parents[1] / "fakes" / "data" / "ttdr_recipes.json").read_text()
+)
+SEPARATE = RECIPES[0]["bundles"]
+COHOST = "raahemnabeel/cohost-ornith-35b-qwen3vl"
+deep_research = LAUNCHERS["deep-research"]
+
+
+@pytest.fixture(autouse=True)
+def ttdr_home(tmp_path, monkeypatch):
+    home = tmp_path / ".tt-deep-research"
+    monkeypatch.setenv("TTDR_HOME", str(home))
+    return home
+
+
+@pytest.fixture
+def nothing_answers(monkeypatch):
+    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.probe", lambda url, **_: None)
+
+
+class _Ttdr:
+    """`ttdr recipes --json`, and `docker ps` for the ttdr Compose project (one
+    service<TAB>working_dir per line)."""
+
+    def __init__(self, lines: str = "", returncode: int = 0):
+        self.lines, self.returncode, self.calls = lines, returncode, []
+
+    def capture(self, argv, **kwargs):
+        self.calls.append(list(argv))
+        if argv[1:] == ["recipes", "--json"]:
+            return CaptureResult(returncode=0, stdout=json.dumps(RECIPES), stderr="")
+        return CaptureResult(returncode=self.returncode, stdout=self.lines, stderr="")
+
+
+@pytest.fixture
+def with_docker(monkeypatch):
+    monkeypatch.setattr(
+        "tenstorrent.launchers.apps.deep_research.shutil.which",
+        lambda name, **_: "/usr/bin/docker" if name == "docker" else None,
+    )
+
+
+def _deep_research_plan(home, runner, recipe="recipes/cohost-ornith-35b.toml", serves=False):
+    return deep_research.plan(
+        RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1"),
+        LaunchOptions(home=home, recipe=recipe, serves_models=serves, hf_home=Path("/hf-cache")),
+        executable="/usr/bin/ttdr",
+        runner=runner,
+    )
+
+
+def test_deep_research_reads_its_recipes_from_ttdr(ttdr_home):
+    runner = _Ttdr()
+    assert deep_research.recipes("/usr/bin/ttdr", runner) == RECIPES
+    assert runner.calls == [["/usr/bin/ttdr", "recipes", "--json"]]
+
+
+@pytest.mark.parametrize(
+    ("bundles", "recipe"),
+    [(SEPARATE, "ornith-35b"), ([COHOST, "other/bundle"], "cohost-ornith-35b")],
+)
+def test_deep_research_uses_the_recipe_whose_bundles_are_running(ttdr_home, bundles, recipe):
+    ttdr_home.mkdir()
+    (ttdr_home / ".env").write_text("TTDR_RECIPE=recipes/cohost-ornith-35b.toml\n")
+    choice = deep_research.choose(RECIPES, None, bundles)
+    assert (choice.recipe["name"], choice.serves_models) == (recipe, False)
+
+
+def test_deep_research_asks_which_when_several_recipes_fit_what_is_running(ttdr_home):
+    """Two listed recipes use the cohost bundle: the one the app last started with settles
+    it; without that, tt asks rather than guess."""
+    with pytest.raises(TTError) as err:
+        deep_research.choose(RECIPES, None, [COHOST])
+    assert err.value.exit_code == ExitCode.USAGE
+    assert "cohost-ornith-35b-sandboxed-python, cohost-ornith-35b" in err.value.why
+    ttdr_home.mkdir()
+    (ttdr_home / ".env").write_text("TTDR_RECIPE=recipes/cohost-ornith-35b-sandboxed-python.toml\n")
+    assert deep_research.choose(RECIPES, None, [COHOST]).recipe["name"] == (
+        "cohost-ornith-35b-sandboxed-python"
+    )
+
+
+def test_deep_research_serves_the_default_or_the_named_recipe_on_a_free_board(nothing_answers):
+    assert deep_research.choose(RECIPES, None, []).recipe["name"] == "ornith-35b"
+    assert deep_research.choose(RECIPES, "default", []).recipe["name"] == "ornith-35b"
+    choice = deep_research.choose(RECIPES, "cohost-ornith-35b", [])
+    assert (choice.recipe["name"], choice.serves_models) == ("cohost-ornith-35b", True)
+    assert deep_research.choose(RECIPES, "recipes/rerank-qwen3-vl.toml", []).recipe["name"] == (
+        "rerank-qwen3-vl"
+    )
+
+
+def test_deep_research_says_what_to_stop_when_other_models_hold_the_board(nothing_answers):
+    with pytest.raises(TTError) as err:
+        deep_research.choose(RECIPES, None, ["someone/else"])
+    assert err.value.exit_code == ExitCode.ERROR
+    assert "`tt model stop someone/else`" in err.value.next_step
+    assert "--list-recipes" in err.value.next_step
+
+
+def test_deep_research_offers_the_recipe_that_fits_what_is_running(nothing_answers):
+    with pytest.raises(TTError) as err:
+        deep_research.choose(RECIPES, "cohost-ornith-35b", SEPARATE)
+    assert f"`tt model stop {' '.join(SEPARATE)}`" in err.value.next_step
+    assert "`tt launch deep-research --recipe ornith-35b`" in err.value.next_step
+
+
+def test_deep_research_never_serves_over_another_server_on_a_cohost_port(monkeypatch):
+    other = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    monkeypatch.setattr(
+        "tenstorrent.launchers.apps.deep_research.probe",
+        lambda url, **_: [other] if ":8000/" in url else None,
+    )
+    with pytest.raises(TTError) as err:
+        deep_research.choose(RECIPES, "cohost-ornith-35b", [])
+    assert "Qwen/Qwen3-32B" in err.value.why
+    # A bundle of its own: ttdr up moves it to the next free port.
+    assert deep_research.choose(RECIPES, None, []).serves_models
+
+
+def test_deep_research_names_its_recipes_when_one_is_unknown():
+    with pytest.raises(TTError) as err:
+        deep_research.choose(RECIPES, "nope", [])
+    assert err.value.exit_code == ExitCode.USAGE
+    assert "ornith-35b, cohost-ornith-35b-sandboxed-python, cohost-ornith-35b" in err.value.why
+
+
+def test_deep_research_lists_each_described_recipe_and_what_it_serves():
+    rows = {r["recipe"]: r for r in deep_research.listed(RECIPES)}
+    # rerank-qwen3-vl has no description
+    assert list(rows) == ["ornith-35b", "cohost-ornith-35b-sandboxed-python", "cohost-ornith-35b"]
+    assert rows["ornith-35b"]["default"] is True
+    assert rows["ornith-35b"]["serves"] == (
+        "Ornith-1.5-35B-A3B (chips 0-1), Qwen3-VL-Embedding-8B (chip 2), "
+        "Qwen3-VL-Reranker-8B (chip 3)"
+    )
+    assert rows["cohost-ornith-35b"]["serves"].startswith("one bundle on chips 0-3: ")
+
+
+def test_deep_research_can_start_only_on_a_free_board(nothing_answers):
+    assert deep_research.can_start(RECIPES, [])
+    assert not deep_research.can_start(RECIPES, ["someone/else"])
+
+
+def test_deep_research_model_bundles_are_only_its_own():
+    assert deep_research.model_bundles([COHOST, "someone/else"], "/usr/bin/ttdr", _Ttdr()) == [COHOST]
+    assert deep_research.model_bundles([COHOST], None, None) == []
+
+
+def test_deep_research_home_is_ttdr_home_else_its_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("TTDR_HOME", raising=False)
+    assert deep_research.home() == tmp_path / ".tt-deep-research"
+    monkeypatch.setenv("TTDR_HOME", str(tmp_path / "elsewhere"))
+    assert deep_research.home() == tmp_path / "elsewhere"
+
+
+def test_deep_research_waits_until_every_model_of_its_recipe_answers(monkeypatch):
+    model = RunningModel(served_id="m", base_url="http://127.0.0.1:8000/v1")
+    monkeypatch.setattr(
+        "tenstorrent.launchers.apps.deep_research.probe",
+        lambda url, **_: None if ":8004/" in url else [model],
+    )
+    with pytest.raises(TTError) as err:
+        deep_research.served_llm(RECIPES[0])
+    assert "Qwen3-VL-Reranker-8B" in err.value.what
+    assert "tt model logs raahemnabeel/qwen3-vl-reranker-8b" in err.value.next_step
+    monkeypatch.setattr("tenstorrent.launchers.apps.deep_research.probe", lambda url, **_: [model])
+    assert deep_research.served_llm(RECIPES[0]) == model
+
+
+def test_deep_research_plans_ttdr_up_and_asks_first(ttdr_home, with_docker, monkeypatch):
+    for serves in (False, True):
+        prep = _deep_research_plan(ttdr_home, _Ttdr(), serves=serves)
+        assert prep.steps == [
+            ["/usr/bin/ttdr", "up", "--recipe", "recipes/cohost-ornith-35b.toml"]
+        ]
+        assert prep.env == {"TTDR_HOME": str(ttdr_home), "HF_HOME": "/hf-cache"}
+        assert ("serves the recipe's models" in prep.consent) is serves
+    assert prep.url == "http://localhost:3000"
+    assert prep.rows["home"] == str(ttdr_home)
+
+
+def test_deep_research_already_running_on_the_same_recipe_does_nothing(
+    ttdr_home, with_docker, monkeypatch
+):
+    ttdr_home.mkdir()
+    (ttdr_home / ".env").write_text("KEY=1\nTTDR_RECIPE=recipes/cohost-ornith-35b.toml\n")
+    running = _Ttdr(f"engine\t{ttdr_home}\nui-deepagents\t{ttdr_home}\nqdrant\t{ttdr_home}\n")
+    prep = _deep_research_plan(ttdr_home, running)
+    assert prep.steps == [] and prep.consent is None
+    assert prep.url == "http://localhost:3000"
+    # Started with another recipe: `ttdr up` again, which recreates what changed.
+    prep = _deep_research_plan(ttdr_home, running, recipe="recipes/rerank-qwen3-vl.toml")
+    assert prep.steps[0][-1] == "recipes/rerank-qwen3-vl.toml"
+
+
+def test_deep_research_url_is_where_ttdr_put_the_ui(ttdr_home, with_docker):
+    (ttdr_home / "data").mkdir(parents=True)
+    (ttdr_home / "data" / "ports.json").write_text('{"ui": 3002, "api": 8200}')
+    assert _deep_research_plan(ttdr_home, _Ttdr()).url == "http://localhost:3002"
+
+
+def test_deep_research_state_counts_only_app_services(with_docker):
+    """Data services (Qdrant, Redis, SearXNG) outlive `ttdr down`, so they alone
+    do not make the app running."""
+    assert deep_research.container_state(None, _Ttdr("qdrant\t/x\nredis\t/x\n")) == "absent"
+    assert deep_research.container_state(None, _Ttdr("engine\t/x\n")) == "running"
+    assert deep_research.container_state(None, _Ttdr("", returncode=1)) == "unknown"
+
+
+def test_deep_research_state_is_unknown_without_docker(monkeypatch):
+    monkeypatch.setattr(
+        "tenstorrent.launchers.apps.deep_research.shutil.which", lambda name, **_: None
+    )
+    assert deep_research.container_state(None, None) == "unknown"

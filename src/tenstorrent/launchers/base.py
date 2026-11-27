@@ -57,6 +57,11 @@ class LaunchOptions:
     web_port: int = DEFAULT_WEB_PORT
     web_port_pinned: bool = False  # the user named the port, so it is never moved
     web: bool = False  # open the client's web UI instead of its terminal UI
+    home: Path | None = None  # for an app that keeps its files in its own folder
+    recipe: str | None = None  # that app's recipe, relative to its folder
+    serves_models: bool = False  # no model is running: the app serves its own
+    hf_home: Path | None = None  # tt's model cache, where that app stages files for `tt serve`
+    aiq: bool = False  # deep-research: also run AI-Q's harness beside Deep Agents
 
 
 @dataclass(frozen=True)

@@ -266,7 +266,7 @@ def test_launch_list_reports_the_real_clients(runner):
     for row in rows:
         assert set(row) == {
             "tool", "kind", "requires_tool_calling", "configures",
-            "needs", "available", "container_state",
+            "needs", "model", "available", "container_state",
         }
         assert row["kind"] in ("terminal", "web service")
         assert isinstance(row["available"], bool)
