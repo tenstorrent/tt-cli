@@ -30,7 +30,7 @@ UI_PORT = 3000  # ttdr moves it to the next free port when another program holds
 LIST_HINT = "`tt launch deep-research --list-recipes` shows every recipe."
 _COMPOSE = "com.docker.compose"
 _PROJECT = "ttdr"
-# What `ttdr down` stops; its data services (Qdrant, SearXNG, Redis) keep running.
+# The app's own services: its data services (Qdrant, SearXNG, Redis) alone don't mean it's up.
 _APP_SERVICES = frozenset({"engine", "aiq", "ui", "deepagents", "ui-deepagents", "ocr"})
 
 
