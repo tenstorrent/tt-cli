@@ -13,7 +13,8 @@ the variables `hermes --tui --provider/--model` itself sets, since a provider
 saved in config.yaml would otherwise outrank HERMES_INFERENCE_PROVIDER.
 
 Tenstorrent look: the terminal skin (`skins/`) is installed for every launch and the
-dashboard theme (`dashboard-themes/`) for --web. Each is made active through
+dashboard theme (`dashboard-themes/`) for --web. Both are bundled in
+`launchers/configs/hermes/`, laid out like the Hermes home. Each is made active through
 `hermes config set`, never by editing config.yaml, and only while the user is still
 on Hermes's shipped default. A skin or theme the user picked is never overridden.
 """
@@ -42,13 +43,13 @@ def _hermes_home() -> Path:
 class _Look:
     """A bundled Hermes appearance: where it is installed and the setting that selects it."""
 
-    package_dir: str  # directory under launchers/apps holding tenstorrent.yaml
-    hermes_dir: str  # directory under the Hermes home that Hermes scans
+    # Directory Hermes scans under its home, and the same path under configs/hermes/.
+    hermes_dir: str
     config_key: str
 
 
-_SKIN = _Look("hermes_skin", "skins", "display.skin")
-_THEME = _Look("hermes_theme", "dashboard-themes", "dashboard.theme")
+_SKIN = _Look("skins", "display.skin")
+_THEME = _Look("dashboard-themes", "dashboard.theme")
 
 
 class Hermes:
@@ -103,7 +104,9 @@ class Hermes:
     def _adopt(self, look: _Look, env: LaunchEnv) -> None:
         """Install the look, and make it active unless the user already chose another.
         Cosmetic, so nothing here may block the launch."""
-        source = resources.files(__package__).joinpath(look.package_dir, f"{_NAME}.yaml")
+        source = resources.files("tenstorrent.launchers").joinpath(
+            "configs", "hermes", look.hermes_dir, f"{_NAME}.yaml"
+        )
         target = _hermes_home() / look.hermes_dir / f"{_NAME}.yaml"
         try:
             content = source.read_bytes()
