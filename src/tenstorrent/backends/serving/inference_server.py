@@ -16,7 +16,6 @@ import re
 import secrets
 import shutil
 import sys
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -244,16 +243,31 @@ class ServerContainer:
 def parse_inspect_records(stdout: str) -> list[dict]:
     """`docker inspect` records out of one capture, in whichever shape it printed.
 
-    Docker honours `--format '{{json .}}'` and emits one JSON object per line. Podman
-    ignores that format string for `inspect` and pretty-prints a single multi-line
-    array, so a line-by-line read can yield bare scalars (a weights repo quoted on a
-    line of its own, a bare integer) as well as objects. Only dicts are records: a
-    scalar reaching a caller is an AttributeError on `.get`, which is how `tt model
-    stop` used to die on podman. Falls back to reading the whole output as one array,
-    which is what a pretty-printed record set is.
+    Whole output first. Podman ignores `--format '{{json .}}'` for `inspect` and
+    pretty-prints one multi-line JSON array (or a single object), so the complete text
+    is the authoritative document — and it has to be tried first: an inner line can be
+    a complete object on its own, e.g. an empty `{}` as the last element of a nested
+    array, and a line-by-line read would return that `{}` and lose the real record.
+
+    Docker honours the format string and emits one JSON object per line, which is not
+    one JSON document; that fails to parse as a whole and falls through to the
+    per-line read. Either way only dicts are records: a scalar reaching a caller is an
+    AttributeError on `.get`, which is how `tt model stop` used to die on podman.
     """
+    text = stdout.strip()
+    if not text:
+        return []
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        pass
+    else:
+        if isinstance(doc, dict):
+            return [doc]
+        if isinstance(doc, list):
+            return [d for d in doc if isinstance(d, dict)]
     records: list[dict] = []
-    for line in stdout.splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -263,11 +277,6 @@ def parse_inspect_records(stdout: str) -> list[dict]:
             continue
         if isinstance(doc, dict):
             records.append(doc)
-    if not records and stdout.strip():
-        with suppress(ValueError):
-            doc = json.loads(stdout)
-            if isinstance(doc, list):
-                records = [d for d in doc if isinstance(d, dict)]
     return records
 
 
