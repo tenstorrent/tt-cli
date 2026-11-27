@@ -79,6 +79,10 @@ To rehearse without publishing anything, run the workflow manually from the Acti
 tab; it builds and validates the same artifacts, and optionally uploads them to
 TestPyPI.
 
+Features that need real users before a stable release ship as betas from a shared
+`beta/<version>` branch, so they never reach a stable release until they merge into
+`main`. See [docs/beta-releases.md](docs/beta-releases.md).
+
 ## Coding Standards
 
 - New and modified code files must carry an SPDX header:

@@ -25,6 +25,38 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # ── No beta versions on main ───────────────────────────────────────────────
+  # A beta/<version> branch carries a beta __version__ (1.3.0b1). Graduating the
+  # feature merges that branch into main, and the version has to be reset first, or
+  # main would start building betas. Skipped for every other event, including the
+  # release.yml call (whose event is the caller's tag push).
+  version-guard:
+    name: no beta version on main
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - name: Check __version__ is not an alpha or beta
+        run: |
+          python3 -m pip install --quiet packaging
+          python3 - <<'PY'
+          import pathlib, re
+          from packaging.version import Version
+          source = pathlib.Path("src/tenstorrent/__init__.py").read_text()
+          raw = re.search(r'__version__ = "([^"]+)"', source).group(1)
+          version = Version(raw)
+          if version.pre is not None and version.pre[0] in ("a", "b"):
+              print(f"::error::__version__ is {raw}, an alpha/beta version, on a PR into main")
+              raise SystemExit(
+                  "Reset __version__ in src/tenstorrent/__init__.py to main's value "
+                  "before merging a beta branch (see docs/beta-releases.md)."
+              )
+          print(f"__version__ {raw} is fine for main")
+          PY
+
   # ── Cross-distro, hardware-free ────────────────────────────────────────────
   # The default (fake-tool) suite, run on every distro we want `tt` to support.
   # No TT hardware, config, or network is touched — every tool is a stand-in
