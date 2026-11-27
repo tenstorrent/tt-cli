@@ -23,11 +23,10 @@ from pathlib import Path
 
 from ...errors import ExitCode, TTError
 from ..base import LaunchEnv, LaunchOptions, Preparation, RunningModel
-from ..container import port_is_free
 from ..discovery import probe
 
 DEFAULT_HOME = "~/.tt-deep-research"
-UI_PORT = 3000
+UI_PORT = 3000  # ttdr moves it to the next free port when another program holds it
 LIST_HINT = "`tt launch deep-research --list-recipes` shows every recipe."
 _COMPOSE = "com.docker.compose"
 _PROJECT = "ttdr"
@@ -157,21 +156,12 @@ class DeepResearch:
         assert options.home is not None and options.recipe is not None
         home, recipe = options.home, options.recipe
         rows = {"home": str(home), "recipe": recipe}
-        url = f"http://localhost:{UI_PORT}"
+        url = f"http://localhost:{self._ui_port(home)}"
         services = self._running(runner) or {}
         running = bool(services)
         same = running and self._started_with(home) == Path(recipe)
         if same and (not options.aiq or "aiq" in services):
             return Preparation(rows={**rows, "app": "already running"}, url=url)
-        if not running and not port_is_free(UI_PORT):
-            raise TTError(
-                f"Host port {UI_PORT} is already in use.",
-                why=f"deep-research's web UI always binds {UI_PORT}.",
-                next_step="Free it (`tt launch stop openwebui`, say, if a web UI tt "
-                "launched holds it), then re-run.",
-                exit_code=ExitCode.CONFIG,
-                details={"web_port": UI_PORT},
-            )
         exe = executable or self.binaries[0]
         env = {"TTDR_HOME": str(home)}
         if options.hf_home:  # the model cache `tt serve` mounts at /hf; ttdr stages templates there
@@ -274,10 +264,13 @@ class DeepResearch:
 
     def _conflicts(self, recipe: dict, bundles: list[str]) -> tuple[list[str], str | None]:
         """What keeps `ttdr up` from serving the recipe: other running bundles (they hold
-        chips), or another model on a port one of its models needs."""
+        chips), or another model on the port of a cohost bundle (ttdr moves a bundle of
+        its own to the next free port, but not a cohost's models)."""
         others = [b for b in bundles if b not in recipe["bundles"]]
+        hosts = {m["cohosted_with"] for m in recipe["models"]}
         for model in recipe["models"]:
-            if model["cohosted_with"] or model["bundle"] in bundles:
+            movable = model["bundle"] and model["name"] not in hosts
+            if movable or model["cohosted_with"] or model["bundle"] in bundles:
                 continue
             serving = self._serving(model)
             if serving and serving != model["model"]:
@@ -334,6 +327,13 @@ class DeepResearch:
         return {
             row[0]: row[1] for row in rows if len(row) == 2 and row[0] in _APP_SERVICES
         }
+
+    def _ui_port(self, home: Path) -> int:
+        """Where the UI listens: the port `ttdr up` recorded in data/ports.json."""
+        try:
+            return int(json.loads((home / "data" / "ports.json").read_text())["ui"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return UI_PORT
 
     def _started_with(self, home: Path) -> Path | None:
         """The recipe the app was last started with: `ttdr up` records it in .env."""
