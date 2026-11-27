@@ -324,6 +324,11 @@ def _connect_recipe(
         "--list-recipes",
         help="Show every recipe; on a terminal, pick one to start.",
     ),
+    aiq: bool = typer.Option(
+        False,
+        "--aiq",
+        help="Also run AI-Q's own harness beside Deep Agents (its UI on :3001).",
+    ),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Skip the confirmation prompt."
     ),
@@ -385,6 +390,7 @@ def _connect_recipe(
         recipe=choice.recipe["path"],
         serves_models=choice.serves_models,
         hf_home=hf_home_dir(appctx.config),
+        aiq=aiq,
     )
     _start(
         appctx, launcher, target, options, executable,

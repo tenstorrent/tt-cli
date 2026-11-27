@@ -158,8 +158,10 @@ class DeepResearch:
         home, recipe = options.home, options.recipe
         rows = {"home": str(home), "recipe": recipe}
         url = f"http://localhost:{UI_PORT}"
-        running = self.container_state(executable, runner) == "running"
-        if running and self._started_with(home) == Path(recipe):
+        services = self._running(runner) or {}
+        running = bool(services)
+        same = running and self._started_with(home) == Path(recipe)
+        if same and (not options.aiq or "aiq" in services):
             return Preparation(rows={**rows, "app": "already running"}, url=url)
         if not running and not port_is_free(UI_PORT):
             raise TTError(
@@ -174,15 +176,17 @@ class DeepResearch:
         env = {"TTDR_HOME": str(home)}
         if options.hf_home:  # the model cache `tt serve` mounts at /hf; ttdr stages templates there
             env["HF_HOME"] = str(options.hf_home)
-        consent = f"Run `ttdr up --recipe {recipe}`, starting its app containers"
+        up = [exe, "up", "--recipe", recipe, *(["--aiq"] if options.aiq else [])]
+        shown = " ".join(["ttdr", *up[1:]])
+        consent = f"Run `{shown}`, starting its app containers"
         if options.serves_models:
             consent = (
-                f"Run `ttdr up --recipe {recipe}`: it serves the recipe's models "
+                f"Run `{shown}`: it serves the recipe's models "
                 "(10-15 minutes from cold) and starts its app containers"
             )
         return Preparation(
             rows=rows,
-            steps=[[exe, "up", "--recipe", recipe]],
+            steps=[up],
             consent=consent,
             url=url,
             env=env,

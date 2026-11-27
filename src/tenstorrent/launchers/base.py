@@ -61,6 +61,7 @@ class LaunchOptions:
     recipe: str | None = None  # that app's recipe, relative to its folder
     serves_models: bool = False  # no model is running: the app serves its own
     hf_home: Path | None = None  # tt's model cache, where that app stages files for `tt serve`
+    aiq: bool = False  # deep-research: also run AI-Q's harness beside Deep Agents
 
 
 @dataclass(frozen=True)

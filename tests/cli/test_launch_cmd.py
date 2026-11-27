@@ -1275,6 +1275,26 @@ def test_deep_research_already_running_is_not_restarted(runner, deep_research):
 
 
 @pytest.mark.fakes_only
+def test_deep_research_aiq_runs_up_with_it(runner, deep_research):
+    deep_research(COHOST)
+    deep_research.started_with("recipes/cohost-ornith-35b.toml")
+    result = runner.invoke(app, ["launch", "deep-research", "--aiq", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"] == [
+        "up", "--recipe", "recipes/cohost-ornith-35b.toml", "--aiq"
+    ]
+
+
+@pytest.mark.fakes_only
+def test_deep_research_aiq_adds_it_to_an_app_running_without(runner, deep_research):
+    deep_research(COHOST, app_running=True)  # ui-deepagents only
+    deep_research.started_with("recipes/cohost-ornith-35b.toml")
+    result = runner.invoke(app, ["launch", "deep-research", "--aiq", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"][-1] == "--aiq"
+
+
+@pytest.mark.fakes_only
 def test_stop_deep_research_runs_ttdr_down_where_it_was_started(runner, deep_research, monkeypatch):
     deep_research(COHOST, app_running=True)
     monkeypatch.setenv("TTDR_HOME", "/somewhere/else")
