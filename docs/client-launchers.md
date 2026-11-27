@@ -81,6 +81,7 @@ tt launch disconnect opencode        # undo the config tt wrote for a client
 | `--force` | Connect even if the model can't do tool calling |
 | `--recipe NAME` | deep-research only: the recipe to start (default: the one whose models are running, else `default`) |
 | `--list-recipes` | deep-research only: its recipes and what each serves on which chips; on a terminal, pick one to start |
+| `--aiq` | deep-research only: also run AI-Q's own harness beside Deep Agents (`ttdr up --aiq`), its UI on <http://localhost:3001> |
 
 > [!TIP]
 > Web UIs start on port 3000. If it's taken, tt picks the next free port and prints the URL. TT Studio's web UI also wants port 3000 but doesn't move when it's taken, so if you use Studio, start it before any `tt launch` web UI.
