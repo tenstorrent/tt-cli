@@ -100,7 +100,7 @@ lazy = true
 kind = "uv-tool"
 package = "tt-deep-research"
 repo = "https://github.com/rnabeelTT/tt-deep-research"
-golden_version = "696084a954fa73551d62f5e638e209ad1fca5afa"
+golden_version = "9122313f998cf395f6ad03daac8da43980d1e806"
 bin = "ttdr"
 python = "3.12"
 # Only users who launch it need it.
