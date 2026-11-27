@@ -33,15 +33,15 @@ Its recipes say which models it serves and on which chips: `tt launch deep-resea
 
 ### Hermes on deep-research's tools
 
-The research engine is an MCP server, and the app ships Hermes skills for it, so Hermes can research with the same tools. Once `tt launch deep-research` is up, two commands give them to Hermes (`ttdr up` prints both, with the engine's actual port):
+The research engine is an MCP server, and the app ships Hermes skills for it, so Hermes can research with the same tools. Once `tt launch deep-research` is up, two commands give them to Hermes (`ttdr up` prints them and the launch command, with the engine's actual port):
 
 ```bash
 hermes config set mcp_servers.ttdr.url http://localhost:9901/mcp
-cp -r ~/.tt-deep-research/.hermes/skills ~/.hermes/
+hermes config set skills.external_dirs '["~/.tt-deep-research/.hermes/skills"]'
 tt launch hermes        # picks the recipe's LLM from the models it serves
 ```
 
-`qb2-deep-research` is the skill for cited research with those tools.
+`qb2-deep-research` is the skill for cited research with those tools. Hermes reads it from the app's folder, so it updates with the app.
 
 ## Terminal coding agents: you install them, tt configures them
 
