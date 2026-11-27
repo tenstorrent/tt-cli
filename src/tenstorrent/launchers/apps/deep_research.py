@@ -157,10 +157,12 @@ class DeepResearch:
         home, recipe = options.home, options.recipe
         rows = {"home": str(home), "recipe": recipe}
         url = f"http://localhost:{self._ui_port(home)}"
-        services = self._running(runner) or {}
-        running = bool(services)
-        same = running and self._started_with(home) == Path(recipe)
-        if same and (not options.aiq or "aiq" in services):
+        # Up already: this home's engine and a UI run (not a checkout's leftovers), its models
+        # serve, and it was started with this recipe.
+        ours = {s for s, d in (self._running(runner) or {}).items() if Path(d) == home}
+        up = "engine" in ours and bool(ours & {"ui", "ui-deepagents"}) and not options.serves_models
+        same = up and self._started_with(home) == Path(recipe)
+        if same and (not options.aiq or "aiq" in ours):
             return Preparation(rows={**rows, "app": "already running"}, url=url)
         exe = executable or self.binaries[0]
         env = {"TTDR_HOME": str(home)}
