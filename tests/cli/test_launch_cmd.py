@@ -573,8 +573,8 @@ def test_aider_passes_the_endpoint_in_the_environment(
 
 
 @pytest.mark.fakes_only
-def test_qwencode_passes_the_endpoint_as_cli_arguments(
-    runner, served, fake_client_named, execed
+def test_qwencode_passes_the_endpoint_as_cli_arguments_and_writes_its_limits(
+    runner, served, fake_client_named, execed, isolated_dirs
 ):
     exe = fake_client_named("qwencode")
     base = served("Qwen/Qwen3-32B")
@@ -593,6 +593,24 @@ def test_qwencode_passes_the_endpoint_as_cli_arguments(
             "Qwen/Qwen3-32B",
         ]
     ]
+    doc = json.loads((isolated_dirs / "home" / ".qwen" / "settings.json").read_text())
+    (entry,) = doc["modelProviders"]["openai"]
+    assert entry["id"] == "Qwen/Qwen3-32B" and entry["baseUrl"] == base
+    assert entry["generationConfig"] == {
+        "contextWindowSize": 131072,
+        "samplingParams": {"max_tokens": 32768},
+    }
+
+
+@pytest.mark.fakes_only
+def test_disconnect_qwencode_removes_its_entry(runner, served, fake_client_named, isolated_dirs):
+    fake_client_named("qwencode")
+    base = served("Qwen/Qwen3-32B")
+    assert runner.invoke(app, ["launch", "qwencode", "--url", base]).exit_code == 0
+    result = runner.invoke(app, ["launch", "disconnect", "qwencode"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads((isolated_dirs / "home" / ".qwen" / "settings.json").read_text())
+    assert doc["modelProviders"]["openai"] == []
 
 
 @pytest.mark.fakes_only

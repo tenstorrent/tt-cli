@@ -59,6 +59,39 @@ def test_mixed_board_types_are_none():
     assert infer_device_config(devs) is None
 
 
+# -- Galaxy chassis -------------------------------------------------------------------
+def _galaxy(count=32, board_type="tt-galaxy-wh L", board_id="0100035100000000"):
+    """example galaxy real shape: 32 asics, one board_type, and one board_id shared by
+    every asic — the whole chassis reports a single board."""
+    return [
+        DeviceSnapshot(index=i, board_type=board_type, board_id=board_id)
+        for i in range(count)
+    ]
+
+
+def test_galaxy_chassis_is_galaxy():
+    # Would be read as one board by the unique-board_id rule, so the chassis rule
+    # has to count asics instead.
+    assert infer_device_config(_galaxy()) == "galaxy"
+
+
+def test_blackhole_galaxy_chassis_is_blackhole_galaxy():
+    devs = _galaxy(board_type="tt-galaxy-bh L")
+    assert infer_device_config(devs) == "blackhole_galaxy"
+
+
+@pytest.mark.parametrize("count", [1, 4, 16, 31, 33])
+def test_partial_or_oversized_chassis_is_unmapped(count):
+    # Consistent with 3x p300: an unmapped count is None, so serve warns and asks
+    # for --device instead of passing a device run.py would fail on.
+    assert infer_device_config(_galaxy(count=count)) is None
+
+
+def test_galaxy_sharing_the_box_with_a_card_is_none():
+    devs = _galaxy() + [DeviceSnapshot(index=32, board_type="n150 L", board_id="a")]
+    assert infer_device_config(devs) is None
+
+
 # -- identifying a running server container -------------------------------------------
 def _identity(mounts):
     from tenstorrent.backends.serving.inference_server import _identity_from_inspect

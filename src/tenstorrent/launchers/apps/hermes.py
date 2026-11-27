@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""Hermes Agent adapter: OpenAI-compatible environment, nothing on disk.
+"""Hermes Agent adapter: OpenAI-compatible environment.
 
 `hermes chat` has no base-URL flag, and its `~/.hermes/config.yaml` is YAML that
 tt does not parse. `--provider openai` reads the endpoint and key from
@@ -11,14 +11,32 @@ With --web the same endpoint backs `hermes dashboard`, whose in-browser chat
 inherits the dashboard's environment. The provider and model are chosen through
 the variables `hermes --tui --provider/--model` itself sets, since a provider
 saved in config.yaml would otherwise outrank HERMES_INFERENCE_PROVIDER.
+
+For --web the Tenstorrent dashboard theme is dropped into Hermes's
+`dashboard-themes/` folder and made the active theme, but only while the user is
+still on Hermes's shipped default. A theme the user picked is never overridden.
+The active theme is set through `hermes config set`, never by editing config.yaml.
 """
 
 from __future__ import annotations
+
+import os
+from importlib import resources
+from pathlib import Path
 
 from ..base import LaunchEnv, LaunchOptions, Preparation, RunningModel, free_web_port
 
 _PLACEHOLDER_KEY = "tt-local"
 _PROVIDER = "openai"
+_THEME_FILE = "tenstorrent.yaml"
+_THEME_NAME = "tenstorrent"
+_THEME_KEY = "dashboard.theme"
+_SHIPPED_DEFAULT_THEMES = {"", "default"}
+
+
+def _theme_dir() -> Path:
+    home = os.environ.get("HERMES_HOME", "").strip()
+    return (Path(home).expanduser() if home else Path.home() / ".hermes") / "dashboard-themes"
 
 
 class Hermes:
@@ -65,7 +83,35 @@ class Hermes:
         )
 
     def apply(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
-        """Nothing on disk: the environment is applied at hand-off."""
+        """The environment is applied at hand-off; only the web dashboard gets the theme."""
+        if prep.url is None:
+            return
+        self._install_theme()
+        self._activate_theme(env)
+
+    def _install_theme(self) -> None:
+        theme = resources.files(__package__).joinpath("hermes_theme", _THEME_FILE).read_bytes()
+        target = _theme_dir() / _THEME_FILE
+        try:
+            if target.exists() and target.read_bytes() == theme:
+                return
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(theme)
+        except OSError:
+            pass  # cosmetic: an unwritable Hermes home must not block the launch
+
+    def _activate_theme(self, env: LaunchEnv) -> None:
+        """Make the theme active unless the user already chose another one."""
+        if not (_theme_dir() / _THEME_FILE).exists():
+            return
+        exe = env.executable
+        current = env.runner.capture([exe, "config", "get", _THEME_KEY], check=False, tool=self.id)
+        # `config get` exits non-zero when the key is unset.
+        value = current.stdout.strip() if current.returncode == 0 else ""
+        if value in _SHIPPED_DEFAULT_THEMES:
+            env.runner.capture(
+                [exe, "config", "set", _THEME_KEY, _THEME_NAME], check=False, tool=self.id
+            )
 
     def handoff(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
         argv = [env.executable, *prep.steps[0][1:]]
@@ -86,7 +132,7 @@ class Hermes:
         env.runner.stream([env.executable, "dashboard", "--stop"], tool=self.id)
 
     def disconnect_plan(self, executable: str | None, runner) -> str | None:
-        """Nothing persists, so there is never anything to undo."""
+        """Only the theme persists; it is cosmetic and switchable in the dashboard, so there is nothing to undo."""
         return None
 
     def disconnect(self, env: LaunchEnv) -> None:
