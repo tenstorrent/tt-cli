@@ -27,9 +27,9 @@ For these, tt pulls the image and starts the container itself, after asking you 
 
 | Client | Command | Prerequisites (install first) | Model must support | What tt runs |
 |---|---|---|---|---|
-| [tt-deep-research](https://github.com/rnabeelTT/tt-deep-research) | `tt launch deep-research` | git; Docker with Compose. Nothing else: tt installs the app | the models of its recipe (`--list-recipes`). With the board free, `ttdr up` serves them itself | its app containers (Compose project `ttdr`) with the UI at <http://localhost:3000>; `tt launch stop deep-research` runs `ttdr down`, keeping its data and the models (`--models` stops the model bundle too) |
+| [tt-deep-research](https://github.com/rnabeelTT/tt-deep-research) | `tt launch deep-research` | git; Docker with Compose. Nothing else: tt installs the app | the models of its recipe (`--list-recipes`). With the board free, `ttdr up` serves them itself | its app containers (Compose project `ttdr`) with the UI at <http://localhost:3000>; `tt launch stop deep-research` runs `ttdr down`: the app and its models stop, its data is kept (`--keep-models` leaves the models serving) |
 
-Its recipes say which models it serves and on which chips: `tt launch deep-research --list-recipes` lists them, with whether each can start now. tt uses the recipe whose tt-model bundles are running; with nothing running it asks which recipe to start (Enter takes `default`, three bundles on their own chips), or starts the one `--recipe <name>` names (`default` with `--yes` or without a terminal), and `ttdr up` serves its models (tt asks first: a cold start takes 10-15 minutes). It never serves over models it didn't start: if other bundles hold the chips, or another model answers on one of the recipe's ports, it says what to stop (`tt model stop ...`) and which recipe fits what is running instead. The cohost recipes need the cohost tt-model build (see the tt-deep-research README).
+Its recipes say which models it serves and on which chips: `tt launch deep-research --list-recipes` lists them. tt uses the recipe whose tt-model bundles are running; with nothing running it asks which recipe to start (Enter takes `default`, three bundles on their own chips), or starts the one `--recipe <name>` names (`default` with `--yes` or without a terminal), and `ttdr up` serves its models (tt asks first: a cold start takes 10-15 minutes). It never serves over models it didn't start: if other bundles hold the chips, or another model answers on one of the recipe's ports, it says what to stop (`tt model stop ...`) and which recipe fits what is running instead. The cohost recipes need the cohost tt-model build (see the tt-deep-research README).
 
 ## Terminal coding agents: you install them, tt configures them
 
@@ -63,9 +63,9 @@ tt launch list                       # every client, and whether it's usable now
 tt launch <client>                   # connect it to the model you're serving
 tt launch <client> --dry-run         # show what would be done, change nothing
 tt launch stop openwebui             # stop a web UI (or the Hermes dashboard); its data is kept
-tt launch deep-research --list-recipes   # its recipes, and whether each can start now
+tt launch deep-research --list-recipes   # its recipes and what each serves
 tt launch deep-research --recipe ornith-35b-cohost   # pick the recipe yourself
-tt launch stop deep-research --models  # stop the app and the model bundle it was using
+tt launch stop deep-research --keep-models  # stop the app, leave its models serving
 tt launch disconnect opencode        # undo the config tt wrote for a client
 ```
 
@@ -80,7 +80,7 @@ tt launch disconnect opencode        # undo the config tt wrote for a client
 | `--yes`, `-y` | Skip the confirmation prompt |
 | `--force` | Connect even if the model can't do tool calling |
 | `--recipe NAME` | deep-research only: the recipe to start (default: the one whose models are running, else `default`) |
-| `--list-recipes` | deep-research only: its recipes, what each serves on which chips, and whether it can start now; on a terminal, pick one to start |
+| `--list-recipes` | deep-research only: its recipes and what each serves on which chips; on a terminal, pick one to start |
 
 > [!TIP]
 > Web UIs start on port 3000. If it's taken, tt picks the next free port and prints the URL. TT Studio's web UI also wants port 3000 but doesn't move when it's taken, so if you use Studio, start it before any `tt launch` web UI.

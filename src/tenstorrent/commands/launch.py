@@ -322,7 +322,7 @@ def _connect_recipe(
     list_recipes: bool = typer.Option(
         False,
         "--list-recipes",
-        help="Show every recipe and whether it can start now; on a terminal, pick one to start.",
+        help="Show every recipe; on a terminal, pick one to start.",
     ),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Skip the confirmation prompt."
@@ -354,7 +354,7 @@ def _connect_recipe(
         not (yes or dry_run or appctx.output.json_mode or appctx.output.quiet) and _stdin_isatty()
     )
     if list_recipes:
-        rows = launcher.statuses(recipes, bundles, appctx.runner)
+        rows = launcher.listed(recipes)
         if not interactive:
             appctx.output.emit(rows, renderer=_recipes_renderer)
             return
@@ -363,13 +363,13 @@ def _connect_recipe(
             return
         yes = True  # picking one is the yes
     elif recipe is None and interactive:
-        rows = launcher.statuses(recipes, bundles, appctx.runner)
+        rows = launcher.listed(recipes)
         running = {r["name"] for r in launcher.running_recipes(recipes, bundles)}
         if len(running) > 1:  # several fit what is serving: which one
             recipe = _pick_recipe(appctx, [r for r in rows if r["recipe"] in running], optional=False)
             yes = True
         # Nothing running: a choice when one can start; otherwise choose() says what to stop.
-        elif not running and any(row["status"].startswith("can start") for row in rows):
+        elif not running and launcher.can_start(recipes, bundles):
             recipe = _pick_recipe(appctx, rows, optional=False)
             yes = True
     choice = launcher.choose(recipes, recipe, bundles)
@@ -395,7 +395,7 @@ def _connect_recipe(
 
 def _recipes_renderer(rows: list[dict], *, numbered: bool = False) -> Table:
     table = Table(title="deep-research recipes", show_header=True, header_style="bold")
-    columns = ("recipe", "serves", "status", "about")
+    columns = ("recipe", "serves", "about")
     for column in ("#", *columns) if numbered else columns:
         table.add_column(column, overflow="fold")
     for i, row in enumerate(rows, start=1):
@@ -451,7 +451,11 @@ def _start(
         if prep.consent:
             _ask(appctx, prep.consent, yes=yes)
         launcher.apply(target, prep, env)
-    appctx.output.emit(_payload(launcher, target, prep, acted=act), renderer=_renderer)
+    # An app that reported its own progress has already said where it is; the table would
+    # only repeat it. --json still gets the payload.
+    quiet = act and getattr(launcher, "reports_itself", False)
+    renderer = (lambda _: None) if quiet else _renderer
+    appctx.output.emit(_payload(launcher, target, prep, acted=act), renderer=renderer)
     if start:
         launcher.handoff(target, prep, env)
 
@@ -540,10 +544,10 @@ def _catalog_renderer(rows: list[dict]) -> Table:
 def stop(
     ctx: typer.Context,
     tool: str = typer.Argument(help="Client to stop.", autocompletion=complete_tool),
-    models: bool = typer.Option(
+    keep_models: bool = typer.Option(
         False,
-        "--models",
-        help="Also stop the model bundles it was using (deep-research).",
+        "--keep-models",
+        help="Leave the models it serves running (deep-research).",
     ),
     json_mode: JsonFlag = False,
     quiet: QuietFlag = False,
@@ -565,32 +569,33 @@ def stop(
             f"{launcher.id}` to undo its configuration.",
             exit_code=ExitCode.USAGE,
         )
+    # An app that serves its own models (deep-research) stops them too, unless kept.
     model_bundles = getattr(launcher, "model_bundles", None)
-    if models and model_bundles is None:
+    if keep_models and model_bundles is None:
         raise TTError(
-            f"{launcher.id} has no models of its own to stop.",
-            why="--models is for an app that chooses its own model bundles.",
-            next_step="Drop --models; `tt model stop <model>` stops a served model.",
+            f"{launcher.id} has no models of its own to keep.",
+            why="--keep-models is for an app that serves its own models.",
+            next_step="Drop --keep-models.",
             exit_code=ExitCode.USAGE,
         )
     # Never installed just to find out it is not running.
     managed = hasattr(launcher, "managed_tool")
     executable = _installed_or_none(appctx, launcher) if managed else _resolve(appctx, launcher)
     payload: dict = {"tool": launcher.id, "stopped": False}
-    if state(executable, appctx.runner) != "running":
+    running = state(executable, appctx.runner) == "running"
+    if model_bundles and not keep_models and not running:  # its models may outlive the app
+        running = bool(model_bundles(_running_bundles(appctx), executable, appctx.runner))
+    if not running:
         appctx.output.status(f"{launcher.target()} is not running.")
     else:
-        executable = executable or _resolve(appctx, launcher)
-        launcher.stop(LaunchEnv(executable, appctx.runner, appctx.output))
-        appctx.output.status(f"Stopped {launcher.target()}; its data is kept.")
+        env = LaunchEnv(executable or _resolve(appctx, launcher), appctx.runner, appctx.output)
+        if model_bundles:
+            launcher.stop(env, keep_models=keep_models)
+        else:
+            launcher.stop(env)
+        if not getattr(launcher, "reports_itself", False):  # else it said so already
+            appctx.output.status(f"Stopped {launcher.target()}; its data is kept.")
         payload["stopped"] = True
-    if models:
-        bundles = model_bundles(_running_bundles(appctx), executable, appctx.runner)
-        for bundle in bundles:
-            _model_manager(appctx).stop(bundle)
-        if not bundles:
-            appctx.output.status(f"No model bundle of {launcher.id}'s is running.")
-        payload["models_stopped"] = bundles
     appctx.output.emit(payload, renderer=lambda _: None)
 
 

@@ -1042,7 +1042,7 @@ def test_deep_research_installs_ttdr_and_runs_up_with_the_recipe_for_the_served_
         "argv": ["up", "--recipe", "recipes/cohost-ornith-35b.toml"],
         "home": str(deep_research.home),
     }]
-    assert "http://localhost:3000" in result.output
+    assert "connected" not in result.output  # ttdr up reported; tt adds no table
 
 
 @pytest.mark.fakes_only
@@ -1058,7 +1058,7 @@ def test_deep_research_default_is_separate_chips_and_ttdr_serves_them(runner, de
         "home": str(deep_research.home),
     }]
     assert "cohost" not in result.output
-    assert "http://localhost:3000" in result.output
+    assert "connected" not in result.output  # ttdr up reported; tt adds no table
 
 
 @pytest.mark.fakes_only
@@ -1179,17 +1179,16 @@ def test_deep_research_starts_a_named_recipe_on_a_free_board(runner, deep_resear
 
 
 @pytest.mark.fakes_only
-def test_deep_research_lists_its_recipes_and_whether_each_can_start(runner, deep_research):
+def test_deep_research_lists_its_recipes(runner, deep_research):
     deep_research(COHOST)
     deep_research.answering = False
     result = runner.invoke(app, ["launch", "deep-research", "--list-recipes", "--json"])
     assert result.exit_code == 0, result.output
-    rows = {r["recipe"]: r["status"] for r in json.loads(result.stdout)}
-    assert rows == {
-        "ornith-35b": f"needs `tt model stop {COHOST}` first",
-        "cohost-ornith-35b-sandboxed-python": "ready: its models are serving",
-        "cohost-ornith-35b": "ready: its models are serving",
-    }
+    rows = json.loads(result.stdout)
+    assert [r["recipe"] for r in rows] == [
+        "ornith-35b", "cohost-ornith-35b-sandboxed-python", "cohost-ornith-35b"
+    ]
+    assert set(rows[0]) == {"recipe", "default", "serves", "about"}
     assert deep_research.calls() == []
 
 
@@ -1285,19 +1284,27 @@ def test_stop_deep_research_runs_ttdr_down_where_it_was_started(runner, deep_res
 
 
 @pytest.mark.fakes_only
-def test_stop_deep_research_models_stops_its_bundle_too(runner, deep_research):
-    deep_research(COHOST, "someone/else", app_running=True)
-    result = runner.invoke(app, ["launch", "stop", "deep-research", "--models", "--json"])
+def test_stop_deep_research_keep_models_tells_ttdr(runner, deep_research):
+    deep_research(COHOST, app_running=True)
+    result = runner.invoke(app, ["launch", "stop", "deep-research", "--keep-models"])
     assert result.exit_code == 0, result.output
-    assert deep_research.calls()[0]["argv"] == ["down"]
-    assert deep_research.tt_model_calls() == [["stop", COHOST]]
-    assert json.loads(result.stdout)["models_stopped"] == [COHOST]
+    assert deep_research.calls()[0]["argv"] == ["down", "--keep-models"]
+    assert deep_research.tt_model_calls() == []  # ttdr stops its models, not tt
 
 
 @pytest.mark.fakes_only
-def test_stop_models_is_a_usage_error_for_other_clients(runner, fake_client_named):
+def test_stop_deep_research_stops_models_that_outlived_the_app(runner, deep_research):
+    deep_research(COHOST)
+    deep_research.installed()
+    result = runner.invoke(app, ["launch", "stop", "deep-research"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"] == ["down"]
+
+
+@pytest.mark.fakes_only
+def test_stop_keep_models_is_a_usage_error_for_other_clients(runner, fake_client_named):
     fake_client_named("hermes")
-    result = runner.invoke(app, ["launch", "stop", "hermes", "--models"])
+    result = runner.invoke(app, ["launch", "stop", "hermes", "--keep-models"])
     assert result.exit_code == ExitCode.USAGE
 
 

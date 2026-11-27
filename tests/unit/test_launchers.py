@@ -762,20 +762,21 @@ def test_deep_research_names_its_recipes_when_one_is_unknown():
     assert "ornith-35b, cohost-ornith-35b-sandboxed-python, cohost-ornith-35b" in err.value.why
 
 
-def test_deep_research_lists_each_recipe_and_whether_it_can_start(nothing_answers):
-    rows = {r["recipe"]: r for r in deep_research.statuses(RECIPES, [COHOST], _Ttdr())}
+def test_deep_research_lists_each_described_recipe_and_what_it_serves():
+    rows = {r["recipe"]: r for r in deep_research.listed(RECIPES)}
     # rerank-qwen3-vl has no description
     assert list(rows) == ["ornith-35b", "cohost-ornith-35b-sandboxed-python", "cohost-ornith-35b"]
-    assert rows["cohost-ornith-35b"]["status"].startswith("ready")
-    assert rows["ornith-35b"]["status"] == f"needs `tt model stop {COHOST}` first"
     assert rows["ornith-35b"]["default"] is True
     assert rows["ornith-35b"]["serves"] == (
         "Ornith-1.5-35B-A3B (chips 0-1), Qwen3-VL-Embedding-8B (chip 2), "
         "Qwen3-VL-Reranker-8B (chip 3)"
     )
     assert rows["cohost-ornith-35b"]["serves"].startswith("one bundle on chips 0-3: ")
-    rows = {r["recipe"]: r for r in deep_research.statuses(RECIPES, [], _Ttdr())}
-    assert rows["ornith-35b"]["status"].startswith("can start")
+
+
+def test_deep_research_can_start_only_on_a_free_board(nothing_answers):
+    assert deep_research.can_start(RECIPES, [])
+    assert not deep_research.can_start(RECIPES, ["someone/else"])
 
 
 def test_deep_research_model_bundles_are_only_its_own():

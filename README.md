@@ -129,7 +129,7 @@ tt launch hermes                       # Hermes Agent's terminal UI on the serve
 tt launch hermes --web                 # its web dashboard and chat, on the same model
 tt launch stop hermes                  # stop that dashboard (any running Hermes dashboard)
 tt launch deep-research                # installs and starts tt-deep-research; serves its models first if none are running
-tt launch stop deep-research           # its `ttdr down`: app containers stop, models keep serving (--models stops them too)
+tt launch stop deep-research           # its `ttdr down`: the app and its models stop, data kept (--keep-models leaves the models)
 ```
 
 ## Serving backends
