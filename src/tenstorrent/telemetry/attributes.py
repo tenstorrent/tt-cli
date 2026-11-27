@@ -136,9 +136,16 @@ def _catalog_vocabularies() -> tuple[frozenset[str], frozenset[str], frozenset[s
 
 @functools.lru_cache(maxsize=1)
 def _device_configs() -> frozenset[str]:
-    from ..backends.serving.inference_server import _BOARDS_TO_DEVICE
+    from ..backends.serving.inference_server import (
+        _BOARDS_TO_DEVICE,
+        _CHASSIS_TO_DEVICE,
+    )
 
-    return frozenset(_BOARDS_TO_DEVICE.values())
+    # Chassis ids (galaxy, blackhole_galaxy) are detected by asic count, not by
+    # board count, but they are just as nameable a device config.
+    return frozenset(_BOARDS_TO_DEVICE.values()) | frozenset(
+        _CHASSIS_TO_DEVICE.values()
+    )
 
 
 @functools.lru_cache(maxsize=1)
