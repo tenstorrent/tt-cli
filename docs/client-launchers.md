@@ -37,11 +37,11 @@ The research engine is an MCP server, and the app ships Hermes skills for it, so
 
 ```bash
 hermes config set mcp_servers.ttdr.url http://localhost:9901/mcp
-cp -r ~/.tt-deep-research/.hermes/skills ~/.hermes/
+hermes config set skills.external_dirs '["~/.tt-deep-research/.hermes/skills"]'
 tt launch hermes        # picks the recipe's LLM from the models it serves
 ```
 
-`qb2-deep-research` is the skill for cited research with those tools.
+`qb2-deep-research` is the skill for cited research with those tools. Hermes reads it from the app's folder, so it updates with the app.
 
 ## Terminal coding agents: you install them, tt configures them
 
