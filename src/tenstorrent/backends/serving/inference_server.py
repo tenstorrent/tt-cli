@@ -60,6 +60,24 @@ _BOARDS_TO_DEVICE = {
     ("p300", 2): "p300x2",
 }
 
+# A Galaxy is one chassis whose 32 asics all report the *same* board_id, so the
+# unique-board_id count above reads it as a single board. These are counted per
+# asic instead, and keyed by tt-smi's whole family token ("tt-galaxy-wh L" — the
+# families carry no revision digit, which is why _FAMILY_RE admits them apart from
+# the card pattern). Both rows mirror upstream's own table, tt-inference-server
+# workflows/device_utils.py: BOARD_TYPE_COUNT_TO_DEVICE; a half-detected chassis
+# maps to nothing so the caller is told to pass --device rather than handed a
+# device run.py will fail on.
+_CHASSIS_TO_DEVICE = {
+    ("tt-galaxy-wh", 32): "galaxy",
+    ("tt-galaxy-bh", 32): "blackhole_galaxy",
+}
+_CHASSIS_FAMILIES = frozenset(family for family, _ in _CHASSIS_TO_DEVICE)
+
+# Card families spell "n150", "p300c"; Galaxy families spell "tt-galaxy-wh" and
+# carry no digit at all, so they need their own alternative.
+_FAMILY_RE = re.compile(r"^(tt-galaxy-[a-z]+|[a-z]+\d+)")
+
 
 # tt-studio's placement (docker_utils.infer_inference_server_device): on a
 # multi-chip board a model with a spec for the board's own chip runs on one chip.
@@ -97,20 +115,21 @@ def choose_device(model: ModelInfo, board: str) -> str:
 def infer_device_config(devices: Sequence[DeviceSnapshot]) -> str | None:
     """Map a tt-smi snapshot to a run.py --device id; None if not confidently
     mappable (mixed board types, unknown family, unmapped count)."""
-    boards: dict[str, set[str]] = {}
+    families: dict[str, list[DeviceSnapshot]] = {}
     for dev in devices:
         if not dev.board_type:
             return None
-        family = re.match(r"([a-z]+\d+)", dev.board_type.strip().lower())
+        family = _FAMILY_RE.match(dev.board_type.strip().lower())
         if family is None:
             return None
-        boards.setdefault(family.group(1), set()).add(
-            dev.board_id or f"entry-{dev.index}"
-        )
-    if len(boards) != 1:
+        families.setdefault(family.group(1), []).append(dev)
+    if len(families) != 1:
         return None
-    (family_name, ids), = boards.items()
-    return _BOARDS_TO_DEVICE.get((family_name, len(ids)))
+    (family_name, members), = families.items()
+    if family_name in _CHASSIS_FAMILIES:
+        return _CHASSIS_TO_DEVICE.get((family_name, len(members)))
+    boards = {dev.board_id or f"entry-{dev.index}" for dev in members}
+    return _BOARDS_TO_DEVICE.get((family_name, len(boards)))
 
 
 @dataclass(frozen=True)
