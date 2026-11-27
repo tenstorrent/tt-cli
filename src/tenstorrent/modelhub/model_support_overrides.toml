@@ -123,6 +123,199 @@ device hang mid kernel-compile) badly enough that the host needs a board \
 reset. Re-check once the media image ships a tt-metal/firmware combination \
 validated on firmware 19.7.0."""
 
+# ---------------------------------------------------------------------------
+# Deploy failures found by ttsim validation runs (tt-inference-server v0.26.1 run.py)
+# ---------------------------------------------------------------------------
+
+[[override]]
+model = "mobilenetv2"
+device = "n150"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "mobilenetv2"
+device = "n300"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "resnet-50"
+device = "n150"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "resnet-50"
+device = "n300"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "segformer"
+device = "n150"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "segformer"
+device = "n300"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "vit"
+device = "n150"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "vit"
+device = "n300"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "vovnet"
+device = "n150"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+[[override]]
+model = "vovnet"
+device = "n300"
+reason = "broken"
+verified_on = "2026-11-25"
+source = "ttsim"
+details = """
+Fresh deploy fails before reaching the device: run.py mounts a new docker \
+volume at /home/container_app_user/cache_root, which the forge image lacks, so \
+docker creates it root-owned while the server runs as uid 1000; warmup then \
+dies with PermissionError downloading microsoft/resnet-50 into \
+cache_root/huggingface (every forge CNN warms up with resnet-50). Seen with \
+tt-inference-server v0.26.1 run.py; independent of the device."""
+
+# ===========================================================================
+# Validated pairs on excluded boards
+# ===========================================================================
+# The build leaves Wormhole cards, LoudBox and Galaxy out of the catalog
+# (EXCLUDED_DEVICES in scripts/build_model_support.py). A model confirmed to work
+# on one of them is listed here, at the spec version that was checked: when the
+# spec moves to another version the pair drops out, with a build warning, until
+# someone revalidates it.
+#
+# Specs from tt-inference-server 0.11.0 onwards are treated as compatible on
+# these boards, so every pair whose spec is at 0.11.0 or later is listed; the
+# older specs (0.2.0–0.10.0) stay out.
+
+# --- Wormhole Galaxy ---------------------------------------------------------
+
+[[validated_device]]
+model = "DeepSeek-R1-0528"
+device = "dual_galaxy"
+version = "0.12.0"
+details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
+
+[[validated_device]]
+model = "DeepSeek-R1-0528"
+device = "quad_galaxy"
+version = "0.12.0"
+details = "Wormhole Galaxy spec from 0.11.0 or later; treated as compatible."
+
+[[validated_device]]
+model = "distil-large-v3"
+device = "galaxy"
+version = "0.17.0"
+details = """
+Deploy bring-up verified under ttsim: tt-inference-server v0.26.1 run.py as tt \
+serve runs it, image 0.17.0-8c48a10, simulated 32-chip WH Galaxy (ttsim \
+v1.9.9, 6u cluster descriptor); all 32 devices found, model loaded and warmup \
+started with no errors. Full warmup and serving not exercised."""
+
+[[validated_device]]
+model = "whisper-large-v3"
+device = "galaxy"
+version = "0.17.0"
+details = """
+Deploy bring-up verified under ttsim: tt-inference-server v0.26.1 run.py as tt \
+serve runs it, image 0.17.0-8c48a10, simulated 32-chip WH Galaxy (ttsim \
+v1.9.9, 6u cluster descriptor); all 32 devices found, model loaded and warmup \
+started with no errors. Full warmup and serving not exercised."""
+
+# --- Blackhole Galaxy --------------------------------------------------------
+
 # ===========================================================================
 # Device fallbacks
 # ===========================================================================

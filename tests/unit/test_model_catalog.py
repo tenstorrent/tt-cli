@@ -71,7 +71,28 @@ def test_the_bundled_list_is_what_is_read_by_default(monkeypatch):
     monkeypatch.delenv("TT_MODEL_SUPPORT_PATH", raising=False)
     source = ModelSupportSource()
     assert source.origin == "bundled model_support.json"
-    assert len(source.entries()) > 40
+    assert len(source.entries()) > 25
+
+
+def test_the_bundled_list_offers_excluded_boards_only_for_validated_models(monkeypatch):
+    monkeypatch.delenv("TT_MODEL_SUPPORT_PATH", raising=False)
+    excluded = {"n150", "n150x4", "n300", "t3k", "galaxy", "galaxy_t3k", "dual_galaxy",
+                "quad_galaxy", "blackhole_galaxy"}
+    offered = {
+        (entry.name, device): entry.devices[device].version
+        for entry in ModelSupportSource().entries()
+        for device in entry.hardware
+        if device in excluded
+    }
+    assert ("distil-large-v3", "galaxy") in offered
+    assert ("whisper-large-v3", "galaxy") in offered
+    # Only specs from tt-inference-server 0.11.0 onwards are offered on these boards.
+    too_old = {
+        pair: version
+        for pair, version in offered.items()
+        if tuple(int(part) for part in version.split(".")) < (0, 11, 0)
+    }
+    assert too_old == {}
 
 
 def test_missing_override_path_is_config_error(monkeypatch, tmp_path):

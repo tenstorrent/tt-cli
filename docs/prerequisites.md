@@ -95,7 +95,9 @@ a container. For those you need:
 - **A Tenstorrent card.** Wormhole (n150, n300, T3K / 4×n300) and Blackhole (p100,
   p150, p150x4, p150x8, p300, p300x2) boards are the ones `tt serve` knows how to map
   to a `--device` argument. Grayskull (e150) is still in that mapping, but current
-  tt-kmd releases list only Wormhole and Blackhole as supported.
+  tt-kmd releases list only Wormhole and Blackhole as supported. The tt-inference-server
+  model catalog offers every Blackhole developer system. Wormhole cards, LoudBox (T3K) and Galaxy
+  systems are offered only for models whose spec is from tt-inference-server 0.11.0 or later.
 - **The kernel-mode driver (tt-kmd)**, built via DKMS against your running kernel.
   tt-kmd supports Linux 5.4 and newer. `tt` reads the driver version from tt-smi's
   snapshot but never installs or checks it itself.
