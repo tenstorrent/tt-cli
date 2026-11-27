@@ -1022,11 +1022,14 @@ def deep_research(monkeypatch, tmp_path, fake_docker_containers, model_manager_b
         ]
         if app_running:
             installed()  # since it is running
-            containers.append({"Id": "c0ffee000000", "Labels": {
-                "com.docker.compose.project": "ttdr",
-                "com.docker.compose.service": "ui-deepagents",
-                "com.docker.compose.project.working_dir": str(home),
-            }})
+            containers += [
+                {"Id": f"c0ffee00000{i}", "Labels": {
+                    "com.docker.compose.project": "ttdr",
+                    "com.docker.compose.service": service,
+                    "com.docker.compose.project.working_dir": str(home),
+                }}
+                for i, service in enumerate(("engine", "ui-deepagents"))
+            ]
         fake_docker_containers(containers)
 
     def installed() -> None:
@@ -1310,6 +1313,31 @@ def test_deep_research_aiq_adds_it_to_an_app_running_without(runner, deep_resear
     result = runner.invoke(app, ["launch", "deep-research", "--aiq", "--yes"])
     assert result.exit_code == 0, result.output
     assert deep_research.calls()[0]["argv"][-1] == "--aiq"
+
+
+@pytest.mark.fakes_only
+def test_deep_research_starts_over_a_checkouts_leftover_ui(
+    runner, deep_research, fake_docker_containers
+):
+    """A UI left running from a git checkout, with no engine, is not the app running."""
+    deep_research(COHOST)
+    deep_research.installed()
+    deep_research.started_with("recipes/cohost-ornith-35b.toml")
+    fake_docker_containers([
+        {"Id": "000000000000", "Labels": {
+            "org.tenstorrent.tt-model": COHOST.split("/")[1],
+            "org.tenstorrent.tt-model.repo": COHOST,
+        }},
+        {"Id": "c0ffee000000", "Labels": {
+            "com.docker.compose.project": "ttdr",
+            "com.docker.compose.service": "ui-deepagents",
+            "com.docker.compose.project.working_dir": "/home/someone/tt-deep-research",
+        }},
+    ])
+    result = runner.invoke(app, ["launch", "deep-research", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert deep_research.calls()[0]["argv"][0] == "up"
+    assert "already running" not in result.output
 
 
 @pytest.mark.fakes_only

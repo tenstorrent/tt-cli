@@ -943,7 +943,7 @@ def test_deep_research_already_running_on_the_same_recipe_does_nothing(
 ):
     ttdr_home.mkdir()
     (ttdr_home / ".env").write_text("KEY=1\nTTDR_RECIPE=recipes/cohost-ornith-35b.toml\n")
-    running = _Ttdr(f"ui-deepagents\t{ttdr_home}\nqdrant\t{ttdr_home}\n")
+    running = _Ttdr(f"engine\t{ttdr_home}\nui-deepagents\t{ttdr_home}\nqdrant\t{ttdr_home}\n")
     prep = _deep_research_plan(ttdr_home, running)
     assert prep.steps == [] and prep.consent is None
     assert prep.url == "http://localhost:3000"
