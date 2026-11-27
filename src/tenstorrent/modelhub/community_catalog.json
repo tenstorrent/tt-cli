@@ -136,17 +136,6 @@
    "validated_on": "2026-09-25"
   },
   {
-   "repo": "changh95/qwen3.8-27b-dflash2-p300x2",
-   "kind": "container",
-   "engine": "vllm-plugin",
-   "arch": "blackhole",
-   "hardware": [
-    "p300x2"
-   ],
-   "validation": "sweep",
-   "validated_on": "2026-09-25"
-  },
-  {
    "repo": "changh95/qwen3.8-27b-p150x2",
    "kind": "container",
    "engine": "vllm-plugin",
