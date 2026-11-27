@@ -98,7 +98,6 @@ def test_galaxy_sharing_the_box_with_a_card_is_none():
 # an Env array, a bare integer — parse as scalars, so a line-by-line reader that trusts
 # json.loads hands its caller a str and every later `.get` is an AttributeError. This is
 # the real shape from podman 3.4.4 (`docker` on this box is its shim).
-
 _PODMAN_INSPECT = """[
     {
         "Id": "abc123def456",
@@ -143,6 +142,35 @@ def test_one_object_per_line_is_still_read():
 
     stdout = '{"Id": "a1"}\nnot json\n{"Id": "b2"}\n'
     assert [r["Id"] for r in parse_inspect_records(stdout)] == ["a1", "b2"]
+
+
+def test_an_inner_object_on_its_own_line_does_not_shadow_the_record():
+    """Review feedback: an empty `{}` as the last item of a nested array is a complete
+    JSON value on its own line, so a line-by-line read returns `[{}]` and loses the
+    real record. Parsing the whole output first is what prevents that."""
+    from tenstorrent.backends.serving.inference_server import parse_inspect_records
+
+    stdout = '[\n {\n  "Id": "real",\n  "Devices": [\n   {}\n  ]\n }\n]'
+    assert parse_inspect_records(stdout) == [{"Id": "real", "Devices": [{}]}]
+
+
+def test_a_pretty_printed_single_object_is_read():
+    from tenstorrent.backends.serving.inference_server import parse_inspect_records
+
+    stdout = '{\n  "Id": "one"\n}\n'
+    assert parse_inspect_records(stdout) == [{"Id": "one"}]
+
+
+def test_an_empty_object_on_one_line_is_still_a_record():
+    from tenstorrent.backends.serving.inference_server import parse_inspect_records
+
+    assert parse_inspect_records('{}\n') == [{}]
+
+
+def test_an_array_of_scalars_yields_no_records():
+    from tenstorrent.backends.serving.inference_server import parse_inspect_records
+
+    assert parse_inspect_records('[1, 2, "three"]\n') == []
 
 
 # -- identifying a running server container -------------------------------------------
