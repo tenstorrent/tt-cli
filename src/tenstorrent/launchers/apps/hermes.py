@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""Hermes Agent adapter: OpenAI-compatible environment, nothing on disk.
+"""Hermes Agent adapter: OpenAI-compatible environment.
 
 `hermes chat` has no base-URL flag, and its `~/.hermes/config.yaml` is YAML that
 tt does not parse. `--provider openai` reads the endpoint and key from
@@ -11,14 +11,45 @@ With --web the same endpoint backs `hermes dashboard`, whose in-browser chat
 inherits the dashboard's environment. The provider and model are chosen through
 the variables `hermes --tui --provider/--model` itself sets, since a provider
 saved in config.yaml would otherwise outrank HERMES_INFERENCE_PROVIDER.
+
+Tenstorrent look: the terminal skin (`skins/`) is installed for every launch and the
+dashboard theme (`dashboard-themes/`) for --web. Both are bundled in
+`launchers/configs/hermes/`, laid out like the Hermes home. Each is made active through
+`hermes config set`, never by editing config.yaml, and only while the user is still
+on Hermes's shipped default. A skin or theme the user picked is never overridden.
 """
 
 from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from importlib import resources
+from pathlib import Path
 
 from ..base import LaunchEnv, LaunchOptions, Preparation, RunningModel, free_web_port
 
 _PLACEHOLDER_KEY = "tt-local"
 _PROVIDER = "openai"
+_NAME = "tenstorrent"
+_SHIPPED_DEFAULTS = {"", "default"}
+
+
+def _hermes_home() -> Path:
+    home = os.environ.get("HERMES_HOME", "").strip()
+    return Path(home).expanduser() if home else Path.home() / ".hermes"
+
+
+@dataclass(frozen=True)
+class _Look:
+    """A bundled Hermes appearance: where it is installed and the setting that selects it."""
+
+    # Directory Hermes scans under its home, and the same path under configs/hermes/.
+    hermes_dir: str
+    config_key: str
+
+
+_SKIN = _Look("skins", "display.skin")
+_THEME = _Look("dashboard-themes", "dashboard.theme")
 
 
 class Hermes:
@@ -65,7 +96,33 @@ class Hermes:
         )
 
     def apply(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
-        """Nothing on disk: the environment is applied at hand-off."""
+        """The environment is applied at hand-off; only the Tenstorrent look is written."""
+        self._adopt(_SKIN, env)
+        if prep.url is not None:
+            self._adopt(_THEME, env)
+
+    def _adopt(self, look: _Look, env: LaunchEnv) -> None:
+        """Install the look, and make it active unless the user already chose another.
+        Cosmetic, so nothing here may block the launch."""
+        source = resources.files("tenstorrent.launchers").joinpath(
+            "configs", "hermes", look.hermes_dir, f"{_NAME}.yaml"
+        )
+        target = _hermes_home() / look.hermes_dir / f"{_NAME}.yaml"
+        try:
+            content = source.read_bytes()
+            if not (target.exists() and target.read_bytes() == content):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+        except OSError:
+            return
+        exe = env.executable
+        current = env.runner.capture([exe, "config", "get", look.config_key], check=False, tool=self.id)
+        # `config get` exits non-zero when the key is unset.
+        value = current.stdout.strip() if current.returncode == 0 else ""
+        if value in _SHIPPED_DEFAULTS:
+            env.runner.capture(
+                [exe, "config", "set", look.config_key, _NAME], check=False, tool=self.id
+            )
 
     def handoff(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
         argv = [env.executable, *prep.steps[0][1:]]
@@ -86,7 +143,7 @@ class Hermes:
         env.runner.stream([env.executable, "dashboard", "--stop"], tool=self.id)
 
     def disconnect_plan(self, executable: str | None, runner) -> str | None:
-        """Nothing persists, so there is never anything to undo."""
+        """Only the skin and theme persist; both are cosmetic and switchable, so there is nothing to undo."""
         return None
 
     def disconnect(self, env: LaunchEnv) -> None:

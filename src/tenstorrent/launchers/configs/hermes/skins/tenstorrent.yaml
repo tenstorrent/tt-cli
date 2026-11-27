@@ -1,0 +1,108 @@
+# Tenstorrent skin for Hermes, installed by `tt launch hermes`. Colors from Tenstorrent Deep Research's violet scale.
+name: tenstorrent
+description: Tenstorrent - violet on dark, like Tenstorrent Deep Research
+colors:
+  banner_border: '#7C68FA'
+  banner_title: '#CFC6FD'
+  banner_accent: '#AB9DFB'
+  banner_dim: '#8E81E4'
+  banner_text: '#EFECFF'
+  ui_accent: '#9583FB'
+  ui_label: '#CFC6FD'
+  ui_ok: '#40BFA8'
+  ui_error: '#F45434'
+  ui_warn: '#FFD88A'
+  prompt: '#F5F3FF'
+  input_rule: '#5241C2'
+  response_border: '#7C68FA'
+  status_bar_bg: '#181238'
+  status_bar_text: '#E2DCFE'
+  status_bar_strong: '#CFC6FD'
+  status_bar_dim: '#8F86C8'
+  status_bar_good: '#78DDCB'
+  status_bar_warn: '#FFD88A'
+  status_bar_bad: '#F88D77'
+  status_bar_critical: '#F45434'
+  session_label: '#AB9DFB'
+  session_border: '#43349F'
+  completion_menu_bg: '#181238'
+  completion_menu_current_bg: '#33287A'
+  selection_bg: '#43349F'
+  shell_dollar: '#9583FB'
+  voice_status_bg: '#181238'
+spinner:
+  waiting_faces:
+  - (◇)
+  - (◆)
+  - (◈)
+  - (⬡)
+  - (⬢)
+  thinking_faces:
+  - (◆)
+  - (◈)
+  - (◇)
+  - (⬢)
+  - (⬡)
+  thinking_verbs:
+  - routing tensors
+  - warming the Tensix cores
+  - tiling the matmul
+  - streaming through the NoC
+  - filling the KV cache
+  - sharding across chips
+  - compiling kernels
+  - reading the evidence
+  wings:
+  - - ⟪◆
+    - ◆⟫
+  - - ⟪◈
+    - ◈⟫
+  - - ⟪◇
+    - ◇⟫
+  - - ⟪⬢
+    - ⬢⟫
+branding:
+  agent_name: Tenstorrent Agent
+  welcome: Welcome to Tenstorrent Agent, running on your QuietBox. Type your message or /help for commands.
+  goodbye: Goodbye! ◆
+  response_label: ' ◆ Tenstorrent '
+  prompt_symbol: ◆
+  help_header: (◆) Available Commands
+tool_prefix: │
+banner_logo: '[bold #E2DCFE]████████╗███████╗███╗   ██╗███████╗████████╗ ██████╗ ██████╗ ██████╗ ███████╗███╗   ██╗████████╗[/]
+
+  [bold #CFC6FD]╚══██╔══╝██╔════╝████╗  ██║██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗██╔══██╗██╔════╝████╗  ██║╚══██╔══╝[/]
+
+  [bold #AB9DFB]   ██║   █████╗  ██╔██╗ ██║███████╗   ██║   ██║   ██║██████╔╝██████╔╝█████╗  ██╔██╗ ██║   ██║[/]
+
+  [bold #9583FB]   ██║   ██╔══╝  ██║╚██╗██║╚════██║   ██║   ██║   ██║██╔══██╗██╔══██╗██╔══╝  ██║╚██╗██║   ██║[/]
+
+  [bold #7C68FA]   ██║   ███████╗██║ ╚████║███████║   ██║   ╚██████╔╝██║  ██║██║  ██║███████╗██║ ╚████║   ██║[/]
+
+  [bold #6552E0]   ╚═╝   ╚══════╝╚═╝  ╚═══╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝[/]'
+banner_hero: '[#CFC6FD]⠀⠀⢀⣠⣴⣿⣿⣦⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣦⣄⡀⠀⠀[/]
+
+  [#CFC6FD]⣤⣾⣿⣿⣿⣿⣿⣿⣿⣿⣷⣤⣀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣷⣤[/]
+
+  [#AB9DFB]⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣦⣄⡀⠀⣿⣿⣿⣿⣿⣿[/]
+
+  [#AB9DFB]⣿⣿⣿⣿⣿⣿⠻⢿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠖⣿⣿⣿⣿⣿⣿[/]
+
+  [#9583FB]⣿⣿⣿⣿⣿⣿⠀⠀⠈⠙⠿⣿⣿⠿⠋⠁⠀⠀⣿⣿⣿⣿⣿⣿[/]
+
+  [#9583FB]⠙⠻⢿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⡿⠟⠋[/]
+
+  [#7C68FA]⠀⠀⠀⠈⠛⠿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠿⠛⠁⠀⠀⠀[/]
+
+  [#7C68FA]⠀⠀⠀⠀⠀⠀⣿⣶⣄⡀⠀⠀⠀⠀⢀⣠⣶⣿⠀⠀⠀⠀⠀⠀[/]
+
+  [#6552E0]⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣷⣦⣴⣾⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀[/]
+
+  [#6552E0]⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀[/]
+
+  [#5241C2]⠀⠀⠀⠀⠀⠀⠛⠿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠛⠀⠀⠀⠀⠀⠀[/]
+
+  [#5241C2]⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠻⣿⣿⠟⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀[/]
+
+
+  [dim #AB9DFB]AI on Tenstorrent hardware[/]'
