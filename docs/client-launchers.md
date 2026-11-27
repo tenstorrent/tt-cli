@@ -31,6 +31,18 @@ For these, tt pulls the image and starts the container itself, after asking you 
 
 Its recipes say which models it serves and on which chips: `tt launch deep-research --list-recipes` lists them. tt uses the recipe whose tt-model bundles are running; with nothing running it asks which recipe to start (Enter takes `default`, three bundles on their own chips), or starts the one `--recipe <name>` names (`default` with `--yes` or without a terminal), and `ttdr up` serves its models (tt asks first: a cold start takes 10-15 minutes). It never serves over models it didn't start: if other bundles hold the chips, or another model answers on a cohost recipe's port (`ttdr up` moves a bundle of its own to the next free port), it says what to stop (`tt model stop ...`) and which recipe fits what is running instead. The cohost recipes need the cohost tt-model build (see the tt-deep-research README).
 
+### Hermes on deep-research's tools
+
+The research engine is an MCP server, and the app ships Hermes skills for it, so Hermes can research with the same tools. Once `tt launch deep-research` is up, two commands give them to Hermes (`ttdr up` prints both, with the engine's actual port):
+
+```bash
+hermes config set mcp_servers.ttdr.url http://localhost:9901/mcp
+cp -r ~/.tt-deep-research/.hermes/skills ~/.hermes/
+tt launch hermes        # picks the recipe's LLM from the models it serves
+```
+
+`qb2-deep-research` is the skill for cited research with those tools.
+
 ## Terminal coding agents: you install them, tt configures them
 
 tt never installs these. Install the agent yourself, then `tt launch` writes the smallest config needed to reach your model and hands the terminal over to the agent.

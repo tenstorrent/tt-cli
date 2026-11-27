@@ -237,6 +237,12 @@ class DeepResearch:
             details={"recipe": wanted},
         )
 
+    def serving_llm(self, executable: str, bundles: list[str], runner) -> str | None:
+        """The LLM of the recipe whose bundles are serving: of its several models, the one a
+        chat client wants (the others embed and rerank)."""
+        running = self.running_recipes(self.recipes(executable, runner), bundles)
+        return next((m["model"] for r in running for m in r["models"] if "llm" in m["roles"]), None)
+
     def running_recipes(self, recipes: list[dict], bundles: list[str]) -> list[dict]:
         """Listed recipes whose bundles tt-model is serving now. Where several share them,
         the one the app last started with, else the default, settles it."""

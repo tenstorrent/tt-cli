@@ -1371,3 +1371,32 @@ def test_list_offers_deep_research_before_it_is_installed(runner, deep_research)
     assert row["container_state"] == "absent"
     assert deep_research.installs == []
 
+
+
+@pytest.mark.fakes_only
+def test_a_client_defaults_to_deep_researchs_llm_among_its_models(
+    runner, deep_research, fake_client_named, monkeypatch
+):
+    """The recipe also serves an embedder and a reranker; a chat client wants its LLM."""
+    from tenstorrent.launchers.base import RunningModel
+
+    deep_research(COHOST)
+    deep_research.installed()
+    fake_client_named("hermes")
+    served = [
+        RunningModel(served_id=m, base_url=f"http://127.0.0.1:{port}/v1")
+        for m, port in [("Qwen/Qwen3-VL-Embedding-8B", 8002), ("ornith-ai/Ornith-1.5-35B-A3B", 8000),
+                        ("Qwen/Qwen3-VL-Reranker-8B", 8004)]
+    ]
+    monkeypatch.setattr("tenstorrent.commands.launch._discover_local", lambda appctx: served)
+    passed: dict = {}
+
+    def fake_execvpe(file, argv, env):
+        passed["argv"] = list(argv)
+        raise SystemExit(0)
+
+    monkeypatch.setattr("tenstorrent.tools.runner.os.execvpe", fake_execvpe)
+    result = runner.invoke(app, ["launch", "hermes"])
+    assert result.exit_code == 0, result.output
+    assert passed["argv"][-1] == "ornith-ai/Ornith-1.5-35B-A3B"
+    assert "choose with --model" not in result.output

@@ -144,6 +144,21 @@ def _discover_local(appctx) -> list[RunningModel]:
     return served
 
 
+def _app_llm(appctx, served: list[RunningModel]) -> str | None:
+    """With several models up and no --model: deep-research's LLM, when its recipe's models
+    are the ones serving (the others embed and rerank, and tt's catalog may know none)."""
+    app = LAUNCHERS["deep-research"]
+    bundles = _running_bundles(appctx)
+    executable = _installed_or_none(appctx, app) if bundles else None
+    if executable is None:
+        return None
+    llm = app.serving_llm(executable, bundles, appctx.runner)
+    if llm not in {s.served_id for s in served}:
+        return None
+    appctx.output.status(f"Using {llm}, the LLM of the deep-research recipe that is serving.")
+    return llm
+
+
 def _select(appctx, served: list[RunningModel], wanted: str | None) -> RunningModel:
     """The model to connect to, with its catalog entry attached when tt knows it."""
     catalog = ModelCatalog()
@@ -290,6 +305,8 @@ def _connect(
         )
     if url is None and port is None:
         served = _discover_local(appctx)
+        if model is None and len(served) > 1:
+            model = _app_llm(appctx, served)
     else:
         served = discover(base_url_for(url, port))
     target = _select(appctx, served, model)
