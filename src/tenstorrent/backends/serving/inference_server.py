@@ -240,6 +240,46 @@ class ServerContainer:
         return volume.endswith(f"-{name}") or f"-{name}-v" in volume
 
 
+def parse_inspect_records(stdout: str) -> list[dict]:
+    """`docker inspect` records out of one capture, in whichever shape it printed.
+
+    Whole output first. Podman ignores `--format '{{json .}}'` for `inspect` and
+    pretty-prints one multi-line JSON array (or a single object), so the complete text
+    is the authoritative document — and it has to be tried first: an inner line can be
+    a complete object on its own, e.g. an empty `{}` as the last element of a nested
+    array, and a line-by-line read would return that `{}` and lose the real record.
+
+    Docker honours the format string and emits one JSON object per line, which is not
+    one JSON document; that fails to parse as a whole and falls through to the
+    per-line read. Either way only dicts are records: a scalar reaching a caller is an
+    AttributeError on `.get`, which is how `tt model stop` used to die on podman.
+    """
+    text = stdout.strip()
+    if not text:
+        return []
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        pass
+    else:
+        if isinstance(doc, dict):
+            return [doc]
+        if isinstance(doc, list):
+            return [d for d in doc if isinstance(d, dict)]
+    records: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            doc = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(doc, dict):
+            records.append(doc)
+    return records
+
+
 def _identity_from_inspect(entry: dict) -> tuple[str | None, str | None]:
     """(hf_repo, volume_name) read out of one `docker inspect` record.
 
@@ -1006,24 +1046,19 @@ class InferenceServerBackend:
         return containers
 
     def inspect_containers(self, ids: Sequence[str]) -> list[dict]:
-        """Raw `inspect` records for the given ids, in one call. A line the runtime
-        formats in a way we cannot parse is skipped rather than failing the lot."""
+        """Raw `inspect` records for the given ids, in one call.
+
+        Parsing is shared with `tt model ps` (see parse_inspect_records): podman
+        ignores the format string and pretty-prints an array, so a per-line read on
+        its own used to hand callers scalars and crash `tt model stop`.
+        """
         if not ids:
             return []
         runtime = self.container_runtime()
         inspected = self.runner.capture(
             [runtime, "inspect", "--format", "{{json .}}", *ids], tool=runtime
         )
-        records: list[dict] = []
-        for line in inspected.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except ValueError:
-                continue
-        return records
+        return parse_inspect_records(inspected.stdout)
 
     def stop_containers(self, containers: Sequence[ServerContainer]) -> None:
         """`docker stop` each one: SIGTERM plus grace, never kill — the server has to
