@@ -751,3 +751,32 @@ def test_hermes_web_moves_to_the_next_free_port_unless_pinned(monkeypatch):
     pinned = plan(LaunchOptions(web=True, web_port=3000, web_port_pinned=True))
     assert pinned.url == "http://localhost:3000"
 
+
+
+def test_hermes_web_installs_the_theme_without_touching_config(tmp_path, monkeypatch):
+    home = tmp_path / "hermes-home"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    launcher = LAUNCHERS["hermes"]
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    web = launcher.plan(model, LaunchOptions(web=True, web_port=9200), executable=None, runner=None)
+    launcher.apply(model, web, None)
+    theme = home / "dashboard-themes" / "tenstorrent.yaml"
+    assert "name: tenstorrent" in theme.read_text()
+    assert [p.name for p in home.iterdir()] == ["dashboard-themes"]
+    launcher.apply(model, web, None)  # idempotent
+
+    terminal = tmp_path / "terminal-home"
+    monkeypatch.setenv("HERMES_HOME", str(terminal))
+    chat = launcher.plan(model, LaunchOptions(), executable=None, runner=None)
+    launcher.apply(model, chat, None)
+    assert not terminal.exists()
+
+
+def test_hermes_theme_failure_does_not_block_the_launch(tmp_path, monkeypatch):
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    monkeypatch.setenv("HERMES_HOME", str(blocker))
+    launcher = LAUNCHERS["hermes"]
+    model = RunningModel(served_id="Qwen/Qwen3-32B", base_url="http://127.0.0.1:8000/v1")
+    web = launcher.plan(model, LaunchOptions(web=True, web_port=9200), executable=None, runner=None)
+    launcher.apply(model, web, None)

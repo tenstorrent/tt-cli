@@ -29,9 +29,9 @@ tt never installs these. Install the agent yourself, then `tt launch` writes the
 |---|---|---|---|---|
 | OpenCode | `tt launch opencode` | OpenCode: [install guide](https://opencode.ai/docs/) | tool calling | a `tenstorrent` provider in `~/.config/opencode/opencode.json` |
 | pi | `tt launch pi` | pi: [install guide](https://github.com/earendil-works/pi) | tool calling | a `tenstorrent` provider in `~/.pi/agent/models.json` |
-| Aider | `tt launch aider` | Aider: [install guide](https://aider.chat/docs/install.html) | tool calling | nothing on disk (environment variables, this run only) |
+| Aider | `tt launch aider` | Aider: [install guide](https://aider.chat/docs/install.html) | tool calling | environment variables (this run only); `--web` also adds the Tenstorrent dashboard theme to `~/.hermes/dashboard-themes/` |
 | Qwen Code | `tt launch qwencode` | Node.js 22+, then `npm install -g @qwen-code/qwen-code`: [install guide](https://github.com/QwenLM/qwen-code) | tool calling | a model entry under `modelProviders.openai` in `~/.qwen/settings.json`, carrying the served context window and output budget (only when the server publishes its context length); the endpoint goes on the command line |
-| Hermes Agent | `tt launch hermes` (terminal UI) or `tt launch hermes --web` (browser dashboard) | Hermes Agent: `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`, see the [install guide](https://hermes-agent.nousresearch.com/docs/) | tool calling | nothing on disk (environment variables, this run only) |
+| Hermes Agent | `tt launch hermes` (terminal UI) or `tt launch hermes --web` (browser dashboard) | Hermes Agent: `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash`, see the [install guide](https://hermes-agent.nousresearch.com/docs/) | tool calling | environment variables (this run only); `--web` also adds the Tenstorrent dashboard theme to `~/.hermes/dashboard-themes/` |
 
 - Coding agents need a model that can do **tool calling**. If tt knows the model you're serving can't, it stops and suggests one that can (`--force` connects anyway). For a model outside tt's catalog it can't check, so it warns and carries on.
 - tt shows the change and asks before writing to a client's config file. `tt launch disconnect <client>` removes what tt wrote.

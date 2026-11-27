@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025-2026 Tenstorrent USA, Inc.
 
-"""Hermes Agent adapter: OpenAI-compatible environment, nothing on disk.
+"""Hermes Agent adapter: OpenAI-compatible environment.
 
 `hermes chat` has no base-URL flag, and its `~/.hermes/config.yaml` is YAML that
 tt does not parse. `--provider openai` reads the endpoint and key from
@@ -11,14 +11,28 @@ With --web the same endpoint backs `hermes dashboard`, whose in-browser chat
 inherits the dashboard's environment. The provider and model are chosen through
 the variables `hermes --tui --provider/--model` itself sets, since a provider
 saved in config.yaml would otherwise outrank HERMES_INFERENCE_PROVIDER.
+
+The one thing written to disk is the Tenstorrent dashboard theme, dropped into
+Hermes's `dashboard-themes/` folder for --web so it shows up in the dashboard's
+theme picker. config.yaml is never touched, so the active theme stays the user's choice.
 """
 
 from __future__ import annotations
+
+import os
+from importlib import resources
+from pathlib import Path
 
 from ..base import LaunchEnv, LaunchOptions, Preparation, RunningModel, free_web_port
 
 _PLACEHOLDER_KEY = "tt-local"
 _PROVIDER = "openai"
+_THEME_FILE = "tenstorrent.yaml"
+
+
+def _theme_dir() -> Path:
+    home = os.environ.get("HERMES_HOME", "").strip()
+    return (Path(home).expanduser() if home else Path.home() / ".hermes") / "dashboard-themes"
 
 
 class Hermes:
@@ -65,7 +79,18 @@ class Hermes:
         )
 
     def apply(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
-        """Nothing on disk: the environment is applied at hand-off."""
+        """The environment is applied at hand-off; only the web dashboard gets a theme file."""
+        if prep.url is None:
+            return
+        theme = resources.files(__package__).joinpath("hermes_theme", _THEME_FILE).read_bytes()
+        target = _theme_dir() / _THEME_FILE
+        try:
+            if target.exists() and target.read_bytes() == theme:
+                return
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(theme)
+        except OSError:
+            pass  # cosmetic: an unwritable Hermes home must not block the launch
 
     def handoff(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
         argv = [env.executable, *prep.steps[0][1:]]
@@ -86,7 +111,7 @@ class Hermes:
         env.runner.stream([env.executable, "dashboard", "--stop"], tool=self.id)
 
     def disconnect_plan(self, executable: str | None, runner) -> str | None:
-        """Nothing persists, so there is never anything to undo."""
+        """Only a theme file persists; it is harmless, so there is nothing to undo."""
         return None
 
     def disconnect(self, env: LaunchEnv) -> None:
