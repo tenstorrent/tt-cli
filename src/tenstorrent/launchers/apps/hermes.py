@@ -12,15 +12,16 @@ inherits the dashboard's environment. The provider and model are chosen through
 the variables `hermes --tui --provider/--model` itself sets, since a provider
 saved in config.yaml would otherwise outrank HERMES_INFERENCE_PROVIDER.
 
-For --web the Tenstorrent dashboard theme is dropped into Hermes's
-`dashboard-themes/` folder and made the active theme, but only while the user is
-still on Hermes's shipped default. A theme the user picked is never overridden.
-The active theme is set through `hermes config set`, never by editing config.yaml.
+Tenstorrent look: the terminal skin (`skins/`) is installed for every launch and the
+dashboard theme (`dashboard-themes/`) for --web. Each is made active through
+`hermes config set`, never by editing config.yaml, and only while the user is still
+on Hermes's shipped default. A skin or theme the user picked is never overridden.
 """
 
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
@@ -28,15 +29,26 @@ from ..base import LaunchEnv, LaunchOptions, Preparation, RunningModel, free_web
 
 _PLACEHOLDER_KEY = "tt-local"
 _PROVIDER = "openai"
-_THEME_FILE = "tenstorrent.yaml"
-_THEME_NAME = "tenstorrent"
-_THEME_KEY = "dashboard.theme"
-_SHIPPED_DEFAULT_THEMES = {"", "default"}
+_NAME = "tenstorrent"
+_SHIPPED_DEFAULTS = {"", "default"}
 
 
-def _theme_dir() -> Path:
+def _hermes_home() -> Path:
     home = os.environ.get("HERMES_HOME", "").strip()
-    return (Path(home).expanduser() if home else Path.home() / ".hermes") / "dashboard-themes"
+    return Path(home).expanduser() if home else Path.home() / ".hermes"
+
+
+@dataclass(frozen=True)
+class _Look:
+    """A bundled Hermes appearance: where it is installed and the setting that selects it."""
+
+    package_dir: str  # directory under launchers/apps holding tenstorrent.yaml
+    hermes_dir: str  # directory under the Hermes home that Hermes scans
+    config_key: str
+
+
+_SKIN = _Look("hermes_skin", "skins", "display.skin")
+_THEME = _Look("hermes_theme", "dashboard-themes", "dashboard.theme")
 
 
 class Hermes:
@@ -83,34 +95,30 @@ class Hermes:
         )
 
     def apply(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
-        """The environment is applied at hand-off; only the web dashboard gets the theme."""
-        if prep.url is None:
-            return
-        self._install_theme()
-        self._activate_theme(env)
+        """The environment is applied at hand-off; only the Tenstorrent look is written."""
+        self._adopt(_SKIN, env)
+        if prep.url is not None:
+            self._adopt(_THEME, env)
 
-    def _install_theme(self) -> None:
-        theme = resources.files(__package__).joinpath("hermes_theme", _THEME_FILE).read_bytes()
-        target = _theme_dir() / _THEME_FILE
+    def _adopt(self, look: _Look, env: LaunchEnv) -> None:
+        """Install the look, and make it active unless the user already chose another.
+        Cosmetic, so nothing here may block the launch."""
+        source = resources.files(__package__).joinpath(look.package_dir, f"{_NAME}.yaml")
+        target = _hermes_home() / look.hermes_dir / f"{_NAME}.yaml"
         try:
-            if target.exists() and target.read_bytes() == theme:
-                return
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(theme)
+            content = source.read_bytes()
+            if not (target.exists() and target.read_bytes() == content):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
         except OSError:
-            pass  # cosmetic: an unwritable Hermes home must not block the launch
-
-    def _activate_theme(self, env: LaunchEnv) -> None:
-        """Make the theme active unless the user already chose another one."""
-        if not (_theme_dir() / _THEME_FILE).exists():
             return
         exe = env.executable
-        current = env.runner.capture([exe, "config", "get", _THEME_KEY], check=False, tool=self.id)
+        current = env.runner.capture([exe, "config", "get", look.config_key], check=False, tool=self.id)
         # `config get` exits non-zero when the key is unset.
         value = current.stdout.strip() if current.returncode == 0 else ""
-        if value in _SHIPPED_DEFAULT_THEMES:
+        if value in _SHIPPED_DEFAULTS:
             env.runner.capture(
-                [exe, "config", "set", _THEME_KEY, _THEME_NAME], check=False, tool=self.id
+                [exe, "config", "set", look.config_key, _NAME], check=False, tool=self.id
             )
 
     def handoff(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
@@ -132,7 +140,7 @@ class Hermes:
         env.runner.stream([env.executable, "dashboard", "--stop"], tool=self.id)
 
     def disconnect_plan(self, executable: str | None, runner) -> str | None:
-        """Only the theme persists; it is cosmetic and switchable in the dashboard, so there is nothing to undo."""
+        """Only the skin and theme persist; both are cosmetic and switchable, so there is nothing to undo."""
         return None
 
     def disconnect(self, env: LaunchEnv) -> None:
