@@ -28,7 +28,7 @@ from ..discovery import probe
 
 DEFAULT_HOME = "~/.tt-deep-research"
 UI_PORT = 3000
-LIST_HINT = "`tt launch deep-research --list-recipes` shows every recipe and whether it can start now."
+LIST_HINT = "`tt launch deep-research --list-recipes` shows every recipe."
 _COMPOSE = "com.docker.compose"
 _PROJECT = "ttdr"
 # What `ttdr down` stops; its data services (Qdrant, SearXNG, Redis) keep running.
@@ -52,6 +52,8 @@ class DeepResearch:
     model_requirement = "a bundle its recipes name"
     hands_over_terminal = False
     uses_recipes = True
+    # `ttdr up` prints its own progress and where the app is, so tt adds no summary table.
+    reports_itself = True
 
     def target(self) -> str:
         return "tt-deep-research app"
@@ -101,32 +103,22 @@ class DeepResearch:
             raise self._blocked(recipe, recipes, bundles, others, port)
         return Choice(recipe, serves_models=True)
 
-    def statuses(self, recipes: list[dict], bundles: list[str], runner) -> list[dict]:
-        """`--list-recipes`: each listed recipe, what it serves, and whether it can start now."""
-        started = self._started_with(self.home()) if self._running(runner) else None
-        rows = []
-        for recipe in recipes:
-            if not recipe["description"]:
-                continue
-            others, port = self._conflicts(recipe, bundles)
-            if started == Path(recipe["path"]):
-                status = "running"
-            elif self._ready(recipe, bundles):
-                status = "ready: its models are serving"
-            elif others:
-                status = f"needs `tt model stop {' '.join(others)}` first"
-            elif port:
-                status = f"blocked: {port}"
-            else:
-                status = "can start: serves its models (10-15 min)"
-            rows.append({
+    def listed(self, recipes: list[dict]) -> list[dict]:
+        """`--list-recipes`: each described recipe and what it serves."""
+        return [
+            {
                 "recipe": recipe["name"],
                 "default": recipe["default"],
                 "serves": _serves(recipe),
-                "status": status,
                 "about": recipe["description"],
-            })
-        return rows
+            }
+            for recipe in recipes
+            if recipe["description"]
+        ]
+
+    def can_start(self, recipes: list[dict], bundles: list[str]) -> bool:
+        """Some recipe `ttdr up` could serve now: nothing else holds its chips or ports."""
+        return any(not any(self._conflicts(recipe, bundles)) for recipe in recipes)
 
     def model_bundles(self, bundles: list[str], executable: str | None, runner) -> list[str]:
         """Which of the running bundles are ones its recipes use."""
@@ -202,8 +194,10 @@ class DeepResearch:
             env.runner.stream(step, env={**os.environ, **prep.env}, tool=self.id)
 
     def handoff(self, model: RunningModel, prep: Preparation, env: LaunchEnv) -> None:
-        # `ttdr up` exits non-zero unless every endpoint answered.
-        env.output.status(f"deep-research is ready at {prep.url}")
+        # `ttdr up` exits non-zero unless every endpoint answered, and says where the UI is
+        # itself; only an app already running needs telling.
+        if not prep.steps:
+            env.output.status(f"deep-research is already running at {prep.url}")
 
     def container_state(self, executable: str | None, runner) -> str:
         """running / absent / unknown: running while any container `ttdr down`
@@ -213,10 +207,12 @@ class DeepResearch:
             return "unknown"
         return "running" if services else "absent"
 
-    def stop(self, env: LaunchEnv) -> None:
+    def stop(self, env: LaunchEnv, keep_models: bool = False) -> None:
+        """`ttdr down`: the app and its models, or with keep_models only the app."""
         # From the folder the running app was started in, whatever $TTDR_HOME says now.
         home = next(iter((self._running(env.runner) or {}).values()), None) or self.home()
-        env.runner.stream([env.executable, "down"], env=self._env(home), tool=self.id)
+        argv = [env.executable, "down", *(["--keep-models"] if keep_models else [])]
+        env.runner.stream(argv, env=self._env(home), tool=self.id)
 
     def disconnect_plan(self, executable: str | None, runner) -> str | None:
         """Nothing persists outside the app's own home folder, so there is never
