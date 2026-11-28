@@ -154,7 +154,7 @@ def _plant(tmp_path: Path, monkeypatch) -> tuple[list[str], list[str]]:
     # a symlink to a key outside the logs dir, and a file named after a token
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / "id_rsa").write_text("-----BEGIN PRIVATE KEY-----\ns3cr3t-outside-" "symlink-97\n")
+    (outside / "id_rsa").write_text("-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5 + "\ns3cr3t-outside-" "symlink-97\n")
     os.symlink(outside / "id_rsa", logs / "run" / "linked.log")
     os.symlink(outside, logs / "linked-dir")
     secrets.append("s3cr3t-outside-s" "ymlink-97")

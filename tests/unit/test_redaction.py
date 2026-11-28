@@ -47,6 +47,14 @@ def _leaks(text: str, secrets: list[str], known: tuple[str, ...] = ()) -> list[s
 # protection takes them for real ones and refuses the push.
 # A fake 64-char hex JWT_SECRET, derived so that no hex literal sits in the source.
 FAKE_HEX = hashlib.sha256(b"tt-cli test jwt secret").hexdigest()
+
+PEM_DASHES = "-" * 5
+
+
+def _unpem(text: str) -> str:
+    return text.replace(PEM_DASHES, "~" * 5)
+
+
 SLACK_BOT = "xo" + "xb-1234567890-09" "87654321-SlackBo" "tPPPPPPPPPP"
 AWS_KEY_ID = "AK" + "IAIOSFODNN7EXAMPLQ"
 
@@ -152,9 +160,9 @@ RETEST = [
     ("bare-google", "gcp key AIzaSyFakeGoogle" "KeyRRRRRRRRRRRRR" "RRRRRR", ["AIzaSyFakeGoogle" "KeyRRRRRRRRRRRRR" "RRRRRR"]),
     (
         "pem-body",
-        "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        f"{PEM_DASHES}BEGIN OPENSSH PRIVATE KEY{PEM_DASHES}\n"
         "b3BlbnNzaC1rZXkt" "djEAAAAAPEMBODYS" "SSSSSSSSSSSSSSSSSSS\n"
-        "-----END OPENSSH PRIVATE KEY-----",
+        f"{PEM_DASHES}END OPENSSH PRIVATE KEY{PEM_DASHES}",
         ["b3BlbnNzaC1rZXkt" "djEAAAAAPEMBODYS" "SSSSSSSSSSSSSSSSSSS"],
     ),
     (
@@ -233,9 +241,12 @@ RETEST = [
 ]
 
 
-@pytest.mark.parametrize(("text", "secrets"), [c[1:] for c in RETEST], ids=[c[0] for c in RETEST])
-def test_retest_format_is_redacted(text, secrets):
-    assert _leaks(text, secrets) == [], _scrub(text)
+@pytest.mark.parametrize("case", [c[0] for c in RETEST])
+def test_retest_format_is_redacted(case):
+    # Looked up, not parametrized: pytest prints a failing test's arguments verbatim.
+    text, secrets = {name: rest for name, *rest in RETEST}[case]
+    leaks = _leaks(text, secrets)
+    assert leaks == [], _unpem(_scrub(text))
 
 
 def test_retest_formats_keep_their_surroundings():
@@ -411,22 +422,27 @@ PEM_BODY = [
 @pytest.mark.parametrize(
     "shape",
     [
-        "-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----",
-        "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: " "4,ENCRYPTED\n\n{body}\n-----END RSA PRIVATE KEY-----",
-        "{body}\n-----END EC PRIVATE KEY-----",  # the log tail cut off the BEGIN line
-        "app-1  | -----BEGIN OPENSSH PRIVATE KEY-----\n{prefixed}\napp-1  | -----END OPENSSH PRIVATE KEY-----",
-        '{{"key": ' '"-----BEGIN PRIVATE KEY-----\\n{escaped}\\n-----END PRIVATE KEY-----\\n"}}',
+        "{d}BEGIN PRIVATE KEY{d}\n{body}\n{d}END PRIVATE KEY{d}",
+        "{d}BEGIN RSA PRIVATE KEY{d}\nProc-Type: " "4,ENCRYPTED\n\n{body}\n{d}END RSA PRIVATE KEY{d}",
+        "{body}\n{d}END EC PRIVATE KEY{d}",  # the log tail cut off the BEGIN line
+        "app-1  | {d}BEGIN OPENSSH PRIVATE KEY{d}\n{prefixed}\napp-1  | {d}END OPENSSH PRIVATE KEY{d}",
+        '{{"key": ' '"{d}BEGIN PRIVATE KEY{d}\\n{escaped}\\n{d}END PRIVATE KEY{d}\\n"}}',
     ],
+    ids=["pkcs8", "rsa-encrypted", "ec-truncated-tail", "compose-prefixed", "json-escaped"],
 )
 def test_private_key_bodies(shape):
     text = shape.format(
+        d=PEM_DASHES,
         body="\n".join(PEM_BODY),
         prefixed="\n".join(f"app-1  | {line}" for line in PEM_BODY),
         escaped="\\n".join(PEM_BODY),
     )
     out = _scrub(text)
-    assert not any(line in out for line in PEM_BODY[:2]), out
-    assert "PRIVATE KEY-----" in out  # support still sees that a key was there
+    # Booleans first: pytest would print `out`, markers and all, on failure.
+    body_leaked = any(line in out for line in PEM_BODY[:2])
+    marker_kept = "PRIVATE KEY" + PEM_DASHES in out  # support still sees a key was there
+    assert not body_leaked, _unpem(out)
+    assert marker_kept, _unpem(out)
 
 
 # -- structure ----------------------------------------------------------------------------
